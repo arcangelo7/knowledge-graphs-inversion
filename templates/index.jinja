@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>R2RML Test Interface</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Prism.js CSS -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/themes/prism-okaidia.min.css" rel="stylesheet" />
+    
+    <!-- Prism.js Core and SQL language support -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/components/prism-sql.min.js"></script>
+
+    <style>
+        html, body {
+            height: 100%;
+        }
+        body {
+            display: flex;
+            flex-direction: column;
+        }
+        .content {
+            flex: 1 0 auto;
+        }
+        .footer {
+            flex-shrink: 0;
+        }
+        pre {
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 0.25rem;
+            padding: 1rem;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .result-passed {
+            color: green !important;
+            font-weight: bold;
+        }
+        .result-failed {
+            color: red !important;
+            font-weight: bold;
+        }
+        .table-striped > tbody > tr:nth-of-type(odd) > * {
+            --bs-table-accent-bg: var(--bs-table-striped-bg);
+            color: var(--bs-table-striped-color);
+        }
+        .table-striped > tbody > tr:nth-of-type(odd) .result-passed,
+        .table-striped > tbody > tr:nth-of-type(odd) .result-failed {
+            color: inherit;
+        }
+        .spinner-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100px;
+        }
+        .loading-row td {
+            text-align: center;
+            padding: 10px;
+        }
+        .loading-row .loading-dots::after {
+            content: '.';
+            animation: dots 1.5s steps(5, end) infinite;
+        }
+        @keyframes dots {
+            0%, 20% { content: '.'; }
+            40% { content: '..'; }
+            60% { content: '...'; }
+            80%, 100% { content: ''; }
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            background-color: rgba(0,0,0,0.4);
+        }
+        .modal-content {
+            background-color: #fefefe;
+            margin: 15% auto;
+            padding: 20px;
+            border: 1px solid #888;
+            width: 80%;
+        }
+        .close {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+        }
+        .close:hover,
+        .close:focus {
+            color: black;
+            text-decoration: none;
+            cursor: pointer;
+        }
+        #modalContent .language-sql {
+            background: #272822;
+            color: #f8f8f2;
+            text-shadow: 0 1px rgba(0, 0, 0, 0.3);
+            font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
+            {# font-size: 1em;
+            text-align: left;
+            white-space: pre;
+            word-spacing: normal;
+            word-break: normal;
+            word-wrap: normal;
+            line-height: 1.5;
+            padding: 1em;
+            margin: .5em 0;
+            overflow: auto;
+            border-radius: 0.3em; #}
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <h1 class="mb-4">R2RML Test Interface</h1>
+        <div class="row">
+            <div class="col-md-6">
+                <select id="testSelect" class="form-select mb-3">
+                    <option value="">Select a test</option>
+                    {% for test in tests %}
+                    <option value="{{ test }}">{{ test }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+        <div class="row mb-3">
+            <div class="col">
+                <button id="runTestBtn" onclick="runTest()" class="btn btn-primary">Run Test</button>
+                <button id="runAllTestsBtn" onclick="runAllTests()" class="btn btn-success">Run All Tests</button>
+            </div>
+        </div>
+        <div id="mappingContent" class="mb-4" style="display: none;">
+            <h2>R2RML Mapping</h2>
+            <pre><code id="mappingCode"></code></pre>
+        </div>
+        <div id="results">
+            <div id="spinner" class="spinner-container" style="display: none;">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+            </div>
+            <table id="results-table" class="table table-striped" style="display: none;">
+                <thead>
+                    <tr id="results-header"></tr>
+                </thead>
+                <tbody id="results-body"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="infoModal" class="modal">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h2 id="modalTitle"></h2>
+            <pre id="modalContent"></pre>
+        </div>
+    </div>
+
+    <footer class="footer mt-auto py-3 bg-light">
+        <div class="container">
+            <div class="row">
+                <div class="col-lg-6 col-md-12 mb-4 mb-md-0">
+                    <h5 class="text-uppercase">Related Projects</h5>
+                    <ul class="list-unstyled mb-0">
+                        <li>
+                            <a href="https://github.com/TijsVK/Knowledge-graphs-inversion" target="_blank" rel="noopener noreferrer">
+                                <i class="fab fa-github"></i> Knowledge-graphs-inversion
+                            </a>
+                        </li>
+                        <li>
+                            <a href="https://github.com/kg-construct/r2rml-implementation-report" target="_blank" rel="noopener noreferrer">
+                                <i class="fab fa-github"></i> R2RML Implementation Report
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+                <div class="col-lg-6 col-md-12 mb-4 mb-md-0">
+                    <h5 class="text-uppercase">Contact</h5>
+                    <p>Arcangelo Massari</p>
+                    <p>Email: <a href="mailto:arcangelo.massari@kuleuven.be">arcangelo.massari@kuleuven.be</a></p>
+                    <p>2024 ISC Licence</p>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        const testResults = {};
+
+        function disableButtons() {
+            $('#runTestBtn, #runAllTestsBtn').prop('disabled', true);
+        }
+
+        function enableButtons() {
+            $('#runTestBtn, #runAllTestsBtn').prop('disabled', false);
+        }
+
+        function runTest() {
+            const testId = $('#testSelect').val();
+            // const dbSystem = $('#dbSelect').val();
+            dbSystem = 'postgresql';
+            const resultsDiv = $('#results');
+            
+            // Clear previous results and show spinner
+            resultsDiv.empty();
+            resultsDiv.append('<div id="spinner" class="spinner-container"><div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div></div>');
+            
+            disableButtons();
+
+            $.post('/run_test', {
+                test_id: testId,
+                database_system: dbSystem
+            })
+            .done(function(response) {
+                testResults[response.test_id] = response;
+                displayTestResults(response);
+            })
+            .fail(function(jqXHR, textStatus, errorThrown) {
+                resultsDiv.html('<p class="text-danger">Error: ' + textStatus + '</p>');
+            })
+            .always(function() {
+                $('#spinner').remove();
+                enableButtons();
+            });
+        }
+
+        function runAllTests() {
+            // const dbSystem = $('#dbSelect').val();
+            const dbSystem = 'postgresql';
+            const resultsDiv = $('#results');
+            resultsDiv.empty();
+            
+            const spinnerElement = $('<div id="spinner" class="spinner-container"><div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div></div>');
+            const resultsTable = $('<table id="results-table" class="table table-striped" style="display: none;"><thead><tr id="results-header"></tr></thead><tbody id="results-body"></tbody></table>');
+            
+            resultsDiv.append(spinnerElement);
+            resultsDiv.append(resultsTable);
+
+            disableButtons();
+
+            const eventSource = new EventSource(`/run_all_tests?database_system=${dbSystem}`);
+
+            eventSource.onmessage = function(event) {
+                const testResult = JSON.parse(event.data);
+                testResults[testResult.test_id] = testResult;
+                
+                if (spinnerElement.is(":visible")) {
+                    spinnerElement.hide();
+                    resultsDiv.prepend('<h2>All Test Results:</h2>');
+                    resultsTable.show();
+                    // Set the header if it's empty
+                    const resultsHeader = $('#results-header');
+                    if (resultsHeader.is(":empty")) {
+                        updateHeaderRow();
+                    }
+                    // Add the loading row
+                    addLoadingRow();
+                }
+
+                const rowHtml = generateResultRow(testResult);
+                $('#results-body .loading-row').before(rowHtml);
+            };
+
+            eventSource.onerror = function(event) {
+                console.error('EventSource failed:', event);
+                eventSource.close();
+                resultsDiv.append('<p class="text-danger">Error: Failed to receive all test results</p>');
+                removeLoadingRow();
+            };
+
+            eventSource.onopen = function(event) {
+                console.log('EventSource connected.');
+            };
+
+            eventSource.addEventListener('complete', function(event) {
+                console.log('All tests completed');
+                eventSource.close();
+                enableButtons();
+                removeLoadingRow();
+            }, false);
+        }
+
+        function addLoadingRow() {
+            const columnCount = $('#results-header th').length;
+            const loadingRow = $('<tr class="loading-row"><td colspan="' + columnCount + '">Loading more results<span class="loading-dots"></span></td></tr>');
+            $('#results-body').append(loadingRow);
+        }
+
+        function removeLoadingRow() {
+            $('#results-body .loading-row').remove();
+        }
+
+        function displayTestResults(response) {
+            const resultsDiv = $('#results');
+            if (response.status === 'success') {
+                let resultsHtml = `<h2>Test Results for ${response.test_id}:</h2>`;
+                resultsHtml += generateResultTable(response.results);
+                resultsDiv.html(resultsHtml);
+            } else {
+                let errorHtml = `<h2 class="text-danger">Error in ${response.test_id}:</h2>`;
+                errorHtml += '<p>' + response.message + '</p>';
+                if (response.traceback) {
+                    errorHtml += '<h3>Traceback:</h3>';
+                    errorHtml += '<pre>' + response.traceback + '</pre>';
+                }
+                resultsDiv.html(errorHtml);
+            }
+        }
+
+        function generateResultTable(results) {
+            let tableHtml = '<table class="table table-striped">';
+            tableHtml += '<thead><tr>';
+            ['Test ID', 'Purpose', 'Result', 'Expected Result', 'Actual Result', 'Mapping', 'SPARQL Query', 'Inversion Query', 'Inversion Success', 'Table Comparison'].forEach(header => {
+                tableHtml += `<th>${header}</th>`;
+            });
+            tableHtml += '</tr></thead><tbody>';
+            results.data.forEach(row => {
+                tableHtml += generateResultRow({results: {data: [row]}});
+            });
+            tableHtml += '</tbody></table>';
+            return tableHtml;
+        }
+
+        function generateResultRow(response) {
+            if (!response || !response.results || !Array.isArray(response.results.data) || response.results.data.length === 0) {
+                console.error('Invalid response structure:', response);
+                return `<tr><td colspan="9">Error: Invalid test result structure</td></tr>`;
+            }
+
+            const row = response.results.data[0];
+            let rowHtml = '<tr>';
+            rowHtml += `<td>${row.testid || 'N/A'}</td>`;
+            rowHtml += `<td>${row.purpose || 'N/A'}</td>`;
+            rowHtml += `<td class="result-${(row.result || '').toLowerCase()}">${row.result || 'N/A'}</td>`;
+            rowHtml += `<td><button onclick="showFileContent('${row.testid}', 'expected')">View</button></td>`;
+            rowHtml += `<td><button onclick="showFileContent('${row.testid}', 'actual')">View</button></td>`;
+            rowHtml += `<td><button onclick="showMapping('${row.testid}')">View</button></td>`;
+            rowHtml += `<td><button onclick="showSparqlQuery('${row.testid}')">View</button></td>`;
+            rowHtml += `<td><button onclick="showInversionQuery('${row.testid}')">View</button></td>`;
+            rowHtml += `<td class="result-${row.tables_equal ? 'passed' : 'failed'}">${row.tables_equal ? 'Success' : 'Failure'}</td>`;
+            rowHtml += `<td><button onclick="showTableComparison('${row.testid}')">View</button></td>`;
+            rowHtml += '</tr>';
+            return rowHtml;
+        }
+
+        function showSparqlQuery(testId) {
+            const response = testResults[testId];
+            if (response && response.results && response.results.data && response.results.data[0]) {
+                const sparqlQuery = response.results.data[0].sparql_query;
+                const content = `<pre><code class="language-sparql">${escapeHtml(sparqlQuery)}</code></pre>`;
+                showModal('SPARQL Query', content);
+                Prism.highlightAll();
+            } else {
+                showModal('Error', 'Unable to display SPARQL query. Invalid data structure.');
+            }
+        }
+
+        function showFileContent(testId, fileType) {
+            const response = testResults[testId];
+            if (response && response.results && response.results.data && response.results.data[0]) {
+                const content = fileType === 'expected' ? response.results.data[0].expected_result : response.results.data[0].actual_result;
+                showModal(`${fileType.charAt(0).toUpperCase() + fileType.slice(1)} Output for ${testId}`, `<pre style="white-space: pre-wrap; word-wrap: break-word;">${escapeHtml(content)}</pre>`);
+            } else {
+                showModal('Error', `Unable to display ${fileType} content. Invalid data structure.`);
+            }
+        }
+
+        function showInversionQuery(testId) {
+            const response = testResults[testId];
+            if (response && response.results && response.results.data && response.results.data[0]) {
+                const inversionQuery = response.results.data[0].inversion_query;
+                const content = `<pre><code class="language-sql">${escapeHtml(inversionQuery)}</code></pre>`;
+                showModal('Inversion Query', content);
+                Prism.highlightAll();
+            } else {
+                showModal('Error', 'Unable to display inversion query. Invalid data structure.');
+            }
+        }
+
+        function escapeHtml(unsafe) {
+            return unsafe
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#039;");
+        }
+
+        function updateHeaderRow() {
+            const headerHtml = ['Test ID', 'Purpose', 'Result', 'Expected Result', 'Actual Result', 'Mapping', 'SPARQL Query', 'Inversion Query', 'Inversion Success', 'Table Comparison']
+                .map(header => `<th>${header}</th>`)
+                .join('');
+            $('#results-header').html(headerHtml);
+        }
+        
+        function showMapping(testId) {
+            const response = testResults[testId];
+            if (response && response.results && response.results.data && response.results.data[0]) {
+                showModal('R2RML Mapping', response.results.data[0].mapping);
+            } else {
+                showModal('Error', 'Unable to display mapping. Invalid data structure.');
+            }
+        }
+
+        function showModal(title, content) {
+            const modal = document.getElementById('infoModal');
+            const modalTitle = document.getElementById('modalTitle');
+            const modalContent = document.getElementById('modalContent');
+            
+            modalTitle.textContent = title;
+            modalContent.innerHTML = content;
+            
+            // Adjust style for larger content
+            modalContent.style.maxHeight = '70vh';
+            modalContent.style.overflow = 'auto';
+            
+            modal.style.display = 'block';
+
+            const span = document.getElementsByClassName('close')[0];
+            span.onclick = function() {
+                modal.style.display = 'none';
+            }
+
+            window.onclick = function(event) {
+                if (event.target == modal) {
+                    modal.style.display = 'none';
+                }
+            }
+        }
+
+        function showTableComparison(testId) {
+            const response = testResults[testId];
+            if (response && response.results && response.results.data && response.results.data[0]) {
+                const originalTables = response.results.data[0].original_tables;
+                const invertedTables = response.results.data[0].inverted_tables;
+                const comparisonMessage = response.results.data[0].comparison_message;
+                
+                let content = '';
+
+                if (comparisonMessage) {
+                    content += `<h3>Comparison Message:</h3><p>${escapeHtml(comparisonMessage)}</p>`;
+                }
+
+                if (originalTables && typeof originalTables === 'object' && Object.keys(originalTables).length > 0) {
+                    content += '<h3>Original Tables:</h3>';
+                    for (const [tableName, tableData] of Object.entries(originalTables)) {
+                        content += `<h4>${tableName}</h4>`;
+                        content += `<pre>${escapeHtml(JSON.stringify(tableData, null, 2))}</pre>`;
+                    }
+                } else {
+                    content += '<h3>Original Tables:</h3><p>No original table data available.</p>';
+                }
+                
+                if (invertedTables && typeof invertedTables === 'object' && Object.keys(invertedTables).length > 0) {
+                    content += '<h3>Inverted Tables:</h3>';
+                    for (const [tableName, tableData] of Object.entries(invertedTables)) {
+                        content += `<h4>${tableName}</h4>`;
+                        content += `<pre>${escapeHtml(JSON.stringify(tableData, null, 2))}</pre>`;
+                    }
+                } else {
+                    content += '<h3>Inverted Tables:</h3><p>No inverted table data available. The inversion process might have failed or been skipped.</p>';
+                }
+                
+                if (content === '') {
+                    content = '<p>No table comparison data available.</p>';
+                }
+                                
+                showModal('Table Comparison', content);
+            } else {
+                showModal('Error', 'Unable to display table comparison. Invalid or missing data structure.');
+            }
+        }
+
+        // Initialize the page
+        $(document).ready(function() {
+            updateHeaderRow();
+            
+            // Event listener for test selection
+            $('#testSelect').change(function() {
+                const selectedTest = $(this).val();
+                if (selectedTest) {
+                    $('#runTestBtn').prop('disabled', false);
+                } else {
+                    $('#runTestBtn').prop('disabled', true);
+                }
+            });
+
+            // Initialize button states
+            $('#runTestBtn').prop('disabled', true);
+            $('#runAllTestsBtn').prop('disabled', false);
+        });
+
+        // Helper function to format the result class
+        function getResultClass(result) {
+            return result.toLowerCase() === 'passed' ? 'result-passed' : 'result-failed';
+        }
+
+        // Helper function to truncate long text
+        function truncateText(text, maxLength = 50) {
+            return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
+        }
+    </script>
+</body>
+</html>
