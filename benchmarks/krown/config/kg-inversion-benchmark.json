@@ -1,0 +1,193 @@
+{
+    "@id": "http://example.com/kg-inversion-benchmark/postgresql",
+    "name": "KG Inversion PostgreSQL",
+    "description": "PostgreSQL benchmark for Knowledge Graphs Inversion system",
+    "instances": [
+        {
+            "@id": "http://example.com/kg-inversion-benchmark/postgresql#small",
+            "name": "Small PostgreSQL (1K rows)",
+            "generator": "Mappings",
+            "parameters": {
+                "number_of_tms": 3,
+                "number_of_poms": 2,
+                "number_of_members": 1000,
+                "number_of_properties": 5,
+                "value_size": 50,
+                "data_format": "postgresql",
+                "engine": "Custom"
+            },
+            "steps": [
+                {
+                    "@id": "http://example.com/kg-inversion-benchmark/postgresql#small#step1",
+                    "name": "Load RDB",
+                    "resource": "PostgreSQL",
+                    "command": "load",
+                    "parameters": {
+                        "csv_file": "data.csv",
+                        "table": "data"
+                    },
+                    "expect_failure": false
+                },
+                {
+                    "@id": "http://example.com/kg-inversion-benchmark/postgresql#small#step2",
+                    "name": "Execute RML mapping with Morph-KGC",
+                    "resource": "MorphKGC",
+                    "command": "execute_mapping",
+                    "parameters": {
+                        "mapping_file": "mapping.r2rml.ttl",
+                        "output_file": "out.nt",
+                        "serialization": "ntriples",
+                        "rdb_host": "PostgreSQL",
+                        "rdb_port": 5434,
+                        "rdb_username": "root",
+                        "rdb_password": "root",
+                        "rdb_type": "PostgreSQL",
+                        "rdb_name": "db"
+                    },
+                    "expect_failure": false
+                },
+                {
+                    "@id": "http://example.com/kg-inversion-benchmark/postgresql#small#step3",
+                    "name": "Execute Knowledge Graph Inversion",
+                    "resource": "KGInversion",
+                    "command": "execute_inversion",
+                    "parameters": {
+                        "rdf_file": "out.nt",
+                        "mapping_file": "mapping.r2rml.ttl",
+                        "rdb_host": "PostgreSQL",
+                        "rdb_port": 5434,
+                        "rdb_username": "root",
+                        "rdb_password": "root",
+                        "rdb_type": "PostgreSQL",
+                        "rdb_name": "db"
+                    },
+                    "expect_failure": false
+                }
+            ]
+        },
+        {
+            "@id": "http://example.com/kg-inversion-benchmark/postgresql#medium",
+            "name": "Medium PostgreSQL (10K rows)",
+            "generator": "Mappings",
+            "parameters": {
+                "number_of_tms": 5,
+                "number_of_poms": 3,
+                "number_of_members": 10000,
+                "number_of_properties": 8,
+                "value_size": 100,
+                "data_format": "postgresql",
+                "engine": "Custom"
+            },
+            "steps": [
+                {
+                    "@id": "http://example.com/kg-inversion-benchmark/postgresql#medium#step1",
+                    "name": "Load RDB",
+                    "resource": "PostgreSQL",
+                    "command": "load",
+                    "parameters": {
+                        "csv_file": "data.csv",
+                        "table": "data"
+                    },
+                    "expect_failure": false
+                },
+                {
+                    "@id": "http://example.com/kg-inversion-benchmark/postgresql#medium#step2",
+                    "name": "Execute RML mapping with Morph-KGC",
+                    "resource": "MorphKGC",
+                    "command": "execute_mapping",
+                    "parameters": {
+                        "mapping_file": "mapping.r2rml.ttl",
+                        "output_file": "out.nt",
+                        "serialization": "ntriples",
+                        "rdb_host": "PostgreSQL",
+                        "rdb_port": 5434,
+                        "rdb_username": "root",
+                        "rdb_password": "root",
+                        "rdb_type": "PostgreSQL",
+                        "rdb_name": "db"
+                    },
+                    "expect_failure": false
+                },
+                {
+                    "@id": "http://example.com/kg-inversion-benchmark/postgresql#medium#step3",
+                    "name": "Execute Knowledge Graph Inversion",
+                    "resource": "KGInversion",
+                    "command": "execute_inversion",
+                    "parameters": {
+                        "rdf_file": "out.nt",
+                        "mapping_file": "mapping.r2rml.ttl",
+                        "rdb_host": "PostgreSQL",
+                        "rdb_port": 5434,
+                        "rdb_username": "root",
+                        "rdb_password": "root",
+                        "rdb_type": "PostgreSQL",
+                        "rdb_name": "db"
+                    },
+                    "expect_failure": false
+                }
+            ]
+        },
+        {
+            "@id": "http://example.com/kg-inversion-benchmark/postgresql#large",
+            "name": "Large PostgreSQL (50K rows)",
+            "generator": "Mappings",
+            "parameters": {
+                "number_of_tms": 8,
+                "number_of_poms": 5,
+                "number_of_members": 50000,
+                "number_of_properties": 12,
+                "value_size": 150,
+                "data_format": "postgresql",
+                "engine": "Custom"
+            },
+            "steps": [
+                {
+                    "@id": "http://example.com/kg-inversion-benchmark/postgresql#large#step1",
+                    "name": "Load RDB",
+                    "resource": "PostgreSQL",
+                    "command": "load",
+                    "parameters": {
+                        "csv_file": "data.csv",
+                        "table": "data"
+                    },
+                    "expect_failure": false
+                },
+                {
+                    "@id": "http://example.com/kg-inversion-benchmark/postgresql#large#step2",
+                    "name": "Execute RML mapping with Morph-KGC",
+                    "resource": "MorphKGC",
+                    "command": "execute_mapping",
+                    "parameters": {
+                        "mapping_file": "mapping.r2rml.ttl",
+                        "output_file": "out.nt",
+                        "serialization": "ntriples",
+                        "rdb_host": "PostgreSQL",
+                        "rdb_port": 5434,
+                        "rdb_username": "root",
+                        "rdb_password": "root",
+                        "rdb_type": "PostgreSQL",
+                        "rdb_name": "db"
+                    },
+                    "expect_failure": false
+                },
+                {
+                    "@id": "http://example.com/kg-inversion-benchmark/postgresql#large#step3",
+                    "name": "Execute Knowledge Graph Inversion",
+                    "resource": "KGInversion",
+                    "command": "execute_inversion",
+                    "parameters": {
+                        "rdf_file": "out.nt",
+                        "mapping_file": "mapping.r2rml.ttl",
+                        "rdb_host": "PostgreSQL",
+                        "rdb_port": 5434,
+                        "rdb_username": "root",
+                        "rdb_password": "root",
+                        "rdb_type": "PostgreSQL",
+                        "rdb_name": "db"
+                    },
+                    "expect_failure": false
+                }
+            ]
+        }
+    ]
+} 

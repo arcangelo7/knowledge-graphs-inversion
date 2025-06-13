@@ -1,6 +1,4 @@
 import functools
-import hashlib
-import io
 import json
 import logging
 import os
@@ -27,8 +25,7 @@ from morph_kgc.constants import (RML_BLANK_NODE, RML_CONSTANT, RML_IRI,
                                  RML_LITERAL, RML_PARENT_TRIPLES_MAP,
                                  RML_REFERENCE, RML_TEMPLATE)
 from morph_kgc.mapping.mapping_parser import retrieve_mappings
-from rdflib import BNode, ConjunctiveGraph, Graph, Literal, URIRef
-from rdflib.plugins.parsers.nquads import NQuadsParser
+from rdflib import BNode, ConjunctiveGraph, Literal, URIRef
 from rdflib.plugins.parsers.ntriples import W3CNTriplesParser
 from SPARQLWrapper import CSV, SPARQLWrapper
 from sqlalchemy import Column, MetaData, Table

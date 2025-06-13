@@ -1,9 +1,10 @@
 import os
-import time
-import docker
-from docker.errors import NotFound, APIError
 import subprocess
+import time
+
+import docker
 import pandas as pd
+from docker.errors import APIError, NotFound
 from sqlalchemy import create_engine
 
 
@@ -94,7 +95,7 @@ class DatabaseManager:
                     'MYSQL_DATABASE': 'r2rml'
                 }
                 
-                if database_system == 'dest_postgresql':
+                if database_system in {'postgresql', 'dest_postgresql'}:
                     # Use a custom command to change the port
                     command = f"-c port={port}"
                     container = self.client.containers.run(

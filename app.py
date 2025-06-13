@@ -13,7 +13,6 @@ from rdflib import Dataset, Literal, Namespace
 
 from database_manager import DatabaseManager
 from poc_inversion import inversion
-
 from r2rml_test_cases.test import database_load, generate_results, test_one
 
 

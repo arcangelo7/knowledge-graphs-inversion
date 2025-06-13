@@ -1,11 +1,11 @@
+import csv
 import os
 import sys
-import csv
+from configparser import ConfigParser, ExtendedInterpolation
+
 import mysql.connector
 import psycopg2
-from configparser import ConfigParser, ExtendedInterpolation
-from rdflib import ConjunctiveGraph, RDF, Namespace, compare, Literal, URIRef
-
+from rdflib import RDF, ConjunctiveGraph, Literal, Namespace, URIRef, compare
 
 mysql_exceptions = ["R2RMLTC0002d", "R2RMLTC0003b", "R2RMLTC0014a", "R2RMLTC0014b", "R2RMLTC0014c"]
 mysql_non_compliance = ["R2RMLTC0002f", "R2RMLTC0018a"]

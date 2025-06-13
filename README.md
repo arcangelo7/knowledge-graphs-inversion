@@ -48,9 +48,42 @@ uv sync --upgrade
 uv run python script.py
 ```
 
-## Project Status
+## Benchmarking
 
-🚧 **In Development** - Focus on CSV and SQL format inversion
+This project integrates the [KROWN benchmark framework](https://github.com/kg-construct/KROWN) for evaluating the performance of the knowledge graphs inversion system with PostgreSQL focus.
+
+### Setup Benchmark Environment
+
+1. **Initialize KROWN submodule:**
+   ```bash
+   git submodule update --init --recursive
+   ```
+
+2. **Install dependencies:**
+   ```bash
+   uv sync
+   ```
+
+### Running KROWN Benchmark
+
+**Run PostgreSQL benchmark:**
+```bash
+uv run python benchmarks/run_krown_benchmark.py
+```
+
+This will:
+- Generate test data using KROWN's data generator (PostgreSQL format)
+- Create 3 benchmark scenarios: Small (1K), Medium (10K), Large (50K rows)
+- Run the inversion system on each scenario
+- Generate performance metrics and results
+
+### Benchmark Results
+
+Results are stored in `benchmarks/krown/results/` with:
+- Execution times for each scenario
+- Data and mapping file sizes
+- Triple Maps and Predicate Object Maps counts
+- JSON format for analysis
 
 ## License
 

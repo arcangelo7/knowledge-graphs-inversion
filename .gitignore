@@ -1,2 +1,9 @@
 __pycache__
 individual-logs/
+
+# Benchmark results and generated data
+benchmarks/*/results/
+benchmarks/*/*.csv
+benchmarks/*/*.rdf
+benchmarks/*/*.nt
+KROWN/data-generator/KGInversion/
