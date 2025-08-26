@@ -6,4 +6,9 @@ benchmarks/*/results/
 benchmarks/*/*.csv
 benchmarks/*/*.rdf
 benchmarks/*/*.nt
-KROWN/data-generator/KGInversion/
+
+r2rml_test_cases/output.nt
+r2rml_test_cases/results*
+
+# Virtuoso data directory
+virtuoso-data/

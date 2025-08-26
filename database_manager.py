@@ -1,4 +1,5 @@
 import os
+import pathlib
 import subprocess
 import time
 
@@ -40,8 +41,9 @@ class DatabaseManager:
         
         self.client = docker_client
         self.containers = {}
-        self.ports = {'postgresql': 5432, 'mysql': 3306, 'graphdb': 7200, 'dest_postgresql': 5433}
+        self.ports = {'postgresql': 5432, 'mysql': 3306, 'graphdb': 7200, 'dest_postgresql': 5433, 'virtuoso': 8890}
         self.graphdb_initialized = False
+        self.virtuoso_initialized = False
 
     def create_engine(self, connection_string):
         return create_engine(connection_string)
@@ -78,6 +80,8 @@ class DatabaseManager:
             try:
                 if database_system == 'graphdb':
                     return self.start_graphdb_container()
+                elif database_system == 'virtuoso':
+                    return self.start_virtuoso_container()
                 
                 image = 'postgres:13' if database_system in ['postgresql', 'dest_postgresql'] else 'mysql:8'
                 port = self.ports[database_system]
@@ -150,6 +154,58 @@ class DatabaseManager:
             self.containers['graphdb'] = container
             self.graphdb_initialized = True
         return self.containers['graphdb']
+    
+    def start_virtuoso_container(self):
+        if not self.virtuoso_initialized:
+            port = self.ports['virtuoso']
+            container_name = 'virtuoso-kgi'
+            
+            containers = self.client.containers.list()
+            for container in containers:
+                if container.name == container_name:
+                    print(f"Virtuoso container '{container_name}' already running")
+                    self.containers['virtuoso'] = container
+                    self.virtuoso_initialized = True
+                    return container
+            
+            repo_root = pathlib.Path(__file__).parent
+            data_dir = repo_root / 'virtuoso-data'
+            data_dir.mkdir(exist_ok=True)
+            data_dir_str = str(data_dir)
+            
+            cmd = [
+                'uv', 'run', 'python', '-m', 'virtuoso_utilities.launch_virtuoso',
+                '--name', container_name,
+                '--http-port', str(port),
+                '--isql-port', '1111',
+                '--data-dir', data_dir_str,
+                '--memory', '4g',
+                '--dba-password', 'dba',
+                '--force-remove',
+                '--detach',
+                '--wait-ready',
+                '--enable-write-permissions'
+            ]
+            
+            print(f"Launching Virtuoso container...")
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                print(result.stdout)
+                
+                container = self.client.containers.get(container_name)
+                self.containers['virtuoso'] = container
+                self.virtuoso_initialized = True
+                
+                print(f"Virtuoso container started: {container.id}")
+                return container
+                
+            except subprocess.CalledProcessError as e:
+                print(f"Failed to launch Virtuoso: {e}")
+                print(f"Stdout: {e.stdout}")
+                print(f"Stderr: {e.stderr}")
+                raise
+        
+        return self.containers['virtuoso']
 
     def stop_existing_services(self, database_system):
         port = self.ports[database_system]
@@ -249,6 +305,8 @@ class DatabaseManager:
             return f"mysql+pymysql://r2rml:r2rml@localhost:{port}/r2rml"
         elif database_system == 'graphdb':
             return f"http://localhost:{port}"
+        elif database_system == 'virtuoso':
+            return f"http://localhost:{port}/sparql"
 
     def get_database_content(self, database_system):
         connection_string = self.get_connection_string(database_system)

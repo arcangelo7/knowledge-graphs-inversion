@@ -10,14 +10,12 @@ from abc import ABC, abstractmethod
 from datetime import date, datetime
 from decimal import Decimal
 from io import StringIO
-from typing import Any, Self
+from typing import Self
 from urllib.parse import ParseResult, unquote, urlparse
 
 import jsonpath_ng
 import morph_kgc.config
 import pandas as pd
-import pyrdf4j.errors
-import pyrdf4j.rdf4j
 import pyrdf4j.repo_types
 import sqlalchemy
 from morph_kgc.args_parser import load_config_from_argument
@@ -27,7 +25,7 @@ from morph_kgc.constants import (RML_BLANK_NODE, RML_CONSTANT, RML_IRI,
 from morph_kgc.mapping.mapping_parser import retrieve_mappings
 from rdflib import BNode, ConjunctiveGraph, Literal, URIRef
 from rdflib.plugins.parsers.ntriples import W3CNTriplesParser
-from SPARQLWrapper import CSV, SPARQLWrapper
+from SPARQLWrapper import CSV, SPARQLWrapper, POST
 from sqlalchemy import Column, MetaData, Table
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.schema import CreateTable
@@ -645,16 +643,200 @@ class Query:
 
 # region Endpoints
 class RemoteEndpoint(Endpoint):
-    def __init__(self, url: str):
+    def __init__(self, url: str, rdf_file_to_load: str = None):
         self._sparql = SPARQLWrapper(url)
         self._sparql.setReturnFormat(CSV)
+        self.endpoint_url = url
+        self.rdf_file_path = rdf_file_to_load
+        self._graph_uri = None
+        
+        if rdf_file_to_load:
+            self._graph_uri = f"http://temp/graph/{os.path.basename(rdf_file_to_load)}"
+            self._load_data()
+
+    def _load_data(self):
+        """Load RDF data into the SPARQL endpoint using INSERT DATA."""
+        print(f"Loading RDF data into SPARQL endpoint from: {self.rdf_file_path}")
+        
+        clear_query = f"CLEAR GRAPH <{self._graph_uri}>"
+        try:
+            self._sparql.setQuery(clear_query)
+            self._sparql.setMethod(POST)
+            self._sparql.query()
+        except Exception as e:
+            print(f"Warning: Could not clear graph (might not exist): {e}")
+        
+        with open(self.rdf_file_path, 'r', encoding='utf-8') as f:
+            chunk_size = 1000
+            triples = []
+            
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    triples.append(line)
+                    
+                    if len(triples) >= chunk_size:
+                        self._insert_triples(triples)
+                        triples = []
+            
+            if triples:
+                self._insert_triples(triples)
+        
+        print(f"Data loaded into graph: {self._graph_uri}")
+
+    def _insert_triples(self, triples):
+        """Insert a batch of triples into the SPARQL endpoint."""
+        insert_query = f"INSERT DATA {{\n  GRAPH <{self._graph_uri}> {{\n"
+        for triple in triples:
+            if triple.endswith('.'):
+                triple = triple[:-1].strip()
+            insert_query += f"    {triple} .\n"
+        insert_query += "  }\n}"
+        
+        try:
+            self._sparql.setQuery(insert_query)
+            self._sparql.setMethod(POST)
+            self._sparql.query()
+        except Exception as e:
+            print(f"Error inserting triples: {e}")
+            for triple in triples:
+                try:
+                    single_insert = f"INSERT DATA {{ GRAPH <{self._graph_uri}> {{ {triple} . }} }}"
+                    self._sparql.setQuery(single_insert)
+                    self._sparql.setMethod(POST)
+                    self._sparql.query()
+                except Exception as e2:
+                    print(f"Failed to insert triple: {triple}: {e2}")
 
     def query(self, query: str):
+        if self._graph_uri:
+            modified_query = query.replace("WHERE {", f"WHERE {{ GRAPH <{self._graph_uri}> {{")
+            bracket_count = modified_query.count("{") - modified_query.count("}")
+            if bracket_count > 0:
+                modified_query += "}" * bracket_count
+            query = modified_query
+        
         self._sparql.setQuery(query)
-        return self._sparql.query().convert().decode("utf-8")
+        self._sparql.setMethod(POST)
+        result = self._sparql.query().convert()
+        
+        if isinstance(result, bytes):
+            return result.decode("utf-8")
+        return result
 
     def __repr__(self):
-        return f"RemoteSparqlEndpoint({self._sparql.endpoint})"
+        return f"RemoteSparqlEndpoint({self.endpoint_url})"
+    
+    def __del__(self):
+        """Clean up by removing the graph from the endpoint."""
+        if self._graph_uri:
+            try:
+                clear_query = f"CLEAR GRAPH <{self._graph_uri}>"
+                self._sparql.setQuery(clear_query)
+                self._sparql.setMethod(POST)
+                self._sparql.query()
+                print(f"Cleaned up graph: {self._graph_uri}")
+            except Exception:
+                pass  # Ignore errors during cleanup
+
+
+class VirtuosoEndpoint(RemoteEndpoint):
+    """Virtuoso-specific endpoint that uses bulk loading for better performance."""
+    
+    def __init__(self, url: str, rdf_file_to_load: str = None, container_name: str = 'virtuoso-kgi'):
+        self.container_name = container_name
+        # Use known paths based on standard Virtuoso setup
+        self.bulk_load_dir = '/opt/virtuoso-opensource/database'
+        # Use absolute path to the project's virtuoso-data directory
+        project_root = pathlib.Path(__file__).parent
+        self.host_bulk_load_dir = str(project_root / 'virtuoso-data')
+        super().__init__(url, None)  # Don't auto-load data in parent
+        
+        if rdf_file_to_load:
+            self.rdf_file_path = rdf_file_to_load
+            self._graph_uri = f"http://temp/graph/{os.path.basename(rdf_file_to_load)}"
+            self._bulk_load_data()
+    
+    def _bulk_load_data(self):
+        """Load RDF data using Virtuoso bulk loading instead of INSERT queries."""
+        import gzip
+        import shutil
+        import subprocess
+        import tempfile
+        
+        print(f"Bulk loading RDF data from: {self.rdf_file_path}")
+        
+        # Clear existing graph first
+        clear_query = f"CLEAR GRAPH <{self._graph_uri}>"
+        try:
+            self._sparql.setQuery(clear_query)
+            self._sparql.setMethod(POST)
+            self._sparql.query()
+        except Exception as e:
+            print(f"Warning: Could not clear graph (might not exist): {e}")
+        
+        # Convert N-Triples to N-Quads with target graph
+        temp_nq_file = None
+        temp_nq_gz_file = None
+        
+        try:
+            # Create temporary N-Quads file
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.nq', delete=False, encoding='utf-8') as temp_nq:
+                temp_nq_file = temp_nq.name
+                
+                with open(self.rdf_file_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith('#'):
+                            if line.endswith('.'):
+                                line = line[:-1].strip()
+                            # Add graph URI to make it an N-Quad
+                            temp_nq.write(f"{line} <{self._graph_uri}> .\n")
+            
+            # Compress the N-Quads file
+            temp_nq_gz_file = temp_nq_file + '.gz'
+            with open(temp_nq_file, 'rb') as f_in:
+                with gzip.open(temp_nq_gz_file, 'wb') as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+            
+            # Copy the gzipped file to the bulk load directory
+            bulk_load_file = f"{self.host_bulk_load_dir}/temp_bulk_load.nq.gz"
+            shutil.copy2(temp_nq_gz_file, bulk_load_file)
+            
+            # Use bulk_load.py to load the data
+            bulk_load_cmd = [
+                'python', '-m', 'virtuoso_utilities.bulk_load',
+                '-d', self.bulk_load_dir,
+                '-k', 'dba',  # Default DBA password
+                '--docker-container', self.container_name
+            ]
+            
+            print(f"Running bulk load command: {' '.join(bulk_load_cmd)}")
+            result = subprocess.run(bulk_load_cmd, capture_output=True, text=True)
+            
+            if result.returncode != 0:
+                print(f"Bulk load failed: {result.stderr}")
+                # Fallback to parent method
+                super()._load_data()
+            else:
+                print(f"Bulk load completed successfully")
+                print(f"Data loaded into graph: {self._graph_uri}")
+                
+        except Exception as e:
+            print(f"Error during bulk loading: {e}")
+            print("Falling back to INSERT queries...")
+            # Fallback to parent method
+            super()._load_data()
+            
+        finally:
+            # Clean up temporary files
+            for temp_file in [temp_nq_file, temp_nq_gz_file, f"{self.host_bulk_load_dir}/temp_bulk_load.nq.gz"]:
+                if temp_file and os.path.exists(temp_file):
+                    try:
+                        os.remove(temp_file)
+                    except Exception:
+                        pass
+
 
 class PreserveBNodeNTriplesParser(W3CNTriplesParser):
     def __init__(self, sink):
@@ -680,8 +862,6 @@ class LocalSparqlGraphStore(Endpoint):
         self._graph = ConjunctiveGraph()
         try:
             self.parse_ntriples_preserve_bnode_ids(data)
-            for triple in self._graph:
-                print(triple)
         except Exception as e:
             logging.error(f"Invalid RDF data: {e}")
 
@@ -1519,7 +1699,7 @@ def test_logging_setup(testID: str):
     inversion_logger.addHandler(file_logger)
     inversion_logger.setLevel(logging.DEBUG)
     
-def inversion(config_file: str | pathlib.Path, testID: str = None, dest_db_url: str = None) -> dict[str, dict[str, str]]:
+def inversion(config_file: str | pathlib.Path, testID: str = None, dest_db_url: str = None, use_virtuoso: bool = False) -> dict[str, dict[str, str]]:
     results = {}
     start_time = time.time()
     if testID is not None:
@@ -1538,7 +1718,18 @@ def inversion(config_file: str | pathlib.Path, testID: str = None, dest_db_url: 
         return results
         
     try:
-        endpoint = EndpointFactory.create(config)
+        if dest_db_url:
+            # If dest_db_url is provided, use it as the SPARQL endpoint
+            # and load the RDF file into it
+            url = config.get_output_file()
+            
+            if use_virtuoso:
+                print("Using Virtuoso endpoint with bulk loading...")
+                endpoint = VirtuosoEndpoint(dest_db_url, rdf_file_to_load=url)
+            else:
+                endpoint = RemoteEndpoint(dest_db_url, rdf_file_to_load=url)
+        else:
+            endpoint = EndpointFactory.create(config)
     except FileNotFoundError:
         inversion_logger.warning(f"Output file not found. Skipping inversion.")
         return results
@@ -1555,8 +1746,9 @@ def inversion(config_file: str | pathlib.Path, testID: str = None, dest_db_url: 
         template_generation_start_time = time.time()
         source_section = source_rules.iloc[0].get('source_section', 'DataSource1')
         db_config = db_configs.get(source_section, db_configs.get('DataSource1', {}))
-        db_url = db_config.get('db_url') if not dest_db_url else dest_db_url
-        template = generate_template(source_rules, db_url)
+        # For template generation, always use the database URL from config, not the SPARQL endpoint URL
+        template_db_url = db_config.get('db_url')
+        template = generate_template(source_rules, template_db_url)
         
         data_retrieval_start_time = time.time()
         inversion_logger.debug(f"Starting data retrieval, {data_retrieval_start_time - template_generation_start_time}s used for template generation")

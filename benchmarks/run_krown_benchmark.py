@@ -6,6 +6,7 @@ This script integrates with KROWN's execution framework to run benchmarks
 on our Knowledge Graph Inversion system.
 """
 
+import argparse
 import json
 import os
 import subprocess
@@ -27,10 +28,11 @@ from poc_inversion import inversion
 class KrownBenchmarkRunner:
     """KROWN Benchmark Runner for Knowledge Graph Inversion."""
     
-    def __init__(self):
+    def __init__(self, use_virtuoso=True):
         self.project_root = Path(__file__).parent.parent
         self.krown_dir = self.project_root / "KROWN"
         self.db_manager = None
+        self.use_virtuoso = use_virtuoso
         
     def setup_database(self):
         """Setup PostgreSQL database for KROWN benchmarks."""
@@ -291,6 +293,15 @@ class KrownBenchmarkRunner:
         if not mapping_step:
             raise ValueError("No mapping step found in metadata for fallback")
         
+        endpoint_url = None
+        
+        if self.use_virtuoso:
+            # Use pre-existing Virtuoso instance instead of managing container lifecycle
+            endpoint_url = "http://localhost:8890/sparql"
+            print(f"    🌐 Using Virtuoso endpoint: {endpoint_url}")
+        else:
+            print("    💾 Using in-memory RDF processing")
+        
         inversion_step = {
             "command": "execute_inversion",
             "parameters": {
@@ -325,7 +336,7 @@ class KrownBenchmarkRunner:
         original_cwd = os.getcwd()
         try:
             os.chdir(shared_dir)
-            inversion_results = inversion(inversion_config_file, testID=scenario_name)
+            inversion_results = inversion(inversion_config_file, testID=scenario_name, dest_db_url=endpoint_url, use_virtuoso=self.use_virtuoso)
             print(f"  ✅ Inversion completed: {len(inversion_results)} data sources processed")
             return inversion_results
         finally:
@@ -405,6 +416,9 @@ class KrownBenchmarkRunner:
         print("🚀 KROWN Benchmark for Knowledge Graph Inversion")
         print("="*60)
         
+        if self.use_virtuoso:
+            print("💡 Assuming Virtuoso is already running at http://localhost:8890/sparql")
+        
         try:
             if not self.setup_database():
                 return 1
@@ -440,7 +454,32 @@ class KrownBenchmarkRunner:
 
 def main():
     """Main entry point."""
-    runner = KrownBenchmarkRunner()
+    parser = argparse.ArgumentParser(
+        description="KROWN Benchmark Runner for Knowledge Graph Inversion",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Run with in-memory RDF processing (default)
+  python run_krown_benchmark.py
+
+  # Run with Virtuoso triplestore (requires Virtuoso running at localhost:8890)
+  python run_krown_benchmark.py --use-virtuoso
+  
+Prerequisites for --use-virtuoso:
+  # Start Virtuoso before running benchmark:
+  uv run python -m virtuoso_utilities.launch_virtuoso --name virtuoso-kgi --http-port 8890 --detach --wait-ready
+        """
+    )
+    
+    parser.add_argument(
+        "--use-virtuoso",
+        action="store_true",
+        help="Use Virtuoso triplestore for SPARQL queries instead of in-memory processing"
+    )
+    
+    args = parser.parse_args()
+    
+    runner = KrownBenchmarkRunner(use_virtuoso=args.use_virtuoso)
     return runner.run_benchmark()
 
 if __name__ == "__main__":
