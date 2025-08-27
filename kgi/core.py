@@ -12,6 +12,7 @@ from morph_kgc.mapping.mapping_parser import retrieve_mappings
 from .constants import RML_BLANK_NODE, RML_PARENT_TRIPLES_MAP, TEST_LOG_FOLDER
 from .endpoints import EndpointFactory, RemoteEndpoint, VirtuosoEndpoint
 from .query import retrieve_data
+from .schema import DatabaseSchemaRetriever, apply_schema_ordering, apply_schema_types
 from .templates import CSVTemplate, JSONTemplate, RDBTemplate
 from .utils import insert_columns
 
@@ -154,6 +155,11 @@ def inversion(config_file: str | pathlib.Path, test_id: str = None, dest_db_url:
         
     insert_columns(mappings)
     db_configs = extract_db_config(config)
+    
+    schema_retrievers = {}
+    for section, db_config in db_configs.items():
+        if 'db_url' in db_config:
+            schema_retrievers[section] = DatabaseSchemaRetriever(db_config['db_url'])
 
     for table_name, source_rules in mappings.groupby("logical_source_value"):
         source_section = source_rules.iloc[0].get('source_section', 'DataSource1')
@@ -167,6 +173,12 @@ def inversion(config_file: str | pathlib.Path, test_id: str = None, dest_db_url:
             results[table_name] = {"inverted_query": "", "sparql_query": ""}
             get_logger().warning(f"No data generated for {table_name}")
             continue
+        
+        if source_section in schema_retrievers:
+            schema_retriever: DatabaseSchemaRetriever = schema_retrievers[source_section]
+            table_schema = schema_retriever.get_table_schema(table_name)
+            source_data = apply_schema_types(source_data, table_schema)
+            source_data = apply_schema_ordering(source_data, table_schema)
             
         try:
             filled_source = template.fill_data(source_data, table_name)
@@ -177,5 +189,8 @@ def inversion(config_file: str | pathlib.Path, test_id: str = None, dest_db_url:
         except AttributeError as e:
             get_logger().error(f"Error while filling template: {e}")
             raise e
+    
+    for retriever in schema_retrievers.values():
+        retriever.dispose()
             
     return results
