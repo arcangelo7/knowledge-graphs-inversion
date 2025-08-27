@@ -1,4 +1,5 @@
 import json
+import logging
 import math
 import os
 import traceback
@@ -14,6 +15,18 @@ from rdflib import Dataset, Literal, Namespace
 from database_connection import DatabaseConnection
 from poc_inversion import inversion
 from r2rml_test_cases.test import database_load, generate_results, test_one
+
+# Suppress morph-kgc and other external library logging immediately after imports
+import morph_kgc
+logging.getLogger('morph_kgc').setLevel(logging.ERROR)
+logging.getLogger('morph_kgc.config').setLevel(logging.ERROR)
+logging.getLogger('morph_kgc.mapping').setLevel(logging.ERROR)
+logging.getLogger('morph_kgc.engine').setLevel(logging.ERROR)
+logging.getLogger('morph_kgc.args_parser').setLevel(logging.ERROR)
+logging.getLogger('rdflib').setLevel(logging.ERROR)
+logging.getLogger('sqlalchemy').setLevel(logging.ERROR)
+logging.getLogger('pandas').setLevel(logging.ERROR)
+logging.getLogger().setLevel(logging.ERROR)
 
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -52,13 +65,8 @@ DCELEMENTS = Namespace("http://purl.org/dc/terms/")
 
 DEST_DB_SYSTEM = 'dest_postgresql'
 
-manifest_graph = None
-try:
-    manifest_graph = Dataset()
-    manifest_graph.parse(os.path.join(TEST_CASES_DIR, "manifest.ttl"), format='turtle')
-    print("Manifest graph loaded successfully")
-except Exception as e:
-    print(f"Warning: Could not load manifest.ttl: {e}")
+manifest_graph = Dataset()
+manifest_graph.parse(os.path.join(TEST_CASES_DIR, "manifest.ttl"), format='turtle')
 
 db_connection = DatabaseConnection()
 
@@ -165,10 +173,6 @@ def drop_tables(db_connection: DatabaseConnection, database_system):
             
             # Drop all tables
             metadata.drop_all(engine)
-            
-        print(f"All tables dropped for {database_system}")
-    except Exception as e:
-        print(f"Error dropping tables for {database_system}: {str(e)}")
     finally:
         engine.dispose()
 

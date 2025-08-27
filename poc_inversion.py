@@ -355,16 +355,11 @@ class QueryTriple(Triple):
             return "\n".join(lines)
 
         elif object_map_type == RML_PARENT_TRIPLES_MAP:
-            subject_map_value = self.rule["subject_map_value"]
-            get_logger().debug(f"Generating parent triples map for {subject_map_value} (subject identifier: {subject_reference})")
             object_parent_triples_map_id = self.rule["object_map_value"]
             object_rule = all_mapping_rules[all_mapping_rules["triples_map_id"] == object_parent_triples_map_id].iloc[0]
             object_map_value = object_rule["subject_map_value"]
             object_reference = codex.get_id(object_map_value)
-            get_logger().debug(f"Object map value: {object_map_value} (object reference: {object_reference})")
             predicate = f'<{self.rule["predicate_map_value"]}>'
-            get_logger().debug(f"Predicate: {predicate}")
-            get_logger().debug(f"Proposed mapping: ?{subject_reference} {predicate} ?{object_reference} (subject map value: {subject_map_value}) (object map value: {object_map_value})")
             return f"?{subject_reference} {predicate} ?{object_reference} ."
             
         else:
@@ -561,36 +556,21 @@ class Query:
 
     def generate(self, all_mapping_rules) -> str:
         # select triples using strategy
-        inversion_logger.info(f"Selecting triples using {self.selector}")
         selected_triples:list[Triple] = self.selector.select(self.triples)
-        subject_count = len(set([triple.rule["subject_map_value"] for triple in selected_triples]))
-        triple_count = len(selected_triples)
 
         all_references = self.references
         uri_encoded_references = self.uri_encoded_references
-        plain_references = self.plain_references
         
         if all_references == []:
             inversion_logger.warning("No references found, no query generated")
             return None
 
-        inversion_logger.info(
-            f"Selected {triple_count} triples with {subject_count} subjects having:\n\
-                {len(uri_encoded_references)} URI encoded references: {uri_encoded_references}\n\
-                {len(plain_references)} plain references: {plain_references}\n\
-                {len(all_references)} all references: {all_references}")
         triple_strings = []
         
         constant_triples = [triple for triple in selected_triples if triple.rule["object_map_type"] == RML_CONSTANT]
         reference_triples = [triple for triple in selected_triples if triple.rule["object_map_type"] == RML_REFERENCE]
         template_triples = [triple for triple in selected_triples if triple.rule["object_map_type"] == RML_TEMPLATE]
         parent_triples = [triple for triple in selected_triples if triple.rule["object_map_type"] == RML_PARENT_TRIPLES_MAP]
-        
-        inversion_logger.debug(f"Selected triples: {len(selected_triples)}")
-        inversion_logger.debug(f"Constant triples: {len(constant_triples)}")
-        inversion_logger.debug(f"Reference triples: {len(reference_triples)}")
-        inversion_logger.debug(f"Template triples: {len(template_triples)}")
-        inversion_logger.debug(f"Parent triples: {len(parent_triples)}")
                             
         # sorting might improve performance
         for selected_triples in [constant_triples, parent_triples, template_triples, reference_triples]:
@@ -608,8 +588,6 @@ class Query:
             ]
         ) + " WHERE {"
         generated_query = select_part + "\n".join(triple_strings) + "}"
-        inversion_logger.debug(self.codex.codex)
-        inversion_logger.debug(self.codex.codex)
         self.generated_query = generated_query.replace("\\", "\\\\")
         return self.generated_query
 
@@ -656,15 +634,10 @@ class RemoteEndpoint(Endpoint):
 
     def _load_data(self):
         """Load RDF data into the SPARQL endpoint using INSERT DATA."""
-        print(f"Loading RDF data into SPARQL endpoint from: {self.rdf_file_path}")
-        
         clear_query = f"CLEAR GRAPH <{self._graph_uri}>"
-        try:
-            self._sparql.setQuery(clear_query)
-            self._sparql.setMethod(POST)
-            self._sparql.query()
-        except Exception as e:
-            print(f"Warning: Could not clear graph (might not exist): {e}")
+        self._sparql.setQuery(clear_query)
+        self._sparql.setMethod(POST)
+        self._sparql.query()
         
         with open(self.rdf_file_path, 'r', encoding='utf-8') as f:
             chunk_size = 1000
@@ -681,8 +654,6 @@ class RemoteEndpoint(Endpoint):
             
             if triples:
                 self._insert_triples(triples)
-        
-        print(f"Data loaded into graph: {self._graph_uri}")
 
     def _insert_triples(self, triples):
         """Insert a batch of triples into the SPARQL endpoint."""
@@ -693,20 +664,9 @@ class RemoteEndpoint(Endpoint):
             insert_query += f"    {triple} .\n"
         insert_query += "  }\n}"
         
-        try:
-            self._sparql.setQuery(insert_query)
-            self._sparql.setMethod(POST)
-            self._sparql.query()
-        except Exception as e:
-            print(f"Error inserting triples: {e}")
-            for triple in triples:
-                try:
-                    single_insert = f"INSERT DATA {{ GRAPH <{self._graph_uri}> {{ {triple} . }} }}"
-                    self._sparql.setQuery(single_insert)
-                    self._sparql.setMethod(POST)
-                    self._sparql.query()
-                except Exception as e2:
-                    print(f"Failed to insert triple: {triple}: {e2}")
+        self._sparql.setQuery(insert_query)
+        self._sparql.setMethod(POST)
+        self._sparql.query()
 
     def query(self, query: str):
         if self._graph_uri:
@@ -730,14 +690,10 @@ class RemoteEndpoint(Endpoint):
     def __del__(self):
         """Clean up by removing the graph from the endpoint."""
         if self._graph_uri:
-            try:
-                clear_query = f"CLEAR GRAPH <{self._graph_uri}>"
-                self._sparql.setQuery(clear_query)
-                self._sparql.setMethod(POST)
-                self._sparql.query()
-                print(f"Cleaned up graph: {self._graph_uri}")
-            except Exception:
-                pass  # Ignore errors during cleanup
+            clear_query = f"CLEAR GRAPH <{self._graph_uri}>"
+            self._sparql.setQuery(clear_query)
+            self._sparql.setMethod(POST)
+            self._sparql.query()
 
 
 class VirtuosoEndpoint(RemoteEndpoint):
@@ -764,16 +720,11 @@ class VirtuosoEndpoint(RemoteEndpoint):
         import subprocess
         import tempfile
         
-        print(f"Bulk loading RDF data from: {self.rdf_file_path}")
-        
         # Clear existing graph first
         clear_query = f"CLEAR GRAPH <{self._graph_uri}>"
-        try:
-            self._sparql.setQuery(clear_query)
-            self._sparql.setMethod(POST)
-            self._sparql.query()
-        except Exception as e:
-            print(f"Warning: Could not clear graph (might not exist): {e}")
+        self._sparql.setQuery(clear_query)
+        self._sparql.setMethod(POST)
+        self._sparql.query()
         
         # Convert N-Triples to N-Quads with target graph
         temp_nq_file = None
@@ -803,8 +754,6 @@ class VirtuosoEndpoint(RemoteEndpoint):
             bulk_load_file = f"{self.host_bulk_load_dir}/temp_bulk_load.nq.gz"
             shutil.copy2(temp_nq_gz_file, bulk_load_file)
             
-            print("Running direct isql commands for bulk loading...")
-            
             # Step 1: Clear any existing entries for this file from load_list
             clear_cmd = [
                 'docker', 'exec', self.container_name, 
@@ -819,12 +768,10 @@ class VirtuosoEndpoint(RemoteEndpoint):
                 '/opt/virtuoso-opensource/bin/isql', '1111', 'dba', 'dba',
                 'exec=' + f"ld_dir('{self.bulk_load_dir}', '*.nq.gz', 'http://localhost:8890/DAV/ignored');"
             ]
-            print(f"Registering file for bulk load...")
             result = subprocess.run(register_cmd, capture_output=True, text=True)
             
             if result.returncode != 0:
-                print(f"Failed to register file: {result.stderr}")
-                return
+                raise RuntimeError(f"Failed to register file: {result.stderr}")
                 
             # Step 3: Run the bulk loader
             load_cmd = [
@@ -832,18 +779,10 @@ class VirtuosoEndpoint(RemoteEndpoint):
                 '/opt/virtuoso-opensource/bin/isql', '1111', 'dba', 'dba',
                 'exec=rdf_loader_run();'
             ]
-            print(f"Running bulk loader...")
             result = subprocess.run(load_cmd, capture_output=True, text=True)
             
             if result.returncode != 0:
-                print(f"Bulk load failed: {result.stderr}")
-                super()._load_data()
-            else:
-                print(f"Bulk load completed successfully")
-                print(f"Data loaded into graph: {self._graph_uri}")
-                
-        except Exception as e:
-            print(f"Error during bulk loading: {e}")
+                raise RuntimeError(f"Bulk load failed: {result.stderr}")
             
         finally:
             # Clean up temporary files
@@ -1617,9 +1556,6 @@ def retrieve_data(
     endpoint: Endpoint,
     decode_columns: bool = False,
 ) -> tuple[pd.DataFrame | None, str | None]:
-    retrieve_data_start_time = time.time()
-    source = source_rules.iloc[0]['logical_source_value']
-    inversion_logger.debug(f"Processing source {source}")
 
     triples: list[QueryTriple] = [
         QueryTriple(rule) for _, rule in source_rules.iterrows() if rule["object_map_type"] not in [RML_BLANK_NODE]
@@ -1636,20 +1572,9 @@ def retrieve_data(
         inversion_logger.warning("No query generated (no references found)")
         return None, None
 
-    inversion_logger.debug(generated_query)
-
     try:
-        start_query_time = time.time()
-        inversion_logger.debug(f"Time to generate query: {start_query_time - retrieve_data_start_time}s")
-        print(f"DEBUG: About to execute query on endpoint {type(endpoint).__name__}")
-        print(f"DEBUG: Query: {generated_query}")
         result = endpoint.query(generated_query)
-        print("RESULT: ", result)
-        end_query_time = time.time()
-        inversion_logger.debug(f"Time to query endpoint: {end_query_time - start_query_time}s")
-
         if not result.strip():
-            inversion_logger.info("Query returned empty result")
             return pd.DataFrame(), generated_query
 
         if isinstance(endpoint, LocalSparqlGraphStore):
@@ -1673,8 +1598,6 @@ def retrieve_data(
         if decode_columns:
             df = query.decode_dataframe(df)
 
-        convert_time = time.time()
-        inversion_logger.debug(f"Time to convert data: {convert_time - end_query_time}s")
         return df, generated_query
 
     except Exception as e:
@@ -1683,7 +1606,6 @@ def retrieve_data(
 
 def generate_template(source_rules: pd.DataFrame, db_url: str = None) -> Template:
     source_type = source_rules.iloc[0]["source_type"]
-    inversion_logger.info(f"Generating template for source type {source_type}")
 
     if source_type == "JSON":
         template = JSONTemplate()
@@ -1696,7 +1618,6 @@ def generate_template(source_rules: pd.DataFrame, db_url: str = None) -> Templat
                 predecessors = '.'.join(splitted[:-1])
                 path = f"{iterator}.{predecessors}['{splitted[-1]}']"
                 template.add_path(path)
-        inversion_logger.debug(json.dumps(json.loads(template.create_template()), indent=4))
         return template
     elif source_type == "CSV":
         return CSVTemplate()
@@ -1721,7 +1642,6 @@ def test_logging_setup(testID: str):
     
 def inversion(config_file: str | pathlib.Path, testID: str = None, dest_db_url: str = None, sparql_endpoint: str = None, use_virtuoso: bool = False) -> dict[str, dict[str, str]]:
     results = {}
-    start_time = time.time()
     if testID is not None:
         test_logging_setup(testID)  
     config = load_config_from_argument(config_file)
@@ -1743,7 +1663,6 @@ def inversion(config_file: str | pathlib.Path, testID: str = None, dest_db_url: 
             url = config.get_output_file()
             
             if use_virtuoso:
-                print("Using Virtuoso endpoint with bulk loading...")
                 endpoint = VirtuosoEndpoint(sparql_endpoint, rdf_file_to_load=url)
             else:
                 endpoint = RemoteEndpoint(sparql_endpoint, rdf_file_to_load=url)
@@ -1755,22 +1674,16 @@ def inversion(config_file: str | pathlib.Path, testID: str = None, dest_db_url: 
         return results
         
     insert_columns(mappings)
-    setup_done_time = time.time()
-    inversion_logger.debug(f"Starting sources generation, {setup_done_time - start_time}s used for setup")
     
     db_configs = extract_db_config(config)
 
     for table_name, source_rules in mappings.groupby("logical_source_value"):
-        inversion_logger.info(f"Processing table {table_name}")
         
-        template_generation_start_time = time.time()
         source_section = source_rules.iloc[0].get('source_section', 'DataSource1')
         db_config = db_configs.get(source_section, db_configs.get('DataSource1', {}))
         template_db_url = dest_db_url if dest_db_url else db_config.get('db_url')
         template = generate_template(source_rules, template_db_url)
         
-        data_retrieval_start_time = time.time()
-        inversion_logger.debug(f"Starting data retrieval, {data_retrieval_start_time - template_generation_start_time}s used for template generation")
         source_data, sparql_query = retrieve_data(mappings, source_rules, endpoint, decode_columns=True)
         
         if source_data is None:
@@ -1779,8 +1692,6 @@ def inversion(config_file: str | pathlib.Path, testID: str = None, dest_db_url: 
             continue
             
         try:
-            template_filling_start_time = time.time()
-            inversion_logger.debug(f"Starting template filling, {template_filling_start_time - data_retrieval_start_time}s used for data retrieval")
             filled_source = template.fill_data(source_data, table_name)
             results[table_name] = {
                 "inverted_query": filled_source,
@@ -1790,9 +1701,6 @@ def inversion(config_file: str | pathlib.Path, testID: str = None, dest_db_url: 
             inversion_logger.error(f"Error while filling template: {e}")
             raise e
             
-        source_end_time = time.time()
-        inversion_logger.info(f"Table filled in {source_end_time - template_filling_start_time}s")
-        inversion_logger.info(f"Table {table_name} processed in {source_end_time - template_generation_start_time}s")
         
     return results
 
@@ -1821,10 +1729,8 @@ def url_decode(url):
 
 def logging_setup():
     if os.path.exists("inversion.log"):
-        try:
-            os.remove("inversion.log")
-        except Exception as e:
-            print(f"Error while removing inversion.log: {e}")
+        os.remove("inversion.log")
+
     inversion_logger.setLevel(logging.DEBUG)
     formatter = logging.Formatter("%(name)s - %(levelname)s - %(message)s")
     file_logger = logging.FileHandler("inversion.log")
@@ -1859,7 +1765,6 @@ def test():
     selected_tests = tests_with_output[tests_with_output["better RML id"].isin(selected_tests_ids)]
     
     for _, row in selected_tests.iterrows():
-        inversion_logger.info(f'Running test {row["RML id"]}, ({row["better RML id"]})')
         os.chdir(testcases_path / row["RML id"])
         inversion(MORPH_CONFIG, testID=row["RML id"])
     
@@ -1882,48 +1787,22 @@ def rml_test_cases():
     os.chdir(testcases_path)
     for _, row in tests_with_output.iterrows():
         if row["better RML id"] in bad_tests:
-            inversion_logger.info(f'Skipping test {row["RML id"]}, ({row["better RML id"]})')
             continue
-        inversion_logger.info(f'Running test {row["RML id"]}, ({row["better RML id"]})')
         os.chdir(testcases_path / row["RML id"])
         try:
             results = inversion(MORPH_CONFIG)
             for source, source_result in results.items():
                 with open(source, "r") as file:
                     expected_source = pd.read_csv(file)
-                inversion_logger.debug("Generated: " + source_result)
-                inversion_logger.debug("Original:" + expected_source.to_csv(index=False))
                 source_result_df = pd.read_csv(StringIO(source_result))
-                if Validator.df_equals(source_result_df, expected_source):
-                    inversion_logger.info(f"Dataframes are equal for {source}")
-                    inversion_logger.info("Test passed")
-                else:
-                    inversion_logger.info(f"Dataframes are not equal for {source}")
-                    inversion_logger.info("Test failed")
+                Validator.df_equals(source_result_df, expected_source)
         except ValueError as e:
-            inversion_logger.debug(e)
-            inversion_logger.info("Test failed (exception: %s - %s)", type(e).__name__, e)
+            pass
     os.chdir(original_path)
 
 def run_tests():
     rml_test_cases()
 
-def test2():
-    os.chdir(r"C:\Github\Knowledge-graphs-inversion\Implementation\Tests\Inversion_tests\Temp")
-    config = load_config_from_argument(MORPH_CONFIG)
-    mappings: pd.DataFrame
-    mappings, _ = retrieve_mappings(config)
-    insert_columns(mappings)
-    results = {}
-    for source, source_rules in mappings.groupby("logical_source_value"):
-        inversion_logger.info(f"Processing source {source}")
-        template = generate_template(source_rules)
-        # for _, mapping in source_rules.iterrows():
-        #     get_logger().debug(mapping['object_join_conditions'])
-        # for _, mapping in source_rules.iterrows():
-        #     get_logger().debug(mapping)
-        data = retrieve_data(mappings, source_rules, EndpointFactory.create(config), decode_columns=True)
-        get_logger().debug(template.fill_data(data))
 
 if __name__ == "__main__":
     main()
