@@ -7,8 +7,9 @@ benchmarks/*/*.csv
 benchmarks/*/*.rdf
 benchmarks/*/*.nt
 
-r2rml_test_cases/output.nt
-r2rml_test_cases/results*
+r2rml_test_cases/**/*.nt
+inversion.log
 
 # Virtuoso data directory
 virtuoso-data/
+CLAUDE.md
