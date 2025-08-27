@@ -961,7 +961,8 @@ class LocalSparqlGraphStore(Endpoint):
                 return ""
         except Exception as e:
             logging.error(f"Query execution error: {e}")
-            return ""
+            logging.error(f"Failed query: {query}")
+            raise  # Re-raise the exception instead of silently returning empty string
 
     def __del__(self):
         if self.delete_after_use:
@@ -1640,6 +1641,8 @@ def retrieve_data(
     try:
         start_query_time = time.time()
         inversion_logger.debug(f"Time to generate query: {start_query_time - retrieve_data_start_time}s")
+        print(f"DEBUG: About to execute query on endpoint {type(endpoint).__name__}")
+        print(f"DEBUG: Query: {generated_query}")
         result = endpoint.query(generated_query)
         print("RESULT: ", result)
         end_query_time = time.time()
@@ -1757,13 +1760,12 @@ def inversion(config_file: str | pathlib.Path, testID: str = None, dest_db_url: 
     
     db_configs = extract_db_config(config)
 
-    for source, source_rules in mappings.groupby("logical_source_value"):
-        inversion_logger.info(f"Processing source {source}")
+    for table_name, source_rules in mappings.groupby("logical_source_value"):
+        inversion_logger.info(f"Processing table {table_name}")
         
         template_generation_start_time = time.time()
         source_section = source_rules.iloc[0].get('source_section', 'DataSource1')
         db_config = db_configs.get(source_section, db_configs.get('DataSource1', {}))
-        # For inversion, use dest_db_url if provided (for writing inverted data), otherwise use source db_url
         template_db_url = dest_db_url if dest_db_url else db_config.get('db_url')
         template = generate_template(source_rules, template_db_url)
         
@@ -1772,17 +1774,15 @@ def inversion(config_file: str | pathlib.Path, testID: str = None, dest_db_url: 
         source_data, sparql_query = retrieve_data(mappings, source_rules, endpoint, decode_columns=True)
         
         if source_data is None:
-            results[source] = {"inverted_query": "", "sparql_query": ""}
-            inversion_logger.warning(f"No data generated for {source}")
+            results[table_name] = {"inverted_query": "", "sparql_query": ""}
+            inversion_logger.warning(f"No data generated for {table_name}")
             continue
             
         try:
             template_filling_start_time = time.time()
             inversion_logger.debug(f"Starting template filling, {template_filling_start_time - data_retrieval_start_time}s used for data retrieval")
-            # Use testID as table name prefix if provided for better table organization
-            table_name = f"{testID}_{source}" if testID else source
             filled_source = template.fill_data(source_data, table_name)
-            results[source] = {
+            results[table_name] = {
                 "inverted_query": filled_source,
                 "sparql_query": sparql_query
             }
@@ -1791,8 +1791,8 @@ def inversion(config_file: str | pathlib.Path, testID: str = None, dest_db_url: 
             raise e
             
         source_end_time = time.time()
-        inversion_logger.info(f"Source filled in {source_end_time - template_filling_start_time}s")
-        inversion_logger.info(f"Source {source} processed in {source_end_time - template_generation_start_time}s")
+        inversion_logger.info(f"Table filled in {source_end_time - template_filling_start_time}s")
+        inversion_logger.info(f"Table {table_name} processed in {source_end_time - template_generation_start_time}s")
         
     return results
 

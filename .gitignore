@@ -15,4 +15,9 @@ inversion.log
 
 # Virtuoso data directory
 virtuoso-data/
+
+# PostgreSQL data directories
+postgresql_data/
+dest_postgresql_data/
+
 CLAUDE.md

@@ -11,7 +11,7 @@ from flask import (Flask, Response, jsonify, render_template, request,
                    stream_with_context)
 from rdflib import Dataset, Literal, Namespace
 
-from database_manager import DatabaseManager
+from database_connection import DatabaseConnection
 from poc_inversion import inversion
 from r2rml_test_cases.test import database_load, generate_results, test_one
 
@@ -60,30 +60,7 @@ try:
 except Exception as e:
     print(f"Warning: Could not load manifest.ttl: {e}")
 
-db_manager = None
-docker_status = "unknown"
-try:
-    db_manager = DatabaseManager()
-    print("Docker client connected successfully")
-    
-    print("Starting database containers...")
-    db_manager.get_container(DEST_DB_SYSTEM)
-    db_manager.get_container('postgresql')
-    docker_status = "available"
-    print("Database containers started successfully")
-    
-except Exception as e:
-    print(f"Warning: Could not initialize database manager: {e}")
-    if "No such file or directory" in str(e):
-        docker_status = "not_running"
-        print("Docker daemon is not running. Please start Docker and restart the application.")
-    elif "docker" in str(e).lower():
-        docker_status = "not_installed"
-        print("Docker may not be installed or accessible.")
-    else:
-        docker_status = "error"
-        print("Unknown Docker error occurred.")
-    print("Some features may not work without Docker.")
+db_connection = DatabaseConnection()
 
 def get_mapping_filename(test_id):
     letter: str = test_id[-1].lower()
@@ -177,10 +154,10 @@ def get_file_content():
     except FileNotFoundError:
         return jsonify({'error': 'File not found'}), 404
 
-def drop_tables(db_manager: DatabaseManager, database_system):
+def drop_tables(db_connection: DatabaseConnection, database_system):
     try:
-        connection_string = db_manager.get_connection_string(database_system)
-        engine = db_manager.create_engine(connection_string)
+        connection_string = db_connection.get_connection_string(database_system)
+        engine = db_connection.create_engine(connection_string)
         with engine.begin() as connection:
             # Get the metadata
             metadata = sqlalchemy.MetaData()
@@ -201,8 +178,8 @@ def run_single_test(test_id, database_system):
 
     try:
         # Reset databases for the new test
-        drop_tables(db_manager, database_system)
-        drop_tables(db_manager, DEST_DB_SYSTEM)
+        drop_tables(db_connection, database_system)
+        drop_tables(db_connection, DEST_DB_SYSTEM)
 
         # Load test-specific data
         test_uri = manifest_graph.value(subject=None, predicate=DCELEMENTS.identifier, object=Literal(test_id))
@@ -226,14 +203,14 @@ def run_single_test(test_id, database_system):
         raw_results = test_one(test_id, database_system, config, manifest_graph)        
         
         # Perform inversion
-        dest_db_url = db_manager.get_connection_string(DEST_DB_SYSTEM)
+        dest_db_url = db_connection.get_connection_string(DEST_DB_SYSTEM)
         inversion_result = inversion(MORPH_KCG_CONFIG_FILEPATH, test_id, dest_db_url)
 
         inversion_success = bool(inversion_result)
 
         # Compare original and inverted tables
         if inversion_success:
-            databases_equal, comparison_message, source_content, dest_content = compare_databases(db_manager, database_system, DEST_DB_SYSTEM)
+            databases_equal, comparison_message, source_content, dest_content = compare_databases(db_connection, database_system, DEST_DB_SYSTEM)
         else:
             databases_equal = True
             comparison_message = "Inversion failed or was skipped, database comparison not performed."
@@ -328,10 +305,10 @@ def read_file_content(file_path):
             return file.read()
     return "File not found"
 
-def compare_databases(db_manager, source_system, dest_system):
+def compare_databases(db_connection, source_system, dest_system):
     try:
-        source_content = db_manager.get_database_content(source_system)
-        dest_content = db_manager.get_database_content(dest_system)
+        source_content = db_connection.get_database_content(source_system)
+        dest_content = db_connection.get_database_content(dest_system)
 
         if not source_content or not dest_content:
             return False, "One or both databases are empty or couldn't be accessed", None, None
@@ -380,4 +357,4 @@ def compare_databases(db_manager, source_system, dest_system):
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, host='0.0.0.0', port=5000)

@@ -141,7 +141,7 @@ def database_load(database_script, database_system):
         statements = sql_script.split(';')
 
     if database_system == "postgresql":
-        host = os.environ.get('HOST', 'localhost')
+        host = 'postgresql'
         cnx = psycopg2.connect("dbname='r2rml' user='r2rml' host='" + host + "' password='r2rml'")
     elif database_system == "mysql":
         host = os.environ.get('HOST', '127.0.0.1')
@@ -214,7 +214,7 @@ def run_test(t_identifier, mapping, test_uri, expected_output, database_system, 
                     result = failed
             # output is not valid RDF
             except:
-                print("Output RDF is invalid")
+                print("Output RDF is invalid") 
                 result = failed
 
         # and expected output is false and error-code
@@ -229,8 +229,12 @@ def run_test(t_identifier, mapping, test_uri, expected_output, database_system, 
     else:
         # and expected output is true
         if expected_output:
-            print("No RDF output found while output was expected")
-            result = failed
+            # Check if the expected output graph is empty
+            if len(expected_output_graph) == 0:
+                result = passed
+            else:
+                print("No RDF output found while output was expected")
+                result = failed
         # expected output is false
         else:
             result = passed

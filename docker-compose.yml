@@ -1,0 +1,54 @@
+services:
+  app:
+    build: .
+    container_name: kgi-app
+    ports:
+      - "5000:5000"
+    volumes:
+      - .:/app
+    working_dir: /app
+    environment:
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      dest_postgresql:
+        condition: service_healthy
+    restart: unless-stopped
+
+  postgresql:
+    image: postgres:13
+    container_name: kgi-postgresql
+    environment:
+      POSTGRES_PASSWORD: r2rml
+      POSTGRES_USER: r2rml
+      POSTGRES_DB: r2rml
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./postgresql_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U r2rml -d r2rml"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  dest_postgresql:
+    image: postgres:13
+    container_name: kgi-dest-postgresql
+    environment:
+      POSTGRES_PASSWORD: r2rml
+      POSTGRES_USER: r2rml
+      POSTGRES_DB: r2rml
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./dest_postgresql_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U r2rml -d r2rml"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
