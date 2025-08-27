@@ -23,16 +23,20 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from database_manager import DatabaseManager
 from poc_inversion import inversion
+from benchmarks.krown_validator import KrownValidator
 
 
 class KrownBenchmarkRunner:
     """KROWN Benchmark Runner for Knowledge Graph Inversion."""
     
-    def __init__(self, use_virtuoso=True):
+    def __init__(self, use_virtuoso=True, validate=False, cleanup_tables=True):
         self.project_root = Path(__file__).parent.parent
         self.krown_dir = self.project_root / "KROWN"
         self.db_manager = None
         self.use_virtuoso = use_virtuoso
+        self.validate = validate
+        self.cleanup_tables = cleanup_tables
+        self.validator = None
         
     def setup_database(self):
         """Setup PostgreSQL database for KROWN benchmarks."""
@@ -146,11 +150,16 @@ class KrownBenchmarkRunner:
         start_time = time.time()
         
         try:
-            self.execute_load_rdb_step(metadata, shared_dir)
+            self.execute_load_rdb_step(metadata, shared_dir, scenario_name)
             
             self.execute_morph_kgc_step(metadata, shared_dir)
             
             inversion_results = self.execute_inversion_step(metadata, shared_dir, scenario_name)
+            
+            # Perform validation if enabled
+            validation_results = None
+            if self.validate:
+                validation_results = self.validate_scenario(scenario_name)
             
             end_time = time.time()
             execution_time = end_time - start_time
@@ -174,7 +183,8 @@ class KrownBenchmarkRunner:
                 "data_size_bytes": data_file.stat().st_size,
                 "triples_maps_count": tm_count,
                 "predicate_object_maps_count": pom_count,
-                "inversion_results": inversion_results
+                "inversion_results": inversion_results,
+                "validation_results": validation_results
             }
             
             print(f"✅ Completed {scenario_name} in {execution_time:.2f}s")
@@ -192,7 +202,7 @@ class KrownBenchmarkRunner:
                 "error": str(e)
             }
     
-    def execute_load_rdb_step(self, metadata, shared_dir):
+    def execute_load_rdb_step(self, metadata, shared_dir, scenario_name=None):
         """Execute the Load RDB step - load CSV into PostgreSQL."""
         print("  📥 Step 1: Loading CSV data into PostgreSQL...")
         
@@ -212,11 +222,25 @@ class KrownBenchmarkRunner:
             raise FileNotFoundError(f"CSV file not found: {csv_file}")
         
         conn_string = self.db_manager.get_connection_string('postgresql')
-                
-        df = pd.read_csv(csv_file)
-        engine = create_engine(conn_string)
         
-        df.to_sql(table_name, engine, if_exists='replace', index=False)
+        # Store original data for validation
+        if self.validate and scenario_name:
+            # Keep a copy of original data with scenario prefix for validation
+            original_table_name = f"{scenario_name}_original_{table_name}"
+            df = pd.read_csv(csv_file)
+            engine = create_engine(conn_string)
+            
+            # Save original data with scenario prefix
+            df.to_sql(original_table_name, engine, if_exists='replace', index=False)
+            print(f"  💾 Saved original data to '{original_table_name}' for validation")
+            
+            # Also save to the main table for processing
+            df.to_sql(table_name, engine, if_exists='replace', index=False)
+        else:
+            # Normal loading without validation copy
+            df = pd.read_csv(csv_file)
+            engine = create_engine(conn_string)
+            df.to_sql(table_name, engine, if_exists='replace', index=False)
         
         print(f"  ✅ Loaded {len(df)} rows into table '{table_name}'")
         engine.dispose()
@@ -366,6 +390,38 @@ class KrownBenchmarkRunner:
         print(f"📊 Results saved to: {results_file}")
         return results_file
     
+    def generate_validation_summary(self, results):
+        """Generate validation summary from benchmark results."""
+        if not self.validate:
+            return None
+        
+        validation_summary = {
+            "total_scenarios": 0,
+            "passed": 0,
+            "failed": 0,
+            "scenario_results": []
+        }
+        
+        for result in results:
+            if result["status"] == "completed" and result.get("validation_results"):
+                validation_summary["total_scenarios"] += 1
+                val_result = result["validation_results"]
+                validation_summary["scenario_results"].append(val_result)
+                
+                if val_result.get("validation_passed", False):
+                    validation_summary["passed"] += 1
+                else:
+                    validation_summary["failed"] += 1
+        
+        if validation_summary["total_scenarios"] > 0:
+            validation_summary["validation_rate"] = (
+                validation_summary["passed"] / validation_summary["total_scenarios"] * 100
+            )
+        else:
+            validation_summary["validation_rate"] = 0
+        
+        return validation_summary
+    
     def print_summary(self, results):
         """Print benchmark summary."""
         print("\n" + "="*60)
@@ -395,8 +451,12 @@ class KrownBenchmarkRunner:
                     tm_count = result.get("triples_maps_count", 0)
                     pom_count = result.get("predicate_object_maps_count", 0)
                     inv_count = len(result.get("inversion_results", []))
+                    val_status = ""
+                    if self.validate and result.get("validation_results"):
+                        val_passed = result["validation_results"].get("validation_passed", False)
+                        val_status = " ✅" if val_passed else " ❌"
                     print(f"  {result['scenario_name']}: {result['execution_time']:.2f}s "
-                          f"[TM:{tm_count}, POM:{pom_count}, INV:{inv_count}]")
+                          f"[TM:{tm_count}, POM:{pom_count}, INV:{inv_count}]{val_status}")
         
         if failed > 0:
             print(f"\nFailed scenarios:")
@@ -405,11 +465,52 @@ class KrownBenchmarkRunner:
                     error = result.get("error", "Unknown error")
                     print(f"  {result['scenario_name']}: {error}")
     
+    def validate_scenario(self, scenario_name: str) -> dict:
+        """Validate inversion results for a scenario."""
+        print(f"  🔍 Step 4: Validating inversion results...")
+        
+        try:
+            # Compare original table with inverted table
+            original_table = f"{scenario_name}_original_data"
+            inverted_table = f"{scenario_name}_data"
+            
+            result = self.validator.validate_inversion(
+                original_table=original_table,
+                inverted_table=inverted_table,
+                scenario_name=scenario_name
+            )
+            
+            if result["validation_passed"]:
+                print(f"  ✅ Validation passed for {scenario_name}")
+            else:
+                print(f"  ❌ Validation failed for {scenario_name}")
+                if result.get("errors"):
+                    for error in result["errors"][:3]:  # Show first 3 errors
+                        print(f"    - {error}")
+            
+            return result
+            
+        except Exception as e:
+            print(f"  ❌ Validation error: {e}")
+            return {
+                "validation_passed": False,
+                "error": str(e)
+            }
+    
     def cleanup(self):
         """Cleanup resources."""
         if self.db_manager:
-            print("🧹 Cleaning up database...")
-            self.db_manager.stop_existing_services('postgresql')
+            if self.cleanup_tables:
+                print("🧹 Cleaning up database tables...")
+                # Clean all tables if cleanup is enabled
+                if self.validator:
+                    self.validator.cleanup_tables()
+                print("🧹 Stopping database container...")
+                self.db_manager.stop_existing_services('postgresql')
+            else:
+                print("🔒 Keeping database tables for manual inspection")
+                print("🔒 Keeping database container running for manual inspection")
+                print(f"📌 Database is available at: {self.db_manager.get_connection_string('postgresql')}")
     
     def run_benchmark(self):
         """Run the complete KROWN benchmark."""
@@ -422,6 +523,12 @@ class KrownBenchmarkRunner:
         try:
             if not self.setup_database():
                 return 1
+            
+            # Initialize validator if validation is enabled
+            if self.validate:
+                conn_string = self.db_manager.get_connection_string('postgresql')
+                self.validator = KrownValidator(conn_string, verbose=False)
+                print("✅ Validator initialized")
             
             if not self.run_krown_data_generation():
                 print("⚠️ Data generation failed, but continuing with existing data...")
@@ -437,8 +544,16 @@ class KrownBenchmarkRunner:
                 result = self.execute_krown_scenario(scenario_path)
                 results.append(result)
             
-            self.save_results(results)
+            results_file = self.save_results(results)
             self.print_summary(results)
+            
+            # Save validation report if validation was performed
+            if self.validate:
+                validation_summary = self.generate_validation_summary(results)
+                if validation_summary:
+                    validation_file = results_file.parent / f"validation_{results_file.name}"
+                    self.validator.save_validation_report(validation_summary, validation_file)
+                    self.validator.print_summary(validation_summary)
             
             print("\n🎯 KROWN Benchmark completed!")
             return 0
@@ -465,6 +580,12 @@ Examples:
   # Run with Virtuoso triplestore (requires Virtuoso running at localhost:8890)
   python run_krown_benchmark.py --use-virtuoso
   
+  # Run with validation enabled
+  python run_krown_benchmark.py --validate
+  
+  # Run with validation and keep tables for manual inspection
+  python run_krown_benchmark.py --validate --no-cleanup
+  
 Prerequisites for --use-virtuoso:
   # Start Virtuoso before running benchmark:
   uv run python -m virtuoso_utilities.launch_virtuoso --name virtuoso-kgi --http-port 8890 --detach --wait-ready
@@ -477,9 +598,25 @@ Prerequisites for --use-virtuoso:
         help="Use Virtuoso triplestore for SPARQL queries instead of in-memory processing"
     )
     
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="Validate that inverted data matches original input data"
+    )
+    
+    parser.add_argument(
+        "--no-cleanup",
+        action="store_true",
+        help="Keep database tables after benchmark for manual inspection (default: cleanup all tables)"
+    )
+    
     args = parser.parse_args()
     
-    runner = KrownBenchmarkRunner(use_virtuoso=args.use_virtuoso)
+    runner = KrownBenchmarkRunner(
+        use_virtuoso=args.use_virtuoso,
+        validate=args.validate,
+        cleanup_tables=not args.no_cleanup
+    )
     return runner.run_benchmark()
 
 if __name__ == "__main__":

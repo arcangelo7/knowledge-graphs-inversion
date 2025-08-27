@@ -803,20 +803,40 @@ class VirtuosoEndpoint(RemoteEndpoint):
             bulk_load_file = f"{self.host_bulk_load_dir}/temp_bulk_load.nq.gz"
             shutil.copy2(temp_nq_gz_file, bulk_load_file)
             
-            # Use bulk_load.py to load the data
-            bulk_load_cmd = [
-                'python', '-m', 'virtuoso_utilities.bulk_load',
-                '-d', self.bulk_load_dir,
-                '-k', 'dba',  # Default DBA password
-                '--docker-container', self.container_name
-            ]
+            print("Running direct isql commands for bulk loading...")
             
-            print(f"Running bulk load command: {' '.join(bulk_load_cmd)}")
-            result = subprocess.run(bulk_load_cmd, capture_output=True, text=True)
+            # Step 1: Clear any existing entries for this file from load_list
+            clear_cmd = [
+                'docker', 'exec', self.container_name, 
+                '/opt/virtuoso-opensource/bin/isql', '1111', 'dba', 'dba',
+                'exec=' + f"DELETE FROM DB.DBA.load_list WHERE ll_file = '{self.bulk_load_dir}/temp_bulk_load.nq.gz';"
+            ]
+            result = subprocess.run(clear_cmd, capture_output=True, text=True)
+            
+            # Step 2: Register the file for bulk loading
+            register_cmd = [
+                'docker', 'exec', self.container_name,
+                '/opt/virtuoso-opensource/bin/isql', '1111', 'dba', 'dba',
+                'exec=' + f"ld_dir('{self.bulk_load_dir}', '*.nq.gz', 'http://localhost:8890/DAV/ignored');"
+            ]
+            print(f"Registering file for bulk load...")
+            result = subprocess.run(register_cmd, capture_output=True, text=True)
+            
+            if result.returncode != 0:
+                print(f"Failed to register file: {result.stderr}")
+                return
+                
+            # Step 3: Run the bulk loader
+            load_cmd = [
+                'docker', 'exec', self.container_name,
+                '/opt/virtuoso-opensource/bin/isql', '1111', 'dba', 'dba',
+                'exec=rdf_loader_run();'
+            ]
+            print(f"Running bulk loader...")
+            result = subprocess.run(load_cmd, capture_output=True, text=True)
             
             if result.returncode != 0:
                 print(f"Bulk load failed: {result.stderr}")
-                # Fallback to parent method
                 super()._load_data()
             else:
                 print(f"Bulk load completed successfully")
@@ -824,9 +844,6 @@ class VirtuosoEndpoint(RemoteEndpoint):
                 
         except Exception as e:
             print(f"Error during bulk loading: {e}")
-            print("Falling back to INSERT queries...")
-            # Fallback to parent method
-            super()._load_data()
             
         finally:
             # Clean up temporary files
@@ -1762,7 +1779,9 @@ def inversion(config_file: str | pathlib.Path, testID: str = None, dest_db_url: 
         try:
             template_filling_start_time = time.time()
             inversion_logger.debug(f"Starting template filling, {template_filling_start_time - data_retrieval_start_time}s used for data retrieval")
-            filled_source = template.fill_data(source_data, source)
+            # Use testID as table name prefix if provided for better table organization
+            table_name = f"{testID}_{source}" if testID else source
+            filled_source = template.fill_data(source_data, table_name)
             results[source] = {
                 "inverted_query": filled_source,
                 "sparql_query": sparql_query
