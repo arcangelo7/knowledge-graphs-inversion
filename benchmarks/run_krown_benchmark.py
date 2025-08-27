@@ -22,7 +22,7 @@ from sqlalchemy import create_engine, text
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from database_manager import DatabaseManager
-from poc_inversion import inversion
+from kgi.core import inversion
 from benchmarks.krown_validator import KrownValidator
 
 

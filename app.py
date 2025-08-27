@@ -13,7 +13,7 @@ from flask import (Flask, Response, jsonify, render_template, request,
 from rdflib import Dataset, Literal, Namespace
 
 from database_connection import DatabaseConnection
-from poc_inversion import inversion
+from kgi.core import inversion
 from r2rml_test_cases.test import database_load, generate_results, test_one
 
 # Suppress morph-kgc and other external library logging immediately after imports
