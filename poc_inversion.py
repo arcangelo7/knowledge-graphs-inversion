@@ -1716,7 +1716,7 @@ def test_logging_setup(testID: str):
     inversion_logger.addHandler(file_logger)
     inversion_logger.setLevel(logging.DEBUG)
     
-def inversion(config_file: str | pathlib.Path, testID: str = None, dest_db_url: str = None, use_virtuoso: bool = False) -> dict[str, dict[str, str]]:
+def inversion(config_file: str | pathlib.Path, testID: str = None, dest_db_url: str = None, sparql_endpoint: str = None, use_virtuoso: bool = False) -> dict[str, dict[str, str]]:
     results = {}
     start_time = time.time()
     if testID is not None:
@@ -1735,17 +1735,17 @@ def inversion(config_file: str | pathlib.Path, testID: str = None, dest_db_url: 
         return results
         
     try:
-        if dest_db_url:
-            # If dest_db_url is provided, use it as the SPARQL endpoint
-            # and load the RDF file into it
+        if sparql_endpoint:
+            # If sparql_endpoint is provided, use it as the SPARQL endpoint
             url = config.get_output_file()
             
             if use_virtuoso:
                 print("Using Virtuoso endpoint with bulk loading...")
-                endpoint = VirtuosoEndpoint(dest_db_url, rdf_file_to_load=url)
+                endpoint = VirtuosoEndpoint(sparql_endpoint, rdf_file_to_load=url)
             else:
-                endpoint = RemoteEndpoint(dest_db_url, rdf_file_to_load=url)
+                endpoint = RemoteEndpoint(sparql_endpoint, rdf_file_to_load=url)
         else:
+            # Use local SPARQL endpoint with the RDF output file
             endpoint = EndpointFactory.create(config)
     except FileNotFoundError:
         inversion_logger.warning(f"Output file not found. Skipping inversion.")
@@ -1763,8 +1763,8 @@ def inversion(config_file: str | pathlib.Path, testID: str = None, dest_db_url: 
         template_generation_start_time = time.time()
         source_section = source_rules.iloc[0].get('source_section', 'DataSource1')
         db_config = db_configs.get(source_section, db_configs.get('DataSource1', {}))
-        # For template generation, always use the database URL from config, not the SPARQL endpoint URL
-        template_db_url = db_config.get('db_url')
+        # For inversion, use dest_db_url if provided (for writing inverted data), otherwise use source db_url
+        template_db_url = dest_db_url if dest_db_url else db_config.get('db_url')
         template = generate_template(source_rules, template_db_url)
         
         data_retrieval_start_time = time.time()
