@@ -125,12 +125,11 @@ class QueryTriple(Triple):
             object_reference, already_bound = codex.get_id_and_is_bound(object_identifier)
             lines = []
             lines.append(f"?{subject_reference} {predicate} ?{object_reference}")
-            lines.append(f"FILTER(!BOUND(?{object_reference}) || REGEX(STR(?{object_reference}), '{self.rule['object_references_template']}'))")
             
             evaluated_template = object_references_template
             current_slice = object_reference
             
-            for obj in self.rule["object_references"]: 
+            for i, obj in enumerate(self.rule["object_references"]):
                 current_pre_string = evaluated_template.split("(", 1)[0]
                 current_post_string = evaluated_template.split(")", 1)[1]
                 next_pre_string = current_post_string.split("(", 1)[0]
@@ -140,22 +139,22 @@ class QueryTriple(Triple):
                 next_slice = codex.get_id(next_slice_identifier)
                 unescaped_current_pre_string = current_pre_string.replace('\\', "")
                 unescaped_next_pre_string = next_pre_string.replace('\\', "")
-                lines.append(f"{{}} OPTIONAL{{BIND(STRAFTER(STR(?{current_slice}), '{unescaped_current_pre_string}') as ?{next_slice})}}")
+                
+                lines.append(f"BIND(STRAFTER(STR(?{current_slice}), '{unescaped_current_pre_string}') as ?{next_slice})")
                 
                 if current_post_string == "":
-                    lines.append(f"{{}} OPTIONAL{{BIND(?{next_slice} as ?{object_reference}_encoded)}}")
-                    lines.append(f"FILTER(!BOUND(?{object_reference}_encoded) || !BOUND(?{next_slice}) || ?{next_slice} = ?{object_reference}_encoded)")
+                    lines.append(f"BIND(?{next_slice} as ?{object_reference}_encoded)")
                 else:
                     temp_reference_identifier = f"{object_identifier}_temp_{id_generator.get_id()}"
                     temp_reference = codex.get_id(temp_reference_identifier)
                     lines.append(
                         f"BIND(STRBEFORE(STR(?{next_slice}), '{unescaped_next_pre_string}') AS ?{temp_reference})"
                     )
-                    lines.append(f"{{}} OPTIONAL{{BIND(?{temp_reference} as ?{object_reference}_encoded)}}")
-                    lines.append(f"FILTER(!BOUND(?{object_reference}_encoded) || !BOUND(?{temp_reference}) || ?{temp_reference} = ?{object_reference}_encoded)")
+                    lines.append(f"BIND(?{temp_reference} as ?{object_reference}_encoded)")
 
                 evaluated_template = current_post_string
                 current_slice = next_slice
+                
             return "\n".join(lines)
 
         elif object_map_type == RML_PARENT_TRIPLES_MAP:
@@ -226,18 +225,16 @@ class SubjectTriple(QueryTriple):
             current_reference, already_bound = codex.get_id_and_is_bound(reference_identifier)
             next_slice_reference_identifier = f"{subject_map_value}_slice_subject_{id_generator.get_id()}"
             next_slice_reference = codex.get_id(next_slice_reference_identifier)
-            lines.append(f"{{}} OPTIONAL{{BIND(STRAFTER(STR(?{current_slice_reference}), '{current_pre_string}') as ?{next_slice_reference})}}")
+            lines.append(f"BIND(STRAFTER(STR(?{current_slice_reference}), '{current_pre_string}') as ?{next_slice_reference})")
             
             if current_post_string == "":
-                lines.append(f"{{}} OPTIONAL{{BIND(?{next_slice_reference} as ?{current_reference}_encoded)}}")
-                lines.append(f"FILTER(!BOUND(?{current_reference}_encoded) || !BOUND(?{next_slice_reference}) || ?{next_slice_reference} = ?{current_reference}_encoded)")
+                lines.append(f"BIND(?{next_slice_reference} as ?{current_reference}_encoded)")
             else:
                 reference_placeholder = codex.get_id(f"{reference_identifier}_temp_{id_generator.get_id()}")
                 lines.append(
                     f"BIND(STRBEFORE(STR(?{next_slice_reference}), '{next_pre_string}') AS ?{reference_placeholder})"
                 )
-                lines.append(f"{{}} OPTIONAL{{BIND(?{reference_placeholder} as ?{current_reference}_encoded)}}")
-                lines.append(f"FILTER(!BOUND(?{current_reference}_encoded) || !BOUND(?{reference_placeholder}) || ?{reference_placeholder} = ?{current_reference}_encoded)")
+                lines.append(f"BIND(?{reference_placeholder} as ?{current_reference}_encoded)")
                 
             evaluated_template = current_post_string
             current_slice_reference = next_slice_reference
