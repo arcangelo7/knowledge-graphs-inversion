@@ -149,7 +149,7 @@ def retrieve_data(
     # Add subject triples for template extraction
     triples.extend(
         SubjectTriple(subject_rules.iloc[0])
-        for subject, subject_rules in source_rules.groupby("subject_map_value", dropna=False)
+        for _, subject_rules in source_rules.groupby("subject_map_value", dropna=False)
     )
 
     query = Query(triples)

@@ -4,7 +4,6 @@ import math
 import os
 import traceback
 from configparser import ConfigParser
-from datetime import date, datetime
 
 import pandas as pd
 import sqlalchemy
@@ -14,10 +13,9 @@ from rdflib import Dataset, Literal, Namespace
 
 from database_connection import DatabaseConnection
 from kgi.core import inversion
-from r2rml_test_cases.test import database_load, generate_results, test_one
+from r2rml_test_cases.test import database_load, test_one
 
 # Suppress morph-kgc and other external library logging immediately after imports
-import morph_kgc
 logging.getLogger('morph_kgc').setLevel(logging.ERROR)
 logging.getLogger('morph_kgc.config').setLevel(logging.ERROR)
 logging.getLogger('morph_kgc.mapping').setLevel(logging.ERROR)
@@ -27,26 +25,6 @@ logging.getLogger('rdflib').setLevel(logging.ERROR)
 logging.getLogger('sqlalchemy').setLevel(logging.ERROR)
 logging.getLogger('pandas').setLevel(logging.ERROR)
 logging.getLogger().setLevel(logging.ERROR)
-
-
-class CustomJSONEncoder(json.JSONEncoder):
-    def default(self, obj):
-        if isinstance(obj, (date, datetime)):
-            return obj.isoformat()
-        elif isinstance(obj, float):
-            if math.isnan(obj):
-                return "NaN"
-            elif math.isinf(obj):
-                return "Infinity" if obj > 0 else "-Infinity"
-        elif hasattr(obj, '__dict__'):
-            return str(obj)
-        try:
-            iterable = iter(obj)
-        except TypeError:
-            pass
-        else:
-            return list(iterable)
-        return super().default(obj)
 
 
 app = Flask(__name__)
@@ -81,9 +59,11 @@ def sanitize_data(data):
         return [sanitize_data(v) for v in data]
     elif isinstance(data, float):
         if math.isnan(data):
-            return "NaN"
+            return None  # Convert NaN to null
         elif math.isinf(data):
-            return "Infinity" if data > 0 else "-Infinity"
+            return None  # Convert Infinity to null
+        else:
+            return data  # RETURN NORMAL FLOATS!
     elif isinstance(data, (int, str, bool, type(None))):
         return data
     else:
@@ -108,13 +88,7 @@ def run_test():
 
     try:
         sanitized_result = sanitize_data(result)
-        json_result = json.dumps(sanitized_result, cls=CustomJSONEncoder)
-
-        return app.response_class(
-            response=json_result,
-            status=200,
-            mimetype='application/json'
-        )
+        return jsonify(sanitized_result)
     except Exception as e:
         error_msg = f"Error serializing result for test {test_id}: {str(e)}"
         return jsonify({
@@ -133,7 +107,7 @@ def run_all_tests():
             result = run_single_test(test_id, database_system)
             try:
                 sanitized_result = sanitize_data(result)
-                json_result = json.dumps(sanitized_result, cls=CustomJSONEncoder)
+                json_result = json.dumps(sanitized_result)
                 yield f"data: {json_result}\n\n"
             except Exception as e:
                 error_msg = f"Error serializing result for test {test_id}: {str(e)}"
@@ -246,7 +220,6 @@ def run_single_test(test_id, database_system):
             config, purpose, inversion_result, databases_equal, comparison_message,
             source_content, dest_content, inversion_status
         )
-        generate_results(database_system, config, raw_results)
         
         # Return to original directory
         os.chdir(os.path.dirname(__file__))

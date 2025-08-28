@@ -70,6 +70,9 @@ class DatabaseConnection:
                 
                 datatypes = datatypes.set_index('column_name')['data_type']
                 
+                # Replace NaN with None for proper JSON serialization if needed
+                content = content.where(pd.notnull(content), None)
+                
                 return {
                     'columns': content.columns.tolist(),
                     'data': content.values.tolist()
