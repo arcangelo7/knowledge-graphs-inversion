@@ -54,6 +54,13 @@ class RDBTemplate(Template):
         """Fill template with data and create SQL statements."""
         engine = self.create_engine()
         table = self._get_sqla_table(data, table_name)
+        
+        # Convert data types to match schema before creating insert statement
+        data = data.copy()
+        for col in table.columns:
+            if isinstance(col.type, String):
+                data[col.name] = data[col.name].map(lambda x: str(x) if x is not None else None)
+        
         insert_stmt = postgresql.insert(table).values(data.to_dict(orient='records'))
         
         if data.empty:
@@ -91,7 +98,6 @@ class RDBTemplate(Template):
                     table.create(connection)
 
                 # Generate INSERT statements
-                data = data.apply(lambda col: col.map(lambda x: x.isoformat() if isinstance(x, (date, datetime)) else x))
                 connection.execute(insert_stmt)
 
         # Generate full query for logging purposes
@@ -116,7 +122,15 @@ class RDBTemplate(Template):
         columns = []
         
         for column_name, dtype in df.dtypes.items():
-            if "int" in str(dtype):
+            # Check if column contains mixed types by examining actual values
+            column_values = df[column_name].dropna()
+            has_strings = any(isinstance(val, str) for val in column_values)
+            has_numbers = any(isinstance(val, (int, float)) for val in column_values)
+            
+            # If column has mixed strings and numbers, or contains strings, use String type
+            if has_strings or (has_strings and has_numbers):
+                col_type = String()
+            elif "int" in str(dtype):
                 col_type = Integer()
             elif "float" in str(dtype):
                 col_type = Numeric()

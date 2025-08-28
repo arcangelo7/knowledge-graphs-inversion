@@ -150,21 +150,25 @@ class JSONPathFunctions:
 def sparql_to_python_type(value, datatype):
     """Convert SPARQL datatype to Python type."""
     datatype = str(datatype)
-    if datatype == 'http://www.w3.org/2001/XMLSchema#integer':
-        return int(value)
-    elif datatype == 'http://www.w3.org/2001/XMLSchema#decimal':
-        return Decimal(value)
-    elif datatype == 'http://www.w3.org/2001/XMLSchema#float':
-        return float(value)
-    elif datatype == 'http://www.w3.org/2001/XMLSchema#double':
-        return float(value)
-    elif datatype == 'http://www.w3.org/2001/XMLSchema#boolean':
-        return value.lower() == 'true'
-    elif datatype == 'http://www.w3.org/2001/XMLSchema#dateTime':
-        return datetime.fromisoformat(value)
-    elif datatype == 'http://www.w3.org/2001/XMLSchema#date':
-        return datetime.strptime(value, "%Y-%m-%d").date()
-    else:
+    try:
+        if datatype == 'http://www.w3.org/2001/XMLSchema#integer':
+            return int(value)
+        elif datatype == 'http://www.w3.org/2001/XMLSchema#decimal':
+            return Decimal(value)
+        elif datatype == 'http://www.w3.org/2001/XMLSchema#float':
+            return float(value)
+        elif datatype == 'http://www.w3.org/2001/XMLSchema#double':
+            return float(value)
+        elif datatype == 'http://www.w3.org/2001/XMLSchema#boolean':
+            return value.lower() == 'true'
+        elif datatype == 'http://www.w3.org/2001/XMLSchema#dateTime':
+            return datetime.fromisoformat(value)
+        elif datatype == 'http://www.w3.org/2001/XMLSchema#date':
+            return datetime.strptime(value, "%Y-%m-%d").date()
+        else:
+            return value
+    except (ValueError, TypeError) as e:
+        logging.getLogger("kgi").warning(f"Type conversion failed for value '{value}' to datatype '{datatype}': {e}. Returning original value.")
         return value
 
 
