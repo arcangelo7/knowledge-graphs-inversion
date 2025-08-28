@@ -62,15 +62,26 @@ def extract_columns_from_mapping(mapping_content):
         
         columns = set()
         
+        # Extract column references from rr:column properties
         for s, p, o in g.triples((None, RR.column, None)):
             column_name = str(o).strip('"')
             columns.add(column_name)
         
+        # Extract column references from rr:template properties
         for s, p, o in g.triples((None, RR.template, None)):
             template = str(o)
-            # Find column references in templates like {\"ID\"} or {ID}
-            column_refs = re.findall(r'\{["\']?([^"\'{}]+)["\']?\}', template)
+            # Find column references in templates like {\"ID\"} or {ID} or {"ID"}
+            column_refs = re.findall(r'\{\\?"?\'?([^"\'{}\\]+)\\?"?\'?\}', template)
             columns.update(column_refs)
+        
+        # Extract column references from join conditions (rr:child and rr:parent)
+        for s, p, o in g.triples((None, RR.child, None)):
+            column_name = str(o).strip('"')
+            columns.add(column_name)
+            
+        for s, p, o in g.triples((None, RR.parent, None)):
+            column_name = str(o).strip('"')
+            columns.add(column_name)
             
         return columns
     except Exception as e:
