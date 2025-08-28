@@ -384,6 +384,12 @@
                 // Add info icon with Bootstrap tooltip showing the comparison message
                 const tooltipMessage = (row.comparison_message || 'Mapping issue detected - check table comparison for details').replace(/'/g, '&apos;');
                 tooltipHtml = ` <i class="bi bi-info-circle info-icon" data-bs-toggle="tooltip" data-bs-placement="top" title="${tooltipMessage}"></i>`;
+            } else if (row.inversion_success === 'mapping_error') {
+                inversionStatusClass = 'warning';
+                inversionStatusText = 'Mapping Error';
+                // Add info icon with Bootstrap tooltip showing the comparison message
+                const tooltipMessage = (row.comparison_message || 'Mapping error detected - check table comparison for details').replace(/'/g, '&apos;');
+                tooltipHtml = ` <i class="bi bi-info-circle info-icon" data-bs-toggle="tooltip" data-bs-placement="top" title="${tooltipMessage}"></i>`;
             } else if (row.inversion_success === true) {
                 inversionStatusClass = 'passed';
                 inversionStatusText = 'Success';

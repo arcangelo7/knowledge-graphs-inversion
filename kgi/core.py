@@ -178,11 +178,11 @@ def inversion(config_file: str | pathlib.Path, test_id: str = None, dest_db_url:
         mappings, _ = retrieve_mappings(config)
     except ValueError as e:
         get_logger().error(f"Error retrieving mappings: {e}")
-        return results
+        return {'__status__': 'mapping_error', '__reason__': f'Invalid mapping: {str(e)}'}
     except KeyError as e:
         if str(e) == "'object_map'":
             get_logger().warning("Mapping with missing information. Skipping.")
-        return results
+        return {'__status__': 'mapping_error', '__reason__': 'Mapping with missing object_map information'}
         
     if check_for_constant_only_mappings(mappings):
         get_logger().warning("Constant-only mappings detected - cannot retrieve original data from constants.")

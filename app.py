@@ -209,6 +209,12 @@ def run_single_test(test_id, database_system):
             databases_equal = None  # Override since this is a mapping issue, not a comparison result
             comparison_message = f"Bad mapping detected: {inversion_reason}"
             comparison_status = 'mapping_issue'
+        elif inversion_status == 'mapping_error':
+            # Still get source content to show original tables, but destination will be empty
+            databases_equal, _, source_content, dest_content, _ = compare_databases(db_connection, database_system, DEST_DB_SYSTEM)
+            databases_equal = None  # Override since this is a mapping error, not a comparison result
+            comparison_message = f"Invalid mapping: {inversion_reason}"
+            comparison_status = 'mapping_error'
         elif inversion_status in ['no_input_file', 'no_data_generated']:
             # For these cases, we still want to compare databases to recognize empty destination as success
             databases_equal, comparison_message, source_content, dest_content, comparison_status = compare_databases(db_connection, database_system, DEST_DB_SYSTEM)
@@ -283,7 +289,8 @@ def process_results(raw_results, mapping_content, test_id, database_system, conf
             'sparql_query': formatted_sparql_queries,
             'inversion_query': formatted_inversion_result,
             'inversion_success': ('not_supported' if inversion_status == 'not_supported' else
-                                'mapping_issue' if comparison_status == 'mapping_issue' else databases_equal),
+                                'mapping_issue' if comparison_status == 'mapping_issue' else
+                                'mapping_error' if comparison_status == 'mapping_error' else databases_equal),
             'tables_equal': databases_equal,
             'comparison_message': comparison_message,
             'original_tables': source_content,
