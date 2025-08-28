@@ -342,6 +342,7 @@ dependencies = [
     { name = "pandas" },
     { name = "psycopg2-binary" },
     { name = "pyrdf4j" },
+    { name = "sql-metadata" },
     { name = "sqlalchemy" },
     { name = "virtuoso-utilities" },
 ]
@@ -370,6 +371,7 @@ requires-dist = [
     { name = "psycopg2-binary", specifier = ">=2.9.0,<3.0.0" },
     { name = "pyrdf4j", specifier = ">=0.1.1,<0.2.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0.0" },
+    { name = "sql-metadata", specifier = ">=2.17.0" },
     { name = "sqlalchemy", specifier = ">=2.0.41,<3.0.0" },
     { name = "virtuoso-utilities", specifier = ">=1.3.0" },
 ]
@@ -903,6 +905,18 @@ wheels = [
 ]
 
 [[package]]
+name = "sql-metadata"
+version = "2.17.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "sqlparse" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c8/42/9d6a655e1c516b510c0f4e0cf5500548a872b75a4e91972cb55df2a2fb56/sql_metadata-2.17.0.tar.gz", hash = "sha256:37b3faf0c07454057b28604a88b5f4155b7e546d03f848889ada0432932a1c4e", size = 22145 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/37/04/6438d2633da809a7d4c049d8cfde654b8911eb7d0c7997faf39b66073956/sql_metadata-2.17.0-py3-none-any.whl", hash = "sha256:7ea741785336d057a79bf625af213c5183f24f9aeed4351ac2c241243ac63fb4", size = 22514 },
+]
+
+[[package]]
 name = "sqlalchemy"
 version = "2.0.41"
 source = { registry = "https://pypi.org/simple" }
@@ -929,6 +943,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/fa/2e/677c17c5d6a004c3c45334ab1dbe7b7deb834430b282b8a0f75ae220c8eb/sqlalchemy-2.0.41-cp313-cp313-win32.whl", hash = "sha256:bfc9064f6658a3d1cadeaa0ba07570b83ce6801a1314985bf98ec9b95d74e15f", size = 2082420 },
     { url = "https://files.pythonhosted.org/packages/e9/61/e8c1b9b6307c57157d328dd8b8348ddc4c47ffdf1279365a13b2b98b8049/sqlalchemy-2.0.41-cp313-cp313-win_amd64.whl", hash = "sha256:82ca366a844eb551daff9d2e6e7a9e5e76d2612c8564f58db6c19a726869c1df", size = 2108329 },
     { url = "https://files.pythonhosted.org/packages/1c/fc/9ba22f01b5cdacc8f5ed0d22304718d2c758fce3fd49a5372b886a86f37c/sqlalchemy-2.0.41-py3-none-any.whl", hash = "sha256:57df5dc6fdb5ed1a88a1ed2195fd31927e705cad62dedd86b46972752a80f576", size = 1911224 },
+]
+
+[[package]]
+name = "sqlparse"
+version = "0.5.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/e5/40/edede8dd6977b0d3da179a342c198ed100dd2aba4be081861ee5911e4da4/sqlparse-0.5.3.tar.gz", hash = "sha256:09f67787f56a0b16ecdbde1bfc7f5d9c3371ca683cfeaa8e6ff60b4807ec9272", size = 84999 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a9/5c/bfd6bd0bf979426d405cc6e71eceb8701b148b16c21d2dc3c261efc61c7b/sqlparse-0.5.3-py3-none-any.whl", hash = "sha256:cf2196ed3418f3ba5de6af7e82c694a9fbdbfecccdfc72e281548517081f16ca", size = 44415 },
 ]
 
 [[package]]

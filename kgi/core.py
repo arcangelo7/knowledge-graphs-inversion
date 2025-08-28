@@ -8,6 +8,7 @@ import morph_kgc.config
 import pandas as pd
 from morph_kgc.args_parser import load_config_from_argument
 from morph_kgc.mapping.mapping_parser import retrieve_mappings
+from rdflib import Graph, Namespace
 
 from .constants import RML_BLANK_NODE, RML_PARENT_TRIPLES_MAP, TEST_LOG_FOLDER
 from .endpoints import EndpointFactory, RemoteEndpoint, VirtuosoEndpoint
@@ -16,10 +17,31 @@ from .schema import DatabaseSchemaRetriever, apply_schema_ordering, apply_schema
 from .templates import CSVTemplate, JSONTemplate, RDBTemplate
 from .utils import insert_columns
 
+RR = Namespace("http://www.w3.org/ns/r2rml#")
+
 
 def get_logger() -> logging.Logger:
     """Get the KGI logger."""
     return logging.getLogger("kgi")
+
+
+def check_for_sql_queries(config: morph_kgc.config.Config) -> bool:
+    """Check if mapping contains rr:sqlQuery (not supported)."""
+    try:
+        data_source_sections = config.get_data_sources_sections()
+        for section in data_source_sections:
+            mapping_files = config.get_mappings_files(section)
+            for mapping_file in mapping_files:
+                if os.path.exists(mapping_file):
+                    graph = Graph()
+                    graph.parse(mapping_file)
+                    sqlquery_triples = list(graph.triples((None, RR.sqlQuery, None)))
+                    if len(sqlquery_triples) > 0:
+                        return True
+        return False
+    except Exception as e:
+        get_logger().warning(f"Could not parse mapping file to check for SQL queries: {e}")
+        return False
 
 
 def generate_template(source_rules: pd.DataFrame, db_url: str = None):
@@ -105,7 +127,7 @@ def logging_setup():
 
 
 def inversion(config_file: str | pathlib.Path, test_id: str = None, dest_db_url: str = None, 
-              sparql_endpoint: str = None, use_virtuoso: bool = False) -> dict[str, dict[str, str]]:
+              sparql_endpoint: str = None, use_virtuoso: bool = False) -> dict[str, dict[str, str]] | dict:
     """
     Main inversion function.
     
@@ -117,7 +139,7 @@ def inversion(config_file: str | pathlib.Path, test_id: str = None, dest_db_url:
         use_virtuoso: Whether to use Virtuoso for RDF processing
         
     Returns:
-        Dictionary mapping source names to inverted results
+        Dictionary mapping source names to inverted results or special status dict
     """
     results = {}
     
@@ -126,11 +148,14 @@ def inversion(config_file: str | pathlib.Path, test_id: str = None, dest_db_url:
         
     config = load_config_from_argument(config_file)
     
+    if check_for_sql_queries(config):
+        get_logger().warning("SQL query as logical table is not supported. Skipping inversion.")
+        return {'__status__': 'not_supported', '__reason__': 'SQL query as logical table'}
+    
     try:
         mappings, _ = retrieve_mappings(config)
     except ValueError as e:
-        if str(e) == "Not supported query type!":
-            get_logger().warning("Invalid SQL query in mapping")
+        get_logger().error(f"Error retrieving mappings: {e}")
         return results
     except KeyError as e:
         if str(e) == "'object_map'":
@@ -177,8 +202,9 @@ def inversion(config_file: str | pathlib.Path, test_id: str = None, dest_db_url:
         if source_section in schema_retrievers:
             schema_retriever: DatabaseSchemaRetriever = schema_retrievers[source_section]
             table_schema = schema_retriever.get_table_schema(table_name)
-            source_data = apply_schema_types(source_data, table_schema)
-            source_data = apply_schema_ordering(source_data, table_schema)
+            if table_schema:
+                source_data = apply_schema_types(source_data, table_schema)
+                source_data = apply_schema_ordering(source_data, table_schema)
             
         try:
             filled_source = template.fill_data(source_data, table_name)

@@ -210,14 +210,25 @@ def run_single_test(test_id, database_system):
         dest_db_url = db_connection.get_connection_string(DEST_DB_SYSTEM)
         inversion_result = inversion(MORPH_KCG_CONFIG_FILEPATH, test_id, dest_db_url)
 
-        inversion_success = bool(inversion_result)
+        # Check if inversion returned a special status
+        inversion_status = None
+        if isinstance(inversion_result, dict) and '__status__' in inversion_result:
+            inversion_status = inversion_result['__status__']
+            inversion_reason = inversion_result.get('__reason__', '')
+            inversion_success = False
+        else:
+            inversion_success = bool(inversion_result)
+            inversion_reason = ''
 
         # Compare original and inverted tables
         if inversion_success:
             databases_equal, comparison_message, source_content, dest_content = compare_databases(db_connection, database_system, DEST_DB_SYSTEM)
         else:
-            databases_equal = True
-            comparison_message = "Inversion failed or was skipped, database comparison not performed."
+            databases_equal = None  # Not applicable for not supported cases
+            if inversion_status == 'not_supported':
+                comparison_message = f"Inversion not supported: {inversion_reason}"
+            else:
+                comparison_message = "Inversion failed, database comparison not performed."
             source_content = None
             dest_content = None
 
@@ -225,7 +236,7 @@ def run_single_test(test_id, database_system):
         processed_results = process_results(
             raw_results, mapping_content, test_id, database_system, 
             config, purpose, inversion_result, databases_equal, comparison_message,
-            source_content, dest_content
+            source_content, dest_content, inversion_status
         )
         generate_results(database_system, config, raw_results)
         
@@ -248,7 +259,7 @@ def run_single_test(test_id, database_system):
         }
 
 def process_results(raw_results, mapping_content, test_id, database_system, config, purpose, inversion_result, 
-                    databases_equal, comparison_message, source_content, dest_content):
+                    databases_equal, comparison_message, source_content, dest_content, inversion_status=None):
     processed_results = {
         'headers': ['Test ID', 'Purpose', 'Result', 'Expected Result', 'Actual Result', 'Mapping', 'SPARQL Query', 'Inversion Query', 'Inversion Success', 'Tables Comparison'],
         'data': []
@@ -257,14 +268,21 @@ def process_results(raw_results, mapping_content, test_id, database_system, conf
     for row in raw_results[1:]:  # Skip the header row
         expected_content, actual_content = get_file_contents(test_id, database_system, config)
 
-        formatted_queries = []
-        sparql_queries = []
-        for source, result in inversion_result.items():
-            formatted_queries.append(result['inverted_query'].strip())
-            sparql_queries.append(result['sparql_query'])
-                
-        formatted_inversion_result = "\n\n".join(formatted_queries)
-        formatted_sparql_queries = "\n\n".join(filter(None, sparql_queries))
+        # Handle special status cases
+        if isinstance(inversion_result, dict) and '__status__' in inversion_result:
+            formatted_queries = []
+            sparql_queries = []
+            formatted_inversion_result = ""
+            formatted_sparql_queries = ""
+        else:
+            formatted_queries = []
+            sparql_queries = []
+            for source, result in inversion_result.items():
+                formatted_queries.append(result['inverted_query'].strip())
+                sparql_queries.append(result['sparql_query'])
+                    
+            formatted_inversion_result = "\n\n".join(formatted_queries)
+            formatted_sparql_queries = "\n\n".join(filter(None, sparql_queries))
 
         processed_row = {
             'testid': row[3] if len(row) > 3 else 'N/A',
@@ -275,7 +293,7 @@ def process_results(raw_results, mapping_content, test_id, database_system, conf
             'mapping': mapping_content,
             'sparql_query': formatted_sparql_queries,
             'inversion_query': formatted_inversion_result,
-            'inversion_success': databases_equal,
+            'inversion_success': 'not_supported' if inversion_status == 'not_supported' else databases_equal,
             'tables_equal': databases_equal,
             'comparison_message': comparison_message,
             'original_tables': source_content,
