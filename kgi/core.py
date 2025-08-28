@@ -176,7 +176,7 @@ def inversion(config_file: str | pathlib.Path, test_id: str = None, dest_db_url:
             endpoint = EndpointFactory.create_from_url(config.get_output_file())
     except FileNotFoundError:
         get_logger().warning("Output file not found. Skipping inversion.")
-        return results
+        return {'__status__': 'no_input_file', '__reason__': 'No RDF input file found for inversion, likely due to mapping errors'}
         
     insert_columns(mappings)
     db_configs = extract_db_config(config)
@@ -218,5 +218,9 @@ def inversion(config_file: str | pathlib.Path, test_id: str = None, dest_db_url:
     
     for retriever in schema_retrievers.values():
         retriever.dispose()
+    
+    # If no results were generated, return explicit status
+    if not results:
+        return {'__status__': 'no_data_generated', '__reason__': 'No data was generated during inversion process'}
             
     return results

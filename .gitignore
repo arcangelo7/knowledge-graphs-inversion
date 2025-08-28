@@ -10,6 +10,8 @@ benchmarks/*/*.nt
 r2rml_test_cases/**/*.nt
 r2rml_test_cases/results-postgresql.ttl
 r2rml_test_cases/results-postgresql.csv
+r2rml_test_cases/metadata.csv
+r2rml_test_cases/results.csv
 r2rml_test_cases/r2rml.ttl
 inversion.log
 
