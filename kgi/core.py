@@ -10,7 +10,7 @@ from morph_kgc.args_parser import load_config_from_argument
 from morph_kgc.mapping.mapping_parser import retrieve_mappings
 from rdflib import Graph, Namespace
 
-from .constants import RML_BLANK_NODE, RML_PARENT_TRIPLES_MAP, TEST_LOG_FOLDER
+from .constants import RML_BLANK_NODE, RML_PARENT_TRIPLES_MAP, RML_REFERENCE, RML_TEMPLATE, TEST_LOG_FOLDER
 from .endpoints import EndpointFactory, RemoteEndpoint, VirtuosoEndpoint
 from .query import retrieve_data
 from .schema import DatabaseSchemaRetriever, apply_schema_ordering, apply_schema_types
@@ -126,6 +126,28 @@ def logging_setup():
     logger.propagate = False
 
 
+def check_for_constant_only_mappings(mappings: pd.DataFrame) -> bool:
+    """Check if all mappings contain only constants (no column references or templates)."""
+    try:
+        # Check if any mapping has non-constant types
+        for _, rule in mappings.iterrows():
+            subject_map_type = rule.get("subject_map_type")
+            predicate_map_type = rule.get("predicate_map_type") 
+            object_map_type = rule.get("object_map_type")
+            
+            # If any mapping uses references or templates, it's not constant-only
+            if (subject_map_type in [RML_REFERENCE, RML_TEMPLATE] or
+                predicate_map_type in [RML_REFERENCE, RML_TEMPLATE] or  
+                object_map_type in [RML_REFERENCE, RML_TEMPLATE]):
+                return False
+        
+        # If we reach here, all mappings are constant-only
+        return True
+    except Exception as e:
+        get_logger().warning(f"Could not check for constant-only mappings: {e}")
+        return False
+
+
 def inversion(config_file: str | pathlib.Path, test_id: str = None, dest_db_url: str = None, 
               sparql_endpoint: str = None, use_virtuoso: bool = False) -> dict[str, dict[str, str]] | dict:
     """
@@ -161,6 +183,10 @@ def inversion(config_file: str | pathlib.Path, test_id: str = None, dest_db_url:
         if str(e) == "'object_map'":
             get_logger().warning("Mapping with missing information. Skipping.")
         return results
+        
+    if check_for_constant_only_mappings(mappings):
+        get_logger().warning("Constant-only mappings detected - cannot retrieve original data from constants.")
+        return {'__status__': 'mapping_issue', '__reason__': 'Mappings contain only constants (no column references) - original data cannot be recovered'}
         
     try:
         if sparql_endpoint:

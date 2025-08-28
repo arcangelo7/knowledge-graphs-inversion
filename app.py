@@ -203,6 +203,12 @@ def run_single_test(test_id, database_system):
             source_content = None
             dest_content = None
             comparison_status = None
+        elif inversion_status == 'mapping_issue':
+            # Still get source content to show original tables, but destination will be empty
+            databases_equal, _, source_content, dest_content, _ = compare_databases(db_connection, database_system, DEST_DB_SYSTEM)
+            databases_equal = None  # Override since this is a mapping issue, not a comparison result
+            comparison_message = f"Bad mapping detected: {inversion_reason}"
+            comparison_status = 'mapping_issue'
         elif inversion_status in ['no_input_file', 'no_data_generated']:
             # For these cases, we still want to compare databases to recognize empty destination as success
             databases_equal, comparison_message, source_content, dest_content, comparison_status = compare_databases(db_connection, database_system, DEST_DB_SYSTEM)
