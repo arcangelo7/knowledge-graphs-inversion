@@ -9,7 +9,8 @@ import pandas as pd
 import sqlalchemy
 from flask import (Flask, Response, jsonify, render_template, request,
                    stream_with_context)
-from rdflib import Dataset, Literal, Namespace
+from rdflib import Dataset, Literal, Namespace, Graph
+import re
 
 from database_connection import DatabaseConnection
 from kgi.core import inversion
@@ -40,6 +41,7 @@ MORPH_KCG_CONFIG_FILEPATH = os.path.join(os.path.dirname(__file__), 'morph_kgc_c
 RDB2RDFTEST = Namespace("http://purl.org/NET/rdb2rdf-test#")
 TESTDEC = Namespace("http://www.w3.org/2006/03/test-description#")
 DCELEMENTS = Namespace("http://purl.org/dc/terms/")
+RR = Namespace("http://www.w3.org/ns/r2rml#")
 
 DEST_DB_SYSTEM = 'dest_postgresql'
 
@@ -51,6 +53,46 @@ db_connection = DatabaseConnection()
 def get_mapping_filename(test_id):
     letter: str = test_id[-1].lower()
     return f'r2rml{letter}.ttl' if letter.isalpha() else 'r2rml.ttl'
+
+def extract_columns_from_mapping(mapping_content):
+    """Extract all column references from R2RML mapping content."""
+    try:
+        g = Graph()
+        g.parse(data=mapping_content, format='turtle')
+        
+        columns = set()
+        
+        for s, p, o in g.triples((None, RR.column, None)):
+            column_name = str(o).strip('"')
+            columns.add(column_name)
+        
+        for s, p, o in g.triples((None, RR.template, None)):
+            template = str(o)
+            # Find column references in templates like {\"ID\"} or {ID}
+            column_refs = re.findall(r'\{["\']?([^"\'{}]+)["\']?\}', template)
+            columns.update(column_refs)
+            
+        return columns
+    except Exception as e:
+        print(f"Error extracting columns from mapping: {e}")
+        return set()
+
+
+def check_mapping_column_coverage(mapping_content, source_content):
+    """Check if mapping covers all columns in source tables."""
+    mapped_columns = extract_columns_from_mapping(mapping_content)
+    mapping_issues = []
+    
+    for table_name, table_data in source_content.items():
+        table_columns = set(table_data['columns'])
+        missing_columns = table_columns - mapped_columns
+        
+        if missing_columns:
+            missing_str = ", ".join(sorted(missing_columns))
+            mapping_issues.append(f"Table '{table_name}' has unmapped columns: {missing_str}")
+    
+    return mapping_issues
+
 
 def sanitize_data(data):
     if isinstance(data, dict):
@@ -196,7 +238,7 @@ def run_single_test(test_id, database_system):
 
         # Compare original and inverted tables
         if inversion_success:
-            databases_equal, comparison_message, source_content, dest_content, comparison_status = compare_databases(db_connection, database_system, DEST_DB_SYSTEM)
+            databases_equal, comparison_message, source_content, dest_content, comparison_status = compare_databases(db_connection, database_system, DEST_DB_SYSTEM, mapping_content)
         elif inversion_status == 'not_supported':
             databases_equal = None
             comparison_message = f"Inversion not supported: {inversion_reason}"
@@ -205,19 +247,19 @@ def run_single_test(test_id, database_system):
             comparison_status = None
         elif inversion_status == 'mapping_issue':
             # Still get source content to show original tables, but destination will be empty
-            databases_equal, _, source_content, dest_content, _ = compare_databases(db_connection, database_system, DEST_DB_SYSTEM)
+            databases_equal, _, source_content, dest_content, _ = compare_databases(db_connection, database_system, DEST_DB_SYSTEM, mapping_content)
             databases_equal = None  # Override since this is a mapping issue, not a comparison result
             comparison_message = f"Bad mapping detected: {inversion_reason}"
             comparison_status = 'mapping_issue'
         elif inversion_status == 'mapping_error':
             # Still get source content to show original tables, but destination will be empty
-            databases_equal, _, source_content, dest_content, _ = compare_databases(db_connection, database_system, DEST_DB_SYSTEM)
+            databases_equal, _, source_content, dest_content, _ = compare_databases(db_connection, database_system, DEST_DB_SYSTEM, mapping_content)
             databases_equal = None  # Override since this is a mapping error, not a comparison result
             comparison_message = f"Invalid mapping: {inversion_reason}"
             comparison_status = 'mapping_error'
         elif inversion_status in ['no_input_file', 'no_data_generated']:
             # For these cases, we still want to compare databases to recognize empty destination as success
-            databases_equal, comparison_message, source_content, dest_content, comparison_status = compare_databases(db_connection, database_system, DEST_DB_SYSTEM)
+            databases_equal, comparison_message, source_content, dest_content, comparison_status = compare_databases(db_connection, database_system, DEST_DB_SYSTEM, mapping_content)
             
             # If destination is empty as expected due to mapping errors, this is success
             if not databases_equal and not dest_content:
@@ -226,7 +268,7 @@ def run_single_test(test_id, database_system):
                 comparison_status = None
         else:
             # Fallback case - should not happen with explicit status handling above
-            databases_equal, comparison_message, source_content, dest_content, comparison_status = compare_databases(db_connection, database_system, DEST_DB_SYSTEM)
+            databases_equal, comparison_message, source_content, dest_content, comparison_status = compare_databases(db_connection, database_system, DEST_DB_SYSTEM, mapping_content)
 
         # Process and generate results
         processed_results = process_results(
@@ -356,7 +398,7 @@ def analyze_duplicate_loss(source_df, dest_df, table_name):
     
     return None, False
 
-def compare_databases(db_connection, source_system, dest_system):
+def compare_databases(db_connection, source_system, dest_system, mapping_content=None):
     try:
         source_content = db_connection.get_database_content(source_system)
         dest_content = db_connection.get_database_content(dest_system)
@@ -415,6 +457,15 @@ def compare_databases(db_connection, source_system, dest_system):
         
         if mismatched_tables:
             message = f"Mismatched tables: {', '.join(mismatched_tables)}"
+            
+            # If we have mapping content, check for incomplete column coverage
+            if mapping_content and not has_mapping_issues:
+                mapping_issues = check_mapping_column_coverage(mapping_content, source_content)
+                if mapping_issues:
+                    mapping_issue_message = "; ".join(mapping_issues)
+                    message += f" (MAPPING ISSUE: {mapping_issue_message})"
+                    has_mapping_issues = True
+            
             # Return a special indicator if this is a mapping issue
             if has_mapping_issues:
                 return False, message, source_content, dest_content, "mapping_issue"
