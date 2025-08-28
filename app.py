@@ -196,29 +196,31 @@ def run_single_test(test_id, database_system):
 
         # Compare original and inverted tables
         if inversion_success:
-            databases_equal, comparison_message, source_content, dest_content = compare_databases(db_connection, database_system, DEST_DB_SYSTEM)
+            databases_equal, comparison_message, source_content, dest_content, comparison_status = compare_databases(db_connection, database_system, DEST_DB_SYSTEM)
         elif inversion_status == 'not_supported':
             databases_equal = None
             comparison_message = f"Inversion not supported: {inversion_reason}"
             source_content = None
             dest_content = None
+            comparison_status = None
         elif inversion_status in ['no_input_file', 'no_data_generated']:
             # For these cases, we still want to compare databases to recognize empty destination as success
-            databases_equal, comparison_message, source_content, dest_content = compare_databases(db_connection, database_system, DEST_DB_SYSTEM)
+            databases_equal, comparison_message, source_content, dest_content, comparison_status = compare_databases(db_connection, database_system, DEST_DB_SYSTEM)
             
             # If destination is empty as expected due to mapping errors, this is success
             if not databases_equal and not dest_content:
                 databases_equal = True
                 comparison_message = f"Inversion correctly not performed due to mapping errors - destination database appropriately empty"
+                comparison_status = None
         else:
             # Fallback case - should not happen with explicit status handling above
-            databases_equal, comparison_message, source_content, dest_content = compare_databases(db_connection, database_system, DEST_DB_SYSTEM)
+            databases_equal, comparison_message, source_content, dest_content, comparison_status = compare_databases(db_connection, database_system, DEST_DB_SYSTEM)
 
         # Process and generate results
         processed_results = process_results(
             raw_results, mapping_content, test_id, database_system, 
             config, purpose, inversion_result, databases_equal, comparison_message,
-            source_content, dest_content, inversion_status
+            source_content, dest_content, inversion_status, comparison_status
         )
         
         # Return to original directory
@@ -240,7 +242,7 @@ def run_single_test(test_id, database_system):
         }
 
 def process_results(raw_results, mapping_content, test_id, database_system, config, purpose, inversion_result, 
-                    databases_equal, comparison_message, source_content, dest_content, inversion_status=None):
+                    databases_equal, comparison_message, source_content, dest_content, inversion_status=None, comparison_status=None):
     processed_results = {
         'headers': ['Test ID', 'Purpose', 'Result', 'Expected Result', 'Actual Result', 'Mapping', 'SPARQL Query', 'Inversion Query', 'Inversion Success', 'Tables Comparison'],
         'data': []
@@ -274,7 +276,8 @@ def process_results(raw_results, mapping_content, test_id, database_system, conf
             'mapping': mapping_content,
             'sparql_query': formatted_sparql_queries,
             'inversion_query': formatted_inversion_result,
-            'inversion_success': 'not_supported' if inversion_status == 'not_supported' else databases_equal,
+            'inversion_success': ('not_supported' if inversion_status == 'not_supported' else
+                                'mapping_issue' if comparison_status == 'mapping_issue' else databases_equal),
             'tables_equal': databases_equal,
             'comparison_message': comparison_message,
             'original_tables': source_content,
@@ -308,20 +311,53 @@ def read_file_content(file_path):
             return file.read()
     return "File not found"
 
+def analyze_duplicate_loss(source_df, dest_df, table_name):
+    """
+    Analyze if the difference between source and destination is due to duplicate rows
+    being lost during RDF inversion process.
+    
+    Returns a tuple (diagnostic_message, is_mapping_issue) where is_mapping_issue is True
+    if this is specifically a duplicate loss issue.
+    """
+    # Check if destination is a subset of source (same unique rows, but missing duplicates)
+    source_unique = source_df.drop_duplicates()
+    dest_unique = dest_df.drop_duplicates()
+    
+    # If unique rows match but counts don't, we likely have duplicate loss
+    if source_unique.equals(dest_unique) and len(source_df) > len(dest_df):
+        # Find which rows have duplicates in source
+        duplicate_rows = []
+        for _, row in source_unique.iterrows():
+            source_count = len(source_df[source_df.eq(row).all(axis=1)])
+            dest_count = len(dest_df[dest_df.eq(row).all(axis=1)])
+            if source_count > dest_count:
+                duplicate_rows.append((source_count, dest_count, dict(row)))
+        
+        if duplicate_rows:
+            duplicate_info = "; ".join([f"Row {row} appears {src_cnt} times in source but {dst_cnt} times in destination" 
+                                       for src_cnt, dst_cnt, row in duplicate_rows])
+            
+            message = f"{table_name} (MAPPING ISSUE: Duplicate rows lost during inversion - {duplicate_info}. " \
+                     f"Consider adding unique identifiers to your R2RML mapping template to preserve row distinctness)"
+            return message, True
+    
+    return None, False
+
 def compare_databases(db_connection, source_system, dest_system):
     try:
         source_content = db_connection.get_database_content(source_system)
         dest_content = db_connection.get_database_content(dest_system)
 
         if not source_content and not dest_content:
-            return True, "Both databases are empty - comparison successful", None, None
+            return True, "Both databases are empty - comparison successful", None, None, None
         elif not source_content or not dest_content:
-            return False, "One database is empty while the other is not", source_content, dest_content
+            return False, "One database is empty while the other is not", source_content, dest_content, None
 
         if set(source_content.keys()) != set(dest_content.keys()):
-            return False, "Tables in source and destination databases do not match", source_content, dest_content
+            return False, "Tables in source and destination databases do not match", source_content, dest_content, None
 
         mismatched_tables = []
+        has_mapping_issues = False
         for table_name in source_content.keys():
             source_table = source_content[table_name]
             dest_table = dest_content[table_name]
@@ -351,14 +387,30 @@ def compare_databases(db_connection, source_system, dest_system):
             dest_df = dest_df.sort_values(by=dest_df.columns.tolist()).reset_index(drop=True)
 
             if not source_df.equals(dest_df):
-                mismatched_tables.append(f"{table_name} (data mismatch)")
+                # Check if this is a duplicate rows issue
+                if len(source_df) > len(dest_df):
+                    # Check if there are duplicate rows in source that are missing in destination
+                    duplicate_analysis, is_mapping_issue = analyze_duplicate_loss(source_df, dest_df, table_name)
+                    if duplicate_analysis:
+                        mismatched_tables.append(duplicate_analysis)
+                        if is_mapping_issue:
+                            has_mapping_issues = True
+                    else:
+                        mismatched_tables.append(f"{table_name} (data mismatch)")
+                else:
+                    mismatched_tables.append(f"{table_name} (data mismatch)")
         
         if mismatched_tables:
-            return False, f"Mismatched tables: {', '.join(mismatched_tables)}", source_content, dest_content
+            message = f"Mismatched tables: {', '.join(mismatched_tables)}"
+            # Return a special indicator if this is a mapping issue
+            if has_mapping_issues:
+                return False, message, source_content, dest_content, "mapping_issue"
+            else:
+                return False, message, source_content, dest_content, None
         else:
-            return True, "All tables in source and destination databases are identical", source_content, dest_content
+            return True, "All tables in source and destination databases are identical", source_content, dest_content, None
     except Exception as e:
-        return False, f"Error comparing databases: {str(e)}", None, None
+        return False, f"Error comparing databases: {str(e)}", None, None, None
 
 
 if __name__ == '__main__':

@@ -378,6 +378,12 @@
                 // Add info icon with Bootstrap tooltip
                 const tooltipMessage = (row.comparison_message || 'SQL query as logical table is not supported').replace(/'/g, '&apos;');
                 tooltipHtml = ` <i class="bi bi-info-circle info-icon" data-bs-toggle="tooltip" data-bs-placement="top" title="${tooltipMessage}"></i>`;
+            } else if (row.inversion_success === 'mapping_issue') {
+                inversionStatusClass = 'warning';
+                inversionStatusText = 'Mapping Issue';
+                // Add info icon with Bootstrap tooltip showing the comparison message
+                const tooltipMessage = (row.comparison_message || 'Mapping issue detected - check table comparison for details').replace(/'/g, '&apos;');
+                tooltipHtml = ` <i class="bi bi-info-circle info-icon" data-bs-toggle="tooltip" data-bs-placement="top" title="${tooltipMessage}"></i>`;
             } else if (row.inversion_success === true) {
                 inversionStatusClass = 'passed';
                 inversionStatusText = 'Success';
