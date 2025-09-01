@@ -4,12 +4,15 @@ services:
     container_name: kgi-app
     ports:
       - "5000:5000"
+      - "8890:8890"  # Virtuoso HTTP port
+      - "1111:1111"  # Virtuoso ISQL port
     volumes:
       - .:/app
     working_dir: /app
     environment:
       - FLASK_ENV=development
       - FLASK_DEBUG=1
+      - EMBEDDED_VIRTUOSO=true
     depends_on:
       postgresql:
         condition: service_healthy

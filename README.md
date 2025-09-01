@@ -66,31 +66,20 @@ This project integrates the [KROWN benchmark framework](https://github.com/kg-co
 
 ### Running KROWN Benchmark
 
-**Run PostgreSQL benchmark:**
+**Run with Docker:**
 ```bash
-# Run with in-memory RDF processing (default)
-uv run python benchmarks/run_krown_benchmark.py
+# Start all services and run benchmark
+docker compose -f docker-compose.benchmark.yml up
 
-# Run with Virtuoso triplestore for better performance on large datasets
-uv run python benchmarks/run_krown_benchmark.py --use-virtuoso
+# Run with validation
+docker compose -f docker-compose.benchmark.yml run benchmark --validate
+
+# Run without Virtuoso (in-memory RDF)
+docker compose -f docker-compose.benchmark.yml run benchmark --no-virtuoso
+
+# Stop all services
+docker compose -f docker-compose.benchmark.yml down
 ```
-
-**Prerequisites for Virtuoso benchmarks:**
-If using the `--use-virtuoso` option, you must start Virtuoso before running the benchmark:
-```bash
-# Start Virtuoso container (required for --use-virtuoso option)
-uv run python -m virtuoso_utilities.launch_virtuoso --name virtuoso-kgi --http-port 8890 --detach --wait-ready
-```
-
-This will:
-- Generate test data using KROWN's data generator (PostgreSQL format)
-- Create 3 benchmark scenarios: Small (1K), Medium (10K), Large (50K rows)
-- Run the inversion system on each scenario using either in-memory RDF processing or Virtuoso triplestore
-- Generate performance metrics and results
-
-**SPARQL Backend Options:**
-- **In-memory processing** (default): Uses rdflib for SPARQL queries, suitable for small to medium datasets
-- **Virtuoso triplestore** (`--use-virtuoso`): Uses OpenLink Virtuoso for SPARQL queries, recommended for large datasets. Requires pre-existing Virtuoso instance running on localhost:8890
 
 ### Benchmark Results
 

@@ -1,7 +1,6 @@
 """SPARQL endpoint implementations."""
 
 import gzip
-import json
 import logging
 import os
 import pathlib
@@ -21,6 +20,8 @@ class RemoteEndpoint(Endpoint):
     """Remote SPARQL endpoint implementation."""
     
     def __init__(self, url: str, rdf_file_to_load: str = None):
+        logger = logging.getLogger("kgi")
+        logger.info(f"Initializing RemoteEndpoint with URL: {url}")
         self._sparql = SPARQLWrapper(url)
         self._sparql.setReturnFormat(CSV)
         self.endpoint_url = url
@@ -28,31 +29,43 @@ class RemoteEndpoint(Endpoint):
         self._graph_uri = None
         
         if rdf_file_to_load:
+            logger.info(f"Loading RDF file: {rdf_file_to_load}")
             self._graph_uri = f"http://temp/graph/{os.path.basename(rdf_file_to_load)}"
             self._load_data()
+            logger.info("RDF file loaded successfully")
 
     def _load_data(self):
         """Load RDF data into the SPARQL endpoint using INSERT DATA."""
+        logger = logging.getLogger("kgi")
+        logger.info(f"Clearing graph: {self._graph_uri}")
         clear_query = f"CLEAR GRAPH <{self._graph_uri}>"
         self._sparql.setQuery(clear_query)
         self._sparql.setMethod(POST)
         self._sparql.query()
+        logger.info("Graph cleared successfully")
         
+        logger.info(f"Loading triples from file: {self.rdf_file_path}")
         with open(self.rdf_file_path, 'r', encoding='utf-8') as f:
             chunk_size = 1000
             triples = []
+            total_triples = 0
             
             for line in f:
                 line = line.strip()
                 if line and not line.startswith('#'):
                     triples.append(line)
+                    total_triples += 1
                     
                     if len(triples) >= chunk_size:
+                        logger.info(f"Inserting batch of {len(triples)} triples (total so far: {total_triples})")
                         self._insert_triples(triples)
                         triples = []
             
             if triples:
+                logger.info(f"Inserting final batch of {len(triples)} triples")
                 self._insert_triples(triples)
+        
+        logger.info(f"Finished loading {total_triples} triples")
 
     def _insert_triples(self, triples):
         """Insert a batch of triples into the SPARQL endpoint."""
@@ -103,12 +116,13 @@ class VirtuosoEndpoint(RemoteEndpoint):
     """Virtuoso-specific endpoint that uses bulk loading for better performance."""
     
     def __init__(self, url: str, rdf_file_to_load: str = None, container_name: str = 'virtuoso-kgi'):
-        self.container_name = container_name
-        self.bulk_load_dir = '/opt/virtuoso-opensource/database'
+        logger = logging.getLogger("kgi")
+        logger.info(f"Initializing VirtuosoEndpoint with URL: {url}, container: {container_name}")
         
-        # Use absolute path to the project's virtuoso-data directory
-        project_root = pathlib.Path(__file__).parent.parent
-        self.host_bulk_load_dir = str(project_root / 'virtuoso-data')
+        self.container_name = container_name
+        
+        self.host_bulk_load_dir = os.environ['VIRTUOSO_BULK_DIR']
+        logger.info(f"Bulk load directory: {self.host_bulk_load_dir}")
         
         # Don't auto-load data in parent constructor
         self._sparql = SPARQLWrapper(url)
@@ -118,17 +132,25 @@ class VirtuosoEndpoint(RemoteEndpoint):
         self._graph_uri = None
         
         if rdf_file_to_load:
+            logger.info(f"Starting bulk load for file: {rdf_file_to_load}")
             self.rdf_file_path = rdf_file_to_load
             self._graph_uri = f"http://temp/graph/{os.path.basename(rdf_file_to_load)}"
+            logger.info(f"Using graph URI: {self._graph_uri}")
             self._bulk_load_data()
+            logger.info("Bulk load completed successfully")
     
     def _bulk_load_data(self):
         """Load RDF data using Virtuoso bulk loading instead of INSERT queries."""
+        logger = logging.getLogger("kgi")
+        logger.info("Starting Virtuoso bulk load process")
+        
         # Clear existing graph first
+        logger.info(f"Clearing graph: {self._graph_uri}")
         clear_query = f"CLEAR GRAPH <{self._graph_uri}>"
         self._sparql.setQuery(clear_query)
         self._sparql.setMethod(POST)
         self._sparql.query()
+        logger.info("Graph cleared successfully")
         
         # Convert N-Triples to N-Quads with target graph
         temp_nq_file = None
@@ -136,9 +158,12 @@ class VirtuosoEndpoint(RemoteEndpoint):
         
         try:
             # Create temporary N-Quads file
+            logger.info("Creating temporary N-Quads file")
             with tempfile.NamedTemporaryFile(mode='w', suffix='.nq', delete=False, encoding='utf-8') as temp_nq:
                 temp_nq_file = temp_nq.name
+                logger.info(f"Temporary file: {temp_nq_file}")
                 
+                triple_count = 0
                 with open(self.rdf_file_path, 'r', encoding='utf-8') as f:
                     for line in f:
                         line = line.strip()
@@ -147,6 +172,9 @@ class VirtuosoEndpoint(RemoteEndpoint):
                                 line = line[:-1].strip()
                             # Add graph URI to make it an N-Quad
                             temp_nq.write(f"{line} <{self._graph_uri}> .\n")
+                            triple_count += 1
+                
+                logger.info(f"Converted {triple_count} triples to N-Quads")
             
             # Compress the N-Quads file
             temp_nq_gz_file = temp_nq_file + '.gz'
@@ -156,37 +184,87 @@ class VirtuosoEndpoint(RemoteEndpoint):
             
             # Copy the gzipped file to the bulk load directory
             bulk_load_file = f"{self.host_bulk_load_dir}/temp_bulk_load.nq.gz"
+            logger.info(f"Copying gzipped file to bulk load directory: {bulk_load_file}")
             shutil.copy2(temp_nq_gz_file, bulk_load_file)
+            logger.info(f"File copied successfully. Size: {os.path.getsize(bulk_load_file)} bytes")
             
             # Step 1: Clear any existing entries for this file from load_list
-            clear_cmd = [
-                'docker', 'exec', self.container_name, 
-                '/opt/virtuoso-opensource/bin/isql', '1111', 'dba', 'dba',
-                'exec=' + f"DELETE FROM DB.DBA.load_list WHERE ll_file = '{self.bulk_load_dir}/temp_bulk_load.nq.gz';"
-            ]
-            subprocess.run(clear_cmd, capture_output=True, text=True)
+            logger.info(f"Clearing existing entries for file in load_list")
+            clear_sql = f"DELETE FROM DB.DBA.load_list WHERE ll_file = '{self.host_bulk_load_dir}/temp_bulk_load.nq.gz'"
+            logger.info(f"Clear SQL: {clear_sql}")
+            try:
+                self._execute_sql(clear_sql)
+                logger.info("Clear command executed successfully")
+            except Exception as e:
+                logger.error(f"Exception running clear command: {e}")
+                raise
             
             # Step 2: Register the file for bulk loading
-            register_cmd = [
-                'docker', 'exec', self.container_name,
-                '/opt/virtuoso-opensource/bin/isql', '1111', 'dba', 'dba',
-                'exec=' + f"ld_dir('{self.bulk_load_dir}', '*.nq.gz', 'http://localhost:8890/DAV/ignored');"
-            ]
-            result = subprocess.run(register_cmd, capture_output=True, text=True)
+            logger.info("Registering file for bulk loading")
+            # Verify file exists in container's perspective
+            container_file_path = f"{self.host_bulk_load_dir}/temp_bulk_load.nq.gz"
+            logger.info(f"Checking if file exists at container path: {container_file_path}")
             
-            if result.returncode != 0:
-                raise RuntimeError(f"Failed to register file: {result.stderr}")
+            # Use ld_dir with specific file pattern
+            register_sql = f"ld_dir('{self.host_bulk_load_dir}', 'temp_bulk_load.nq.gz', 'http://localhost:8890/DAV/ignored')"
+            logger.info(f"Register SQL: {register_sql}")
+            try:
+                register_result = self._execute_sql(register_sql)
+                logger.info(f"Register result: {register_result}")
+                logger.info("File registered successfully")
+            except Exception as e:
+                logger.error(f"Exception running register command: {e}")
+                raise
                 
-            # Step 3: Run the bulk loader
-            load_cmd = [
-                'docker', 'exec', self.container_name,
-                '/opt/virtuoso-opensource/bin/isql', '1111', 'dba', 'dba',
-                'exec=rdf_loader_run();'
-            ]
-            result = subprocess.run(load_cmd, capture_output=True, text=True)
+            # Step 2.5: Check what's in the load_list
+            logger.info("Checking load_list contents")
+            check_sql = "SELECT ll_file, ll_graph, ll_state FROM DB.DBA.load_list"
+            try:
+                load_list_contents = self._execute_sql(check_sql)
+                logger.info(f"Load list contents:\n{load_list_contents}")
+            except Exception as e:
+                logger.warning(f"Could not check load_list: {e}")
             
-            if result.returncode != 0:
-                raise RuntimeError(f"Bulk load failed: {result.stderr}")
+            # Step 3: Run the bulk loader
+            logger.info("Running bulk loader")
+            load_sql = "rdf_loader_run()"
+            logger.info(f"Bulk load SQL: {load_sql}")
+            try:
+                load_result = self._execute_sql(load_sql)
+                logger.info(f"Bulk loader output: {load_result}")
+                logger.info("Bulk loader completed successfully")
+            except Exception as e:
+                logger.error(f"Exception running bulk load: {e}")
+                raise
+            
+            # Step 3.5: Check load_list again to see if it was processed
+            logger.info("Checking load_list after bulk load")
+            try:
+                load_list_after = self._execute_sql(check_sql)
+                logger.info(f"Load list after bulk load:\n{load_list_after}")
+            except Exception as e:
+                logger.warning(f"Could not check load_list after bulk load: {e}")
+            
+            # Step 4: Verify data was loaded
+            logger.info(f"Verifying data in graph {self._graph_uri}")
+            count_query = f"SELECT COUNT(*) WHERE {{ GRAPH <{self._graph_uri}> {{ ?s ?p ?o }} }}"
+            self._sparql.setQuery(count_query)
+            self._sparql.setMethod(POST)
+            try:
+                results = self._sparql.query().convert()
+                triple_count_in_graph = 0
+                for line in results.decode('utf-8').split('\n'):
+                    if line and not line.startswith('"'):
+                        try:
+                            triple_count_in_graph = int(line)
+                            break
+                        except:
+                            pass
+                logger.info(f"Triples loaded into graph: {triple_count_in_graph}")
+                if triple_count_in_graph == 0:
+                    logger.error("WARNING: No triples were loaded into the graph!")
+            except Exception as e:
+                logger.error(f"Could not verify loaded data: {e}")
             
         finally:
             # Clean up temporary files
@@ -197,19 +275,68 @@ class VirtuosoEndpoint(RemoteEndpoint):
                     except Exception:
                         pass
 
+    def _execute_sql(self, sql_command):
+        """Execute SQL command using local isql."""
+        logger = logging.getLogger("kgi")
+        
+        # Use local isql command
+        isql_path = '/opt/virtuoso-opensource/bin/isql'
+        
+        if not os.path.exists(isql_path):
+            logger.error(f"isql not found at {isql_path}")
+            raise RuntimeError(f"isql not found at {isql_path}")
+        
+        # Execute the SQL command using isql
+        cmd = [
+            isql_path, 'localhost:1111', 'dba', 'dba',
+            f"exec={sql_command}"
+        ]
+        
+        logger.info(f"Executing SQL via local isql: {sql_command}")
+        logger.info(f"Command: {' '.join(cmd)}")
+        
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            logger.info(f"SQL execution return code: {result.returncode}")
+            
+            if result.stdout:
+                logger.info(f"SQL stdout: {result.stdout[:1000]}")
+            
+            if result.returncode != 0:
+                logger.error(f"SQL execution failed: {result.stderr}")
+                raise RuntimeError(f"SQL execution failed: {result.stderr}")
+                
+            logger.info("SQL command executed successfully")
+            return result.stdout
+            
+        except subprocess.TimeoutExpired:
+            logger.error("SQL command timed out")
+            raise RuntimeError("SQL command timed out")
+        except Exception as e:
+            logger.error(f"Failed to execute SQL command: {e}")
+            raise RuntimeError(f"Failed to execute SQL command: {e}")
+
 
 class LocalSparqlGraphStore(Endpoint):
     """Local RDFLib-based SPARQL endpoint."""
     
     def __init__(self, url: str, delete_after_use: bool = False):
+        logger = logging.getLogger("kgi")
+        logger.info(f"Initializing LocalSparqlGraphStore with file: {url}")
+        
         self.delete_after_use = delete_after_use
         with open(url, "r", encoding="utf-8") as f:
             data = f.read()
+        
+        logger.info(f"Read {len(data)} characters from RDF file")
         self._graph = ConjunctiveGraph()
         try:
+            logger.info("Parsing N-Triples data...")
             self._parse_ntriples_preserve_bnode_ids(data)
+            logger.info(f"Successfully parsed RDF data. Graph contains {len(self._graph)} triples")
         except Exception as e:
             logging.getLogger("kgi").error(f"Invalid RDF data: {e}")
+            raise
 
     def _parse_ntriples_preserve_bnode_ids(self, data: str):
         """Parse N-Triples data while preserving blank node IDs."""

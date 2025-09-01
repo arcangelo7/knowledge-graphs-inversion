@@ -1,0 +1,37 @@
+services:
+  benchmark_postgresql:
+    image: postgres:13
+    container_name: kgi-benchmark-postgresql
+    environment:
+      POSTGRES_PASSWORD: r2rml
+      POSTGRES_USER: r2rml
+      POSTGRES_DB: r2rml
+    ports:
+      - "5434:5432"
+    volumes:
+      - ./benchmark_postgresql_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U r2rml -d r2rml"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  benchmark:
+    build: .
+    container_name: kgi-benchmark
+    volumes:
+      - .:/app
+      - ./benchmarks/krown/results:/app/benchmarks/krown/results
+    working_dir: /app
+    environment:
+      - BENCHMARK_DB_HOST=benchmark_postgresql
+      - BENCHMARK_DB_PORT=5432
+      - BENCHMARK_DB_USER=r2rml
+      - BENCHMARK_DB_PASSWORD=r2rml
+      - BENCHMARK_DB_NAME=r2rml
+      - EMBEDDED_VIRTUOSO=true
+    depends_on:
+      benchmark_postgresql:
+        condition: service_healthy
+    command: ["benchmark"]  # Use the benchmark mode of the unified container

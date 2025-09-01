@@ -21,5 +21,7 @@ virtuoso-data/
 # PostgreSQL data directories
 postgresql_data/
 dest_postgresql_data/
+benchmark_postgresql_data/
+benchmark_virtuoso_data/
 
 CLAUDE.md

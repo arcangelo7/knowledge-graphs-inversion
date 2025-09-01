@@ -140,18 +140,31 @@ def retrieve_data(
     decode_columns: bool = False,
 ) -> tuple[pd.DataFrame | None, str | None]:
     """Retrieve data from SPARQL endpoint using mapping rules."""
+    logger = logging.getLogger("kgi")
+    logger.info("Starting retrieve_data function")
+    logger.info(f"Source rules count: {len(source_rules)}")
+    logger.info(f"Endpoint type: {type(endpoint).__name__}")
+    
     # Create query triples
+    logger.info("Creating query triples...")
     triples: list[QueryTriple] = [
         QueryTriple(rule) for _, rule in source_rules.iterrows() 
         if rule["object_map_type"] not in [RML_BLANK_NODE]
     ]
+    logger.info(f"Created {len(triples)} query triples")
     
     # Add subject triples for template extraction
+    logger.info("Adding subject triples...")
+    subject_groups = list(source_rules.groupby("subject_map_value", dropna=False))
+    logger.info(f"Found {len(subject_groups)} subject groups")
+    
     triples.extend(
         SubjectTriple(subject_rules.iloc[0])
-        for _, subject_rules in source_rules.groupby("subject_map_value", dropna=False)
+        for _, subject_rules in subject_groups
     )
+    logger.info(f"Total triples after adding subjects: {len(triples)}")
 
+    logger.info("Creating query object and generating SPARQL...")
     query = Query(triples)
     generated_query = query.generate(mapping_rules)
 
@@ -159,17 +172,31 @@ def retrieve_data(
         logging.getLogger("kgi").warning("No query generated (no references found)")
         return None, None
 
+    logger.info(f"Generated SPARQL query: {generated_query[:500]}...")
+    logger.info("Executing SPARQL query...")
+    
     try:
         result = endpoint.query(generated_query)
+        logger.info(f"Query executed successfully. Result length: {len(result) if result else 0}")
         if not result.strip():
             return pd.DataFrame(), generated_query
 
+        logger.info("Processing query result...")
         # Handle different endpoint types
         if hasattr(endpoint, '_graph'):  # LocalSparqlGraphStore
+            logger.info("Processing result as JSON from LocalSparqlGraphStore")
             result_data = json.loads(result)
             columns = result_data['head']['vars']
+            logger.info(f"Result columns: {columns}")
+            
             data = []
-            for binding in result_data['results']['bindings']:
+            bindings = result_data['results']['bindings']
+            logger.info(f"Processing {len(bindings)} result bindings")
+            
+            for i, binding in enumerate(bindings):
+                if i % 100 == 0:  # Log progress every 100 rows
+                    logger.info(f"Processing binding {i+1}/{len(bindings)}")
+                    
                 row = {}
                 for col in columns:
                     if col in binding:
@@ -180,12 +207,18 @@ def retrieve_data(
                         row[col] = None
                 data.append(row)
             df = pd.DataFrame(data, columns=columns)
+            logger.info(f"Created DataFrame with {len(df)} rows and {len(df.columns)} columns")
         else:
+            logger.info("Processing result as CSV from RemoteEndpoint")
             df = pd.read_csv(StringIO(result))
+            logger.info(f"Created DataFrame with {len(df)} rows and {len(df.columns)} columns")
 
         if decode_columns:
+            logger.info("Decoding DataFrame columns...")
             df = query.decode_dataframe(df)
+            logger.info("DataFrame decoding completed")
 
+        logger.info("retrieve_data function completed successfully")
         return df, generated_query
 
     except Exception as e:
