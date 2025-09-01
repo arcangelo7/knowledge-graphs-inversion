@@ -42,7 +42,6 @@ class DatabaseSchemaRetriever:
     def __init__(self, db_url: str):
         """Initialize with database URL."""
         self.db_url = db_url
-        self.logger = logging.getLogger("kgi.schema")
         self._engine = None
     
     @property

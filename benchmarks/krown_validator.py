@@ -133,7 +133,6 @@ class KrownValidator:
                         atol=1e-8   # Absolute tolerance for floats
                     )
                     result["validation_passed"] = True
-                    self.logger.info(f"✅ Validation passed for {scenario_name}")
                     
                 except AssertionError as e:
                     # Find specific differences
@@ -242,7 +241,6 @@ class KrownValidator:
         }
         
         for scenario in scenarios:
-            self.logger.info(f"Validating scenario: {scenario}")
             result = self.validate_scenario_tables(scenario)
             results["scenario_results"].append(result)
             
@@ -262,26 +260,18 @@ class KrownValidator:
         """Save validation results to a JSON file."""
         with open(output_path, 'w') as f:
             json.dump(results, f, indent=2, default=str)
-        
-        self.logger.info(f"📊 Validation report saved to: {output_path}")
     
     def print_summary(self, results: Dict):
         """Print validation summary."""
-        print("\n" + "="*60)
-        print("📋 VALIDATION SUMMARY")
-        print("="*60)
-        print(f"Total scenarios: {results['total_scenarios']}")
-        print(f"Passed: {results['passed']} ✅")
-        print(f"Failed: {results['failed']} ❌")
-        print(f"Validation rate: {results['validation_rate']:.2f}%")
+        print(f"Validation: {results['passed']}/{results['total_scenarios']} passed ({results['validation_rate']:.2f}%)")
         
         if results['failed'] > 0:
-            print("\n❌ Failed scenarios:")
+            print("Failed scenarios:")
             for result in results['scenario_results']:
                 if not result.get('validation_passed', False):
-                    print(f"  - {result['scenario']}:")
-                    for error in result.get('errors', []):
-                        print(f"    • {error}")
+                    print(f"  - {result['scenario']}")
+                    for error in result.get('errors', [])[:1]:
+                        print(f"    {error}")
     
     def cleanup_tables(self, keep_tables: List[str] = None):
         """
@@ -300,8 +290,5 @@ class KrownValidator:
                     try:
                         conn.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))
                         conn.commit()
-                        self.logger.info(f"Dropped table: {table}")
                     except Exception as e:
                         self.logger.warning(f"Could not drop table {table}: {e}")
-        
-        self.logger.info("Database cleanup completed")

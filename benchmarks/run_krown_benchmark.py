@@ -61,19 +61,15 @@ class KrownBenchmarkRunner:
     
     def run_krown_data_generation(self):
         """Generate KROWN benchmark data."""
-        logger.info("Generating KROWN benchmark data...")
-        
         data_generator_dir = self.krown_dir / "data-generator"
         config_file = Path(__file__).parent / "krown" / "config" / "kg-inversion-benchmark.json"
         
         if not data_generator_dir.exists():
             logger.error(f"KROWN data generator not found at {data_generator_dir}")
-            logger.error("Run: git submodule update --init --recursive")
             return False
         
         exgentool_path = data_generator_dir / "exgentool"
         if not exgentool_path.exists():
-            logger.info("Building KROWN data generator...")
             try:
                 build_result = subprocess.run(
                     ["make", "build"], 
@@ -82,8 +78,7 @@ class KrownBenchmarkRunner:
                     text=True
                 )
                 if build_result.returncode != 0:
-                    logger.warning("Make build failed, trying alternative approaches...")
-                    logger.warning(f"Build stderr: {build_result.stderr}")
+                    logger.warning(f"Build failed: {build_result.stderr}")
             except Exception as e:
                 logger.warning(f"Build error: {e}")
         
@@ -91,16 +86,12 @@ class KrownBenchmarkRunner:
         
         try:
             subprocess.run(cmd, cwd=data_generator_dir, capture_output=True, text=True, check=True)
-            logger.info("KROWN data generation completed")
             return True
         except subprocess.CalledProcessError as e:
-            logger.error(f"KROWN data generation failed: {e}")
-            logger.error(f"Stderr: {e.stderr}")
-            logger.error(f"Stdout: {e.stdout}")
+            logger.error(f"Data generation failed: {e}")
             return False
         except FileNotFoundError:
             logger.error(f"exgentool not found at {exgentool_path}")
-            logger.error("Try building KROWN data generator first")
             return False
     
     def find_krown_scenarios(self):
@@ -118,27 +109,22 @@ class KrownBenchmarkRunner:
                 if metadata_file.exists():
                     scenarios.append(item)
         
-        logger.info(f"Found {len(scenarios)} KROWN scenarios")
         return scenarios
     
     def execute_krown_scenario(self, scenario_path):
         """Execute a single KROWN scenario using KROWN's execution framework."""
         scenario_name = scenario_path.name
-        logger.info(f"Executing KROWN scenario: {scenario_name}")
         
         metadata_file = scenario_path / "metadata.json"
         with open(metadata_file, 'r') as f:
             metadata = json.load(f)
         
         shared_dir = scenario_path / "data" / "shared"
-        
         start_time = time.time()
         
         try:
             self.execute_load_rdb_step(metadata, shared_dir, scenario_name)
-            
             self.execute_morph_kgc_step(metadata, shared_dir)
-            
             inversion_results = self.execute_inversion_step(metadata, shared_dir, scenario_name)
             
             validation_results = None
@@ -171,7 +157,6 @@ class KrownBenchmarkRunner:
                 "validation_results": validation_results
             }
             
-            logger.info(f"Completed {scenario_name} in {execution_time:.2f}s")
             return result
             
         except Exception as e:
@@ -188,8 +173,6 @@ class KrownBenchmarkRunner:
     
     def execute_load_rdb_step(self, metadata, shared_dir, scenario_name=None):
         """Execute the Load RDB step - load CSV into PostgreSQL."""
-        logger.info("Step 1: Loading CSV data into PostgreSQL...")
-        
         load_step = None
         for step in metadata["steps"]:
             if step["command"] == "load":
@@ -206,28 +189,18 @@ class KrownBenchmarkRunner:
             raise FileNotFoundError(f"CSV file not found: {csv_file}")
         
         conn_string = self.get_connection_string()
+        df = pd.read_csv(csv_file)
+        engine = create_engine(conn_string)
         
         if self.validate and scenario_name:
             original_table_name = f"{scenario_name}_original_{table_name}"
-            df = pd.read_csv(csv_file)
-            engine = create_engine(conn_string)
-            
             df.to_sql(original_table_name, engine, if_exists='replace', index=False)
-            logger.info(f"Saved original data to '{original_table_name}' for validation")
-            
-            df.to_sql(table_name, engine, if_exists='replace', index=False)
-        else:
-            df = pd.read_csv(csv_file)
-            engine = create_engine(conn_string)
-            df.to_sql(table_name, engine, if_exists='replace', index=False)
         
-        logger.info(f"Loaded {len(df)} rows into table '{table_name}'")
+        df.to_sql(table_name, engine, if_exists='replace', index=False)
         engine.dispose()
     
     def execute_morph_kgc_step(self, metadata, shared_dir):
         """Execute Morph-KGC mapping step."""
-        logger.info("Step 2: Executing RML mapping with Morph-KGC...")
-        
         mapping_step = None
         for step in metadata["steps"]:
             if step["command"] == "execute_mapping":
@@ -236,9 +209,6 @@ class KrownBenchmarkRunner:
         
         if not mapping_step:
             raise ValueError("No mapping step found in metadata")
-        
-        if mapping_step.get("resource") == "Custom":
-            logger.warning("Found 'Custom' resource, treating as MorphKGC step...")
         
         config = ConfigParser()
         
@@ -278,15 +248,11 @@ class KrownBenchmarkRunner:
             raise RuntimeError(f"Morph-KGC failed: {morph_result.stderr}")
         
         output_file = shared_dir / mapping_step["parameters"]["output_file"]
-        if output_file.exists():
-            logger.info(f"Generated RDF file: {output_file.stat().st_size} bytes")
-        else:
+        if not output_file.exists():
             raise FileNotFoundError(f"Expected output file not found: {output_file}")
     
     def execute_inversion_step(self, metadata, shared_dir, scenario_name):
         """Execute our Knowledge Graph Inversion step."""
-        logger.info("Step 3: Executing Knowledge Graph Inversion...")
-                
         mapping_step = None
         for step in metadata["steps"]:
             if step["command"] == "execute_mapping":
@@ -297,12 +263,8 @@ class KrownBenchmarkRunner:
             raise ValueError("No mapping step found in metadata for fallback")
         
         endpoint_url = None
-        
         if self.use_virtuoso:
             endpoint_url = f"http://{self.virtuoso_config['host']}:{self.virtuoso_config['port']}/sparql"
-            logger.info(f"Using Virtuoso endpoint: {endpoint_url}")
-        else:
-            logger.info("Using in-memory RDF processing")
         
         inversion_step = {
             "command": "execute_inversion",
@@ -345,7 +307,6 @@ class KrownBenchmarkRunner:
                 use_virtuoso=self.use_virtuoso,
                 virtuoso_container='kgi-virtuoso'
             )
-            logger.info(f"Inversion completed: {len(inversion_results)} data sources processed")
             return inversion_results
         finally:
             os.chdir(original_cwd)
@@ -372,7 +333,6 @@ class KrownBenchmarkRunner:
         with open(results_file, 'w') as f:
             json.dump(benchmark_data, f, indent=2)
         
-        logger.info(f"Results saved to: {results_file}")
         return results_file
     
     def generate_validation_summary(self, results):
@@ -409,28 +369,18 @@ class KrownBenchmarkRunner:
     
     def print_summary(self, results):
         """Print benchmark summary."""
-        logger.info("="*60)
-        logger.info("KROWN BENCHMARK SUMMARY")
-        logger.info("="*60)
-        
         total = len(results)
         completed = len([r for r in results if r["status"] == "completed"])
         failed = total - completed
         
-        logger.info(f"Total scenarios: {total}")
-        logger.info(f"Completed: {completed}")
-        logger.info(f"Failed: {failed}")
+        logger.info(f"Total: {total}, Completed: {completed}, Failed: {failed}")
         
         if completed > 0:
             execution_times = [r["execution_time"] for r in results if r["status"] == "completed"]
             avg_time = sum(execution_times) / len(execution_times)
             
-            logger.info("Performance metrics:")
-            logger.info(f"  Average execution time: {avg_time:.2f}s")
-            logger.info(f"  Min execution time: {min(execution_times):.2f}s")
-            logger.info(f"  Max execution time: {max(execution_times):.2f}s")
+            logger.info(f"Avg time: {avg_time:.2f}s, Min: {min(execution_times):.2f}s, Max: {max(execution_times):.2f}s")
             
-            logger.info("Scenario details:")
             for result in results:
                 if result["status"] == "completed":
                     tm_count = result.get("triples_maps_count", 0)
@@ -439,12 +389,11 @@ class KrownBenchmarkRunner:
                     val_status = ""
                     if self.validate and result.get("validation_results"):
                         val_passed = result["validation_results"].get("validation_passed", False)
-                        val_status = " ✅" if val_passed else " ❌"
+                        val_status = " [PASS]" if val_passed else " [FAIL]"
                     logger.info(f"  {result['scenario_name']}: {result['execution_time']:.2f}s "
                           f"[TM:{tm_count}, POM:{pom_count}, INV:{inv_count}]{val_status}")
         
         if failed > 0:
-            logger.info("Failed scenarios:")
             for result in results:
                 if result["status"] == "failed":
                     error = result.get("error", "Unknown error")
@@ -452,8 +401,6 @@ class KrownBenchmarkRunner:
     
     def validate_scenario(self, scenario_name: str) -> dict:
         """Validate inversion results for a scenario."""
-        logger.info("Step 4: Validating inversion results...")
-        
         try:
             original_table = f"{scenario_name}_original_data"
             inverted_table = f"{scenario_name}_data"
@@ -463,14 +410,6 @@ class KrownBenchmarkRunner:
                 inverted_table=inverted_table,
                 scenario_name=scenario_name
             )
-            
-            if result["validation_passed"]:
-                logger.info(f"Validation passed for {scenario_name}")
-            else:
-                logger.error(f"Validation failed for {scenario_name}")
-                if result.get("errors"):
-                    for error in result["errors"][:3]:  # Show first 3 errors
-                        logger.error(f"- {error}")
             
             return result
             
@@ -484,13 +423,11 @@ class KrownBenchmarkRunner:
     def cleanup(self):
         """Cleanup resources."""
         if self.cleanup_tables:
-            logger.info("Cleaning up database tables...")
             if self.validator:
                 self.validator.cleanup_tables()
             self.cleanup_database_tables()
         else:
-            logger.info("Keeping database tables for manual inspection")
-            logger.info(f"Database is available at: {self.get_connection_string()}")
+            logger.info("Keeping tables for inspection")
     
     def cleanup_database_tables(self):
         """Cleanup all database tables."""
@@ -506,10 +443,8 @@ class KrownBenchmarkRunner:
                 
                 for table in tables:
                     conn.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))
-                    logger.info(f"Dropped table: {table}")
                 
                 conn.commit()
-                logger.info("All tables cleaned up")
         except Exception as e:
             logger.error(f"Error cleaning up tables: {e}")
         finally:
@@ -517,30 +452,27 @@ class KrownBenchmarkRunner:
     
     def run_benchmark(self):
         """Run the complete KROWN benchmark."""
-        logger.info("KROWN Benchmark for Knowledge Graph Inversion (Docker)")
-        logger.info("="*60)
+        logger.info("Starting KROWN benchmark")
         
         try:
             if self.validate:
                 conn_string = self.get_connection_string()
                 self.validator = KrownValidator(conn_string, verbose=False)
-                logger.info("Validator initialized")
             
             if not self.run_krown_data_generation():
-                logger.warning("Data generation failed, but continuing with existing data...")
+                logger.warning("Data generation failed, continuing with existing data")
             
             scenarios = self.find_krown_scenarios()
             if not scenarios:
-                logger.error("No KROWN scenarios found")
+                logger.error("No scenarios found")
                 return 1
             
             results = []
             for i, scenario_path in enumerate(scenarios, 1):
-                # Temporarily skip the third benchmark (mappings_8_5)
                 if scenario_path.name == "mappings_8_5":
-                    logger.info(f"[{i}/{len(scenarios)}] Skipping {scenario_path.name} (temporarily disabled)")
+                    logger.info(f"[{i}/{len(scenarios)}] Skipping {scenario_path.name}")
                     continue
-                logger.info(f"[{i}/{len(scenarios)}] " + "="*40)
+                logger.info(f"[{i}/{len(scenarios)}] {scenario_path.name}")
                 result = self.execute_krown_scenario(scenario_path)
                 results.append(result)
             
@@ -554,11 +486,11 @@ class KrownBenchmarkRunner:
                     self.validator.save_validation_report(validation_summary, validation_file)
                     self.validator.print_summary(validation_summary)
             
-            logger.info("KROWN Benchmark completed!")
+            logger.info("Benchmark completed")
             return 0
             
         except KeyboardInterrupt:
-            logger.warning("Benchmark interrupted by user")
+            logger.warning("Benchmark interrupted")
             return 1
         except Exception as e:
             logger.error(f"Benchmark failed: {e}")

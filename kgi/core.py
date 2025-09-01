@@ -166,24 +166,17 @@ def inversion(config_file: str | pathlib.Path, test_id: str = None, dest_db_url:
         Dictionary mapping source names to inverted results or special status dict
     """
     logger = get_logger()
-    logger.info(f"Starting inversion process - config: {config_file}, test_id: {test_id}")
-    logger.info(f"Parameters - dest_db_url: {dest_db_url}, sparql_endpoint: {sparql_endpoint}, use_virtuoso: {use_virtuoso}")
     
     results = {}
     
     if test_id is not None:
-        logger.info(f"Setting up test logging for test_id: {test_id}")
         test_logging_setup(test_id)
         
-    logger.info("Loading configuration...")
     config = load_config_from_argument(config_file)
-    
-    logger.info("Checking for SQL queries in mappings...")
     if check_for_sql_queries(config):
         get_logger().warning("SQL query as logical table is not supported. Skipping inversion.")
         return {'__status__': 'not_supported', '__reason__': 'SQL query as logical table'}
     
-    logger.info("Retrieving mappings...")
     try:
         mappings, _ = retrieve_mappings(config)
     except ValueError as e:
@@ -194,59 +187,39 @@ def inversion(config_file: str | pathlib.Path, test_id: str = None, dest_db_url:
             get_logger().warning("Mapping with missing information. Skipping.")
         return {'__status__': 'mapping_error', '__reason__': 'Mapping with missing object_map information'}
         
-    logger.info("Checking for constant-only mappings...")
     if check_for_constant_only_mappings(mappings):
         get_logger().warning("Constant-only mappings detected - cannot retrieve original data from constants.")
         return {'__status__': 'mapping_issue', '__reason__': 'Mappings contain only constants (no column references) - original data cannot be recovered'}
         
-    logger.info("Creating SPARQL endpoint...")
     try:
         if sparql_endpoint:
-            logger.info(f"Using provided SPARQL endpoint: {sparql_endpoint}")
             url = config.get_output_file()
-            logger.info(f"RDF file to load: {url}")
             
             if use_virtuoso:
-                logger.info(f"Creating VirtuosoEndpoint with container: {virtuoso_container}")
                 endpoint = VirtuosoEndpoint(sparql_endpoint, rdf_file_to_load=url, container_name=virtuoso_container)
             else:
-                logger.info("Creating RemoteEndpoint...")
                 endpoint = RemoteEndpoint(sparql_endpoint, rdf_file_to_load=url)
         else:
-            logger.info("Creating local SPARQL endpoint...")
             output_file = config.get_output_file()
-            logger.info(f"Output file: {output_file}")
             endpoint = EndpointFactory.create_from_url(output_file)
     except FileNotFoundError:
         get_logger().warning("Output file not found. Skipping inversion.")
         return {'__status__': 'no_input_file', '__reason__': 'No RDF input file found for inversion, likely due to mapping errors'}
         
-    logger.info("Endpoint created successfully. Processing data...")
     insert_columns(mappings)
-    logger.info("Extracting database configuration...")
     db_configs = extract_db_config(config)
-    
-    logger.info("Setting up schema retrievers...")
     schema_retrievers = {}
     for section, db_config in db_configs.items():
         if 'db_url' in db_config:
-            logger.info(f"Creating schema retriever for section: {section}")
             schema_retrievers[section] = DatabaseSchemaRetriever(db_config['db_url'])
-
-    logger.info("Processing tables...")
-    table_count = len(mappings.groupby("logical_source_value"))
-    logger.info(f"Found {table_count} tables to process")
     
-    for i, (table_name, source_rules) in enumerate(mappings.groupby("logical_source_value"), 1):
-        logger.info(f"Processing table {i}/{table_count}: {table_name}")
+    for table_name, source_rules in mappings.groupby("logical_source_value"):
         source_section = source_rules.iloc[0].get('source_section', 'DataSource1')
         db_config = db_configs.get(source_section, db_configs.get('DataSource1', {}))
         template_db_url = dest_db_url if dest_db_url else db_config.get('db_url')
         template = generate_template(source_rules, template_db_url)
         
-        logger.info(f"Retrieving data for table: {table_name}")
         source_data, sparql_query = retrieve_data(mappings, source_rules, endpoint, decode_columns=True)
-        logger.info(f"Data retrieval completed for table: {table_name}")
         
         if source_data is None:
             results[table_name] = {"inverted_query": "", "sparql_query": ""}
@@ -254,27 +227,22 @@ def inversion(config_file: str | pathlib.Path, test_id: str = None, dest_db_url:
             continue
         
         if source_section in schema_retrievers:
-            logger.info(f"Applying schema for table: {table_name}")
             schema_retriever: DatabaseSchemaRetriever = schema_retrievers[source_section]
             table_schema = schema_retriever.get_table_schema(table_name)
             if table_schema:
                 source_data = apply_schema_types(source_data, table_schema)
                 source_data = apply_schema_ordering(source_data, table_schema)
-                logger.info(f"Schema applied for table: {table_name}")
             
         try:
-            logger.info(f"Filling template for table: {table_name}")
             filled_source = template.fill_data(source_data, table_name)
             results[table_name] = {
                 "inverted_query": filled_source,
                 "sparql_query": sparql_query
             }
-            logger.info(f"Template filled successfully for table: {table_name}")
         except AttributeError as e:
             get_logger().error(f"Error while filling template: {e}")
             raise e
     
-    logger.info("Disposing schema retrievers...")
     for retriever in schema_retrievers.values():
         retriever.dispose()
     
@@ -282,6 +250,4 @@ def inversion(config_file: str | pathlib.Path, test_id: str = None, dest_db_url:
     if not results:
         logger.warning("No results generated during inversion process")
         return {'__status__': 'no_data_generated', '__reason__': 'No data was generated during inversion process'}
-    
-    logger.info(f"Inversion completed successfully. Generated {len(results)} results.")
     return results
