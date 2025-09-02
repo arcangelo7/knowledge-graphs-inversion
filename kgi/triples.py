@@ -102,11 +102,14 @@ class QueryTriple(Triple):
                     f"{object_identifier}_plain_{id_generator.get_id()}"
                 )
                 if already_bound:
-                    lines.append(f"OPTIONAL{{?{subject_reference} {predicate} ?{plain_object_reference}. BIND(DATATYPE(?{plain_object_reference}) AS ?{object_reference}_datatype)}}")
-                    lines.append(f"OPTIONAL{{BIND(ENCODE_FOR_URI(STR(?{plain_object_reference})) as ?{object_reference}_encoded)}}")
+                    lines.append(f"?{subject_reference} {predicate} ?{plain_object_reference} .")
+                    lines.append(f"BIND(DATATYPE(?{plain_object_reference}) AS ?{object_reference}_datatype)")
+                    lines.append(f"BIND(ENCODE_FOR_URI(STR(?{plain_object_reference})) as ?{object_reference}_encoded)")
                     lines.append(f"FILTER(!BOUND(?{object_reference}_encoded) || !BOUND(?{plain_object_reference}) || ENCODE_FOR_URI(STR(?{plain_object_reference})) = ?{object_reference}_encoded)")
                 else:
-                    lines.append(f"OPTIONAL{{?{subject_reference} {predicate} ?{plain_object_reference}. BIND(DATATYPE(?{plain_object_reference}) AS ?{object_reference}_datatype). BIND(ENCODE_FOR_URI(STR(?{plain_object_reference})) as ?{object_reference}_encoded)}}")
+                    lines.append(f"?{subject_reference} {predicate} ?{plain_object_reference} .")
+                    lines.append(f"BIND(DATATYPE(?{plain_object_reference}) AS ?{object_reference}_datatype)")
+                    lines.append(f"BIND(ENCODE_FOR_URI(STR(?{plain_object_reference})) as ?{object_reference}_encoded)")
                 return "\n".join(lines)
             else:
                 lines = []
@@ -114,11 +117,11 @@ class QueryTriple(Triple):
                     f"{object_identifier}_temp_{id_generator.get_id()}"
                 )
                 if already_bound:
-                    lines.append(f"OPTIONAL{{?{subject_reference} {predicate} ?{temp_object_reference}}}")
-                    lines.append(f"OPTIONAL{{BIND(?{temp_object_reference} as ?{object_reference})}}")
+                    lines.append(f"?{subject_reference} {predicate} ?{temp_object_reference} .")
+                    lines.append(f"BIND(?{temp_object_reference} as ?{object_reference})")
                     lines.append(f"FILTER(!BOUND(?{object_reference}) || !BOUND(?{temp_object_reference})  || ?{temp_object_reference} = ?{object_reference})")
                 else:
-                    lines.append(f"OPTIONAL{{?{subject_reference} {predicate} ?{object_reference}}}")
+                    lines.append(f"?{subject_reference} {predicate} ?{object_reference} .")
                 return "\n".join(lines)
             
         elif object_map_type == RML_TEMPLATE:
