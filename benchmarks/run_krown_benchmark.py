@@ -469,9 +469,6 @@ class KrownBenchmarkRunner:
             
             results = []
             for i, scenario_path in enumerate(scenarios, 1):
-                if scenario_path.name == "mappings_8_5":
-                    logger.info(f"[{i}/{len(scenarios)}] Skipping {scenario_path.name}")
-                    continue
                 logger.info(f"[{i}/{len(scenarios)}] {scenario_path.name}")
                 result = self.execute_krown_scenario(scenario_path)
                 results.append(result)
