@@ -6,9 +6,8 @@ from io import StringIO
 
 import pandas as pd
 
-from .base import Endpoint, Triple
-from .constants import QUERY_FULL, RML_BLANK_NODE, RML_CONSTANT, RML_PARENT_TRIPLES_MAP, RML_REFERENCE, RML_TEMPLATE
-from .selectors import Selector, SelectorFactory
+from .base import Endpoint
+from .constants import RML_BLANK_NODE, RML_CONSTANT, RML_PARENT_TRIPLES_MAP, RML_REFERENCE, RML_TEMPLATE
 from .triples import QueryTriple, SubjectTriple
 from .utils import Codex, IdGenerator, sparql_to_python_type, url_decode
 
@@ -16,12 +15,8 @@ from .utils import Codex, IdGenerator, sparql_to_python_type, url_decode
 class Query:
     """Represents a SPARQL query for data inversion."""
     
-    def __init__(self, triples: list[QueryTriple] = None, selector: Selector | int = QUERY_FULL):
+    def __init__(self, triples: list[QueryTriple] = None):
         self.triples: list[QueryTriple] = triples or []
-        if isinstance(selector, int):
-            self.selector = SelectorFactory.create(selector)
-        else:
-            self.selector = selector
         self.id_generator = IdGenerator()
         self.codex = Codex()
         self.generated_query = None
@@ -44,21 +39,20 @@ class Query:
     
     @property
     def plain_references(self) -> list[str]:
-        """Get references that don't need URI encoding."""
-        plain_references = set()
+        """Get references that are plain literals (not URI encoded).
+        
+        When a reference appears in both contexts (e.g., 'Name' used as both 
+        a subject template and an object literal), it's excluded from plain 
+        references since it needs URI encoding.
+        """
+        plain_refs = set()
         for triple in self.triples:
-            plain_references.update(triple.plain_references)
-        return list(plain_references)
-
-    @property
-    def pure_references(self) -> list[str]:
-        """Get references that are neither URI encoded nor plain."""
-        return [reference for reference in self.references 
-                if reference not in self.uri_encoded_references]
+            plain_refs.update(triple.plain_references)
+        # Exclude references that also need URI encoding
+        return [ref for ref in plain_refs if ref not in self.uri_encoded_references]
 
     def generate(self, all_mapping_rules: pd.DataFrame) -> str:
         """Generate SPARQL query string."""
-        selected_triples: list[Triple] = self.selector.select(self.triples)
         all_references = self.references
         uri_encoded_references = self.uri_encoded_references
         
@@ -69,10 +63,10 @@ class Query:
         triple_strings = []
         
         # Group triples by type for better performance
-        constant_triples = [t for t in selected_triples if t.rule["object_map_type"] == RML_CONSTANT]
-        reference_triples = [t for t in selected_triples if t.rule["object_map_type"] == RML_REFERENCE]
-        template_triples = [t for t in selected_triples if t.rule["object_map_type"] == RML_TEMPLATE]
-        parent_triples = [t for t in selected_triples if t.rule["object_map_type"] == RML_PARENT_TRIPLES_MAP]
+        constant_triples = [t for t in self.triples if t.rule["object_map_type"] == RML_CONSTANT]
+        reference_triples = [t for t in self.triples if t.rule["object_map_type"] == RML_REFERENCE]
+        template_triples = [t for t in self.triples if t.rule["object_map_type"] == RML_TEMPLATE]
+        parent_triples = [t for t in self.triples if t.rule["object_map_type"] == RML_PARENT_TRIPLES_MAP]
                             
         # Process triples in order for performance
         for triple_group in [constant_triples, parent_triples, template_triples, reference_triples]:
@@ -83,10 +77,10 @@ class Query:
                 if triple_string is not None:
                     triple_strings.append(triple_string)
                         
-        pure_references = [f'?{self.codex.get_id(reference)}' for reference in self.pure_references]
+        plain_vars = [f'?{self.codex.get_id(reference)}' for reference in self.plain_references]
         
         select_part = "SELECT " + " ".join(
-            pure_references + [
+            plain_vars + [
                 f'?{self.codex.get_id(reference)}_encoded ?{self.codex.get_id(reference)}_datatype'
                 for reference in uri_encoded_references
             ]
@@ -119,7 +113,7 @@ class Query:
             # Rename the column
             df.rename(columns={encoded_column: reference}, inplace=True)
             
-        for reference in self.pure_references:
+        for reference in self.plain_references:
             column_reference = self.codex.get_id(reference)
             df.rename(columns={column_reference: reference}, inplace=True)
             

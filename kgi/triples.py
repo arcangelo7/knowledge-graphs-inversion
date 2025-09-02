@@ -28,22 +28,23 @@ class QueryTriple(Triple):
 
     @property
     def uri_encoded_references(self) -> set[str]:
-        """Get references that need URI encoding."""
-        object_type = self.rule["object_map_type"]
-        if object_type == RML_TEMPLATE:
-            return set.union(
-                self.subject_references,
-                self.predicate_references,
-                self.object_references
-            )
-        return set.union(
+        """Get references that need URI encoding (for IRI generation)."""
+        # Subject and predicate references always need encoding
+        encoded = set.union(
             self.subject_references,
             self.predicate_references
         )
+        
+        # Object references need encoding only for templates
+        if self.rule["object_map_type"] == RML_TEMPLATE:
+            encoded = encoded.union(self.object_references)
+            
+        return encoded
 
     @property
     def plain_references(self) -> set[str]:
-        """Get references that don't need URI encoding."""
+        """Get references that are plain literals (no URI encoding needed)."""
+        # Only object references of type REFERENCE are plain literals
         if self.rule["object_map_type"] == RML_REFERENCE:
             return set(self.object_references)
         return set()

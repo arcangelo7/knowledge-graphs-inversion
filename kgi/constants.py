@@ -2,11 +2,6 @@
 
 import pathlib
 
-# Query types
-QUERY_MINIMAL = 0
-QUERY_REDUCED = 1
-QUERY_FULL = 2
-
 # RML constants from morph_kgc
 RML_BLANK_NODE = "http://w3id.org/rml/BlankNode"
 RML_CONSTANT = "http://w3id.org/rml/constant"

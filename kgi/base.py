@@ -24,18 +24,6 @@ class Triple(ABC):
         raise NotImplementedError
 
 
-class Selector(ABC):
-    """Abstract base class for triple selectors."""
-    
-    def __init__(self):
-        pass
-
-    @abstractmethod
-    def select(self, triples: list[Triple]) -> list[Triple]:
-        """Select triples based on strategy."""
-        pass
-
-
 class Node(ABC):
     """Abstract base class for JSON template nodes."""
     
