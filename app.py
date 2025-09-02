@@ -4,6 +4,7 @@ import math
 import os
 import traceback
 from configparser import ConfigParser
+from datetime import datetime
 
 import pandas as pd
 import sqlalchemy
@@ -154,17 +155,27 @@ def run_test():
 def run_all_tests():
     database_system = request.args.get('database_system')
     tests = sorted([f for f in os.listdir(TEST_CASES_DIR) if os.path.isdir(os.path.join(TEST_CASES_DIR, f)) and f.startswith('R2RMLTC')])
-        
+    
+    # Collect all results for report generation
+    all_results = []
+    
     def generate():
         for test_id in tests:
             result = run_single_test(test_id, database_system)
             try:
                 sanitized_result = sanitize_data(result)
+                all_results.append(sanitized_result)
                 json_result = json.dumps(sanitized_result)
                 yield f"data: {json_result}\n\n"
             except Exception as e:
                 error_msg = f"Error serializing result for test {test_id}: {str(e)}"
-                yield f"data: {json.dumps({'status': 'error', 'test_id': test_id, 'message': error_msg})}\n\n"
+                error_result = {'status': 'error', 'test_id': test_id, 'message': error_msg}
+                all_results.append(error_result)
+                yield f"data: {json.dumps(error_result)}\n\n"
+        
+        # Generate report after all tests are completed
+        generate_test_report(all_results, database_system)
+        
         yield "event: complete\ndata: All tests completed\n\n"
     
     return Response(stream_with_context(generate()), content_type='text/event-stream')
@@ -408,6 +419,135 @@ def analyze_duplicate_loss(source_df, dest_df, table_name):
             return message, True
     
     return None, False
+
+def generate_test_report(results, database_system):
+    """Generate a comprehensive test report and save it to a file."""
+    try:
+        results_dir = os.path.join(os.path.dirname(__file__), 'r2rml_inversion_test_results')
+        os.makedirs(results_dir, exist_ok=True)
+        
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        report_filename = f"test_report_{database_system}_{timestamp}.json"
+        report_path = os.path.join(results_dir, report_filename)
+        
+        total_tests = len(results)
+        passed_tests = 0
+        failed_tests = 0
+        not_supported_tests = 0
+        mapping_issue_tests = 0
+        mapping_error_tests = 0
+        error_tests = 0
+        
+        test_details = []
+        
+        for result in results:
+            if result.get('status') == 'error':
+                error_tests += 1
+                test_details.append({
+                    'test_id': result.get('test_id'),
+                    'status': 'error',
+                    'message': result.get('message')
+                })
+            elif result.get('status') == 'success' and result.get('results', {}).get('data'):
+                test_data = result['results']['data'][0]
+                test_id = result.get('test_id')
+                inversion_success = test_data.get('inversion_success')
+                
+                if inversion_success == 'not_supported':
+                    not_supported_tests += 1
+                    status = 'not_supported'
+                elif inversion_success == 'mapping_issue':
+                    mapping_issue_tests += 1
+                    status = 'mapping_issue'
+                elif inversion_success == 'mapping_error':
+                    mapping_error_tests += 1
+                    status = 'mapping_error'
+                elif inversion_success is True:
+                    passed_tests += 1
+                    status = 'passed'
+                else:
+                    failed_tests += 1
+                    status = 'failed'
+                
+                test_details.append({
+                    'test_id': test_id,
+                    'status': status,
+                    'purpose': test_data.get('purpose'),
+                    'r2rml_result': test_data.get('result'),
+                    'inversion_success': inversion_success,
+                    'comparison_message': test_data.get('comparison_message')
+                })
+        
+        report = {
+            'metadata': {
+                'timestamp': timestamp,
+                'database_system': database_system,
+                'total_tests': total_tests,
+                'execution_date': datetime.now().isoformat()
+            },
+            'summary': {
+                'total': total_tests,
+                'passed': passed_tests,
+                'failed': failed_tests,
+                'not_supported': not_supported_tests,
+                'mapping_issues': mapping_issue_tests,
+                'mapping_errors': mapping_error_tests,
+                'errors': error_tests,
+                'percentages': {
+                    'passed': round((passed_tests / total_tests * 100), 2) if total_tests > 0 else 0,
+                    'failed': round((failed_tests / total_tests * 100), 2) if total_tests > 0 else 0,
+                    'not_supported': round((not_supported_tests / total_tests * 100), 2) if total_tests > 0 else 0,
+                    'mapping_issues': round((mapping_issue_tests / total_tests * 100), 2) if total_tests > 0 else 0,
+                    'mapping_errors': round((mapping_error_tests / total_tests * 100), 2) if total_tests > 0 else 0,
+                    'errors': round((error_tests / total_tests * 100), 2) if total_tests > 0 else 0
+                }
+            },
+            'test_details': test_details
+        }
+        
+        with open(report_path, 'w', encoding='utf-8') as f:
+            json.dump(report, f, indent=2, ensure_ascii=False)
+        
+        markdown_filename = f"test_report_{database_system}_{timestamp}.md"
+        markdown_path = os.path.join(results_dir, markdown_filename)
+        
+        with open(markdown_path, 'w', encoding='utf-8') as f:
+            f.write(f"# R2RML Inversion Test Report\n\n")
+            f.write(f"**Database System:** {database_system}\n")
+            f.write(f"**Execution Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"**Total Tests:** {total_tests}\n\n")
+            
+            f.write(f"## Summary\n\n")
+            f.write(f"| Status | Count | Percentage |\n")
+            f.write(f"|--------|-------|------------|\n")
+            f.write(f"| ✅ Passed | {passed_tests} | {report['summary']['percentages']['passed']}% |\n")
+            f.write(f"| ❌ Failed | {failed_tests} | {report['summary']['percentages']['failed']}% |\n")
+            f.write(f"| ⚠️ Not Supported | {not_supported_tests} | {report['summary']['percentages']['not_supported']}% |\n")
+            f.write(f"| 🔧 Mapping Issues | {mapping_issue_tests} | {report['summary']['percentages']['mapping_issues']}% |\n")
+            f.write(f"| ⛔ Mapping Errors | {mapping_error_tests} | {report['summary']['percentages']['mapping_errors']}% |\n")
+            f.write(f"| 💥 Execution Errors | {error_tests} | {report['summary']['percentages']['errors']}% |\n")
+            
+            f.write(f"\n## Test Details\n\n")
+            
+            for status in ['passed', 'failed', 'not_supported', 'mapping_issue', 'mapping_error', 'error']:
+                status_tests = [t for t in test_details if t['status'] == status]
+                if status_tests:
+                    status_label = status.replace('_', ' ').title()
+                    f.write(f"\n### {status_label} Tests ({len(status_tests)})\n\n")
+                    for test in status_tests:
+                        f.write(f"- **{test['test_id']}**")
+                        if test.get('purpose'):
+                            f.write(f": {test['purpose'][:100]}..." if len(test.get('purpose', '')) > 100 else f": {test['purpose']}")
+                        if test.get('comparison_message') and status in ['failed', 'mapping_issue', 'mapping_error']:
+                            f.write(f"\n  - {test['comparison_message'][:200]}..." if len(test.get('comparison_message', '')) > 200 else f"\n  - {test['comparison_message']}")
+                        f.write("\n")
+        
+        print(f"Test report generated: {report_path}")
+        print(f"Markdown report generated: {markdown_path}")
+        
+    except Exception as e:
+        print(f"Error generating test report: {str(e)}")
+        traceback.print_exc()
 
 def compare_databases(db_connection, source_system, dest_system, mapping_content=None):
     try:

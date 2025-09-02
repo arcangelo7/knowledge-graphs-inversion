@@ -137,6 +137,39 @@
             overflow: auto;
             border-radius: 0.3em; #}
         }
+        .stats-box {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 0.25rem;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            display: none;
+        }
+        .stats-row {
+            display: flex;
+            justify-content: space-around;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+        .stat-item {
+            text-align: center;
+            flex: 1;
+            min-width: 120px;
+        }
+        .stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+            margin-bottom: 0.25rem;
+        }
+        .stat-label {
+            font-size: 0.875rem;
+            color: #6c757d;
+        }
+        .stat-passed { color: #28a745; }
+        .stat-failed { color: #dc3545; }
+        .stat-not-supported { color: #ffc107; }
+        .stat-mapping-issue { color: #fd7e14; }
+        .stat-mapping-error { color: #dc3545; }
     </style>
 </head>
 <body>
@@ -166,6 +199,35 @@
             <div id="spinner" class="spinner-container" style="display: none;">
                 <div class="spinner-border text-primary" role="status">
                     <span class="visually-hidden">Loading...</span>
+                </div>
+            </div>
+            <div id="stats-box" class="stats-box">
+                <h5 class="mb-3">Test Execution Summary</h5>
+                <div class="stats-row">
+                    <div class="stat-item">
+                        <div class="stat-value" id="stat-total">0</div>
+                        <div class="stat-label">Total Tests</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value stat-passed" id="stat-passed">0</div>
+                        <div class="stat-label">Passed (<span id="stat-passed-percent">0</span>%)</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value stat-not-supported" id="stat-not-supported">0</div>
+                        <div class="stat-label">Not Supported (<span id="stat-not-supported-percent">0</span>%)</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value stat-mapping-issue" id="stat-mapping-issue">0</div>
+                        <div class="stat-label">Mapping Issues (<span id="stat-mapping-issue-percent">0</span>%)</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value stat-mapping-error" id="stat-mapping-error">0</div>
+                        <div class="stat-label">Mapping Errors (<span id="stat-mapping-error-percent">0</span>%)</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value stat-failed" id="stat-failed">0</div>
+                        <div class="stat-label">Failed (<span id="stat-failed-percent">0</span>%)</div>
+                    </div>
                 </div>
             </div>
             <table id="results-table" class="table table-striped" style="display: none;">
@@ -215,6 +277,44 @@
 
     <script>
         const testResults = {};
+        let testStats = {
+            total: 0,
+            passed: 0,
+            failed: 0,
+            notSupported: 0,
+            mappingIssue: 0,
+            mappingError: 0
+        };
+
+        function updateStats() {
+            const total = testStats.total;
+            $('#stat-total').text(total);
+            $('#stat-passed').text(testStats.passed);
+            $('#stat-failed').text(testStats.failed);
+            $('#stat-not-supported').text(testStats.notSupported);
+            $('#stat-mapping-issue').text(testStats.mappingIssue);
+            $('#stat-mapping-error').text(testStats.mappingError);
+            
+            if (total > 0) {
+                $('#stat-passed-percent').text(Math.round((testStats.passed / total) * 100));
+                $('#stat-failed-percent').text(Math.round((testStats.failed / total) * 100));
+                $('#stat-not-supported-percent').text(Math.round((testStats.notSupported / total) * 100));
+                $('#stat-mapping-issue-percent').text(Math.round((testStats.mappingIssue / total) * 100));
+                $('#stat-mapping-error-percent').text(Math.round((testStats.mappingError / total) * 100));
+            }
+        }
+
+        function resetStats() {
+            testStats = {
+                total: 0,
+                passed: 0,
+                failed: 0,
+                notSupported: 0,
+                mappingIssue: 0,
+                mappingError: 0
+            };
+            updateStats();
+        }
 
         function disableButtons() {
             $('#runTestBtn, #runAllTestsBtn').prop('disabled', true);
@@ -230,8 +330,9 @@
             dbSystem = 'postgresql';
             const resultsDiv = $('#results');
             
-            // Clear previous results and show spinner
-            resultsDiv.empty();
+            // Clear previous results but preserve stats-box (hidden)
+            resultsDiv.children().not('#stats-box').remove();
+            $('#stats-box').hide();
             resultsDiv.append('<div id="spinner" class="spinner-container"><div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div></div>');
             
             disableButtons();
@@ -257,7 +358,10 @@
             // const dbSystem = $('#dbSelect').val();
             const dbSystem = 'postgresql';
             const resultsDiv = $('#results');
-            resultsDiv.empty();
+            
+            // Clear results but preserve the stats box structure
+            resultsDiv.children().not('#stats-box').remove();
+            $('#stats-box').hide();
             
             const spinnerElement = $('<div id="spinner" class="spinner-container"><div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div></div>');
             const resultsTable = $('<table id="results-table" class="table table-striped" style="display: none;"><thead><tr id="results-header"></tr></thead><tbody id="results-body"></tbody></table>');
@@ -275,7 +379,11 @@
                 
                 if (spinnerElement.is(":visible")) {
                     spinnerElement.hide();
+                    resetStats();
+                    // Remove any existing h2 title to avoid duplicates
+                    resultsDiv.children('h2').remove();
                     resultsDiv.prepend('<h2>All Test Results:</h2>');
+                    $('#stats-box').show();  // Make sure stats-box is shown
                     resultsTable.show();
                     // Set the header if it's empty
                     const resultsHeader = $('#results-header');
@@ -284,6 +392,26 @@
                     }
                     // Add the loading row
                     addLoadingRow();
+                }
+
+                // Update statistics
+                if (testResult.results && testResult.results.data && testResult.results.data[0]) {
+                    const row = testResult.results.data[0];
+                    testStats.total++;
+                    
+                    if (row.inversion_success === 'not_supported') {
+                        testStats.notSupported++;
+                    } else if (row.inversion_success === 'mapping_issue') {
+                        testStats.mappingIssue++;
+                    } else if (row.inversion_success === 'mapping_error') {
+                        testStats.mappingError++;
+                    } else if (row.inversion_success === true) {
+                        testStats.passed++;
+                    } else {
+                        testStats.failed++;
+                    }
+                    
+                    updateStats();
                 }
 
                 const rowHtml = generateResultRow(testResult);
@@ -324,10 +452,14 @@
 
         function displayTestResults(response) {
             const resultsDiv = $('#results');
+            // Hide stats-box and remove other content except stats-box
+            $('#stats-box').hide();
+            resultsDiv.children().not('#stats-box').remove();
+            
             if (response.status === 'success') {
                 let resultsHtml = `<h2>Test Results for ${response.test_id}:</h2>`;
                 resultsHtml += generateResultTable(response.results);
-                resultsDiv.html(resultsHtml);
+                resultsDiv.append(resultsHtml);
             } else {
                 let errorHtml = `<h2 class="text-danger">Error in ${response.test_id}:</h2>`;
                 errorHtml += '<p>' + response.message + '</p>';
@@ -335,7 +467,7 @@
                     errorHtml += '<h3>Traceback:</h3>';
                     errorHtml += '<pre>' + response.traceback + '</pre>';
                 }
-                resultsDiv.html(errorHtml);
+                resultsDiv.append(errorHtml);
             }
         }
 
