@@ -5,7 +5,6 @@ import logging
 import re
 from decimal import Decimal
 from datetime import datetime
-from typing import Self
 from urllib.parse import ParseResult, unquote, urlparse
 
 import jsonpath_ng
@@ -98,13 +97,78 @@ class Codex:
         self.codex: dict[str, str] = {}
         self.subjects: set[str] = set()
         self.idGenerator = IdGenerator()
+        self.variable_counters: dict[str, int] = {}
+    
+    def _extract_base_from_url(self, url: str) -> str:
+        """Extract meaningful base name from a URL or template."""
+        parts = url.rstrip('/').split('/')
+        base = parts[-1] if parts[-1] else parts[-2] if len(parts) > 1 else 'resource'
+        # Remove fragment identifier and template brackets
+        return base.split('#')[-1].strip('{}')
+    
+    def _generate_descriptive_id(self, key: str) -> str:
+        """Generate a descriptive variable name from a key.
+        
+        The key can be:
+        - An RML template like "http://example.com/{Name}" 
+        - A column/reference name like "Name"
+        - A temporary variable like "Name_temp_1" (created in triples.py for intermediate values)
+        - A slice variable like "http://example.com/{Name}_slice_subject_2" (for template parsing)
+        - A plain variable like "Name_plain_3" (for non-encoded values)
+        """
+        # Define suffix patterns and their descriptions
+        SUFFIXES = [
+            ('_temp_', '_temp'),   # Temporary variables for intermediate values
+            ('_slice_', '_slice'), # Slice variables for substring operations  
+            ('_plain_', '_plain')  # Plain variables for non-encoded values
+        ]
+        
+        # Check for special suffixes and extract base name
+        suffix_to_add = ''
+        for separator, suffix_label in SUFFIXES:
+            if separator in key:
+                base_name = key.split(separator)[0]
+                suffix_to_add = suffix_label
+                break
+        else:
+            # No special suffix found
+            base_name = key
+        
+        if 'http://' in base_name or 'https://' in base_name:
+            base_name = self._extract_base_from_url(base_name)
+        
+        base_name = self._sanitize_variable_name(base_name)
+        
+        if not base_name or base_name.isdigit():
+            base_name = 'var'
+        
+        if suffix_to_add:
+            base_name = f"{base_name}{suffix_to_add}"
+        
+        if base_name in self.variable_counters:
+            self.variable_counters[base_name] += 1
+            return f"{base_name}_{self.variable_counters[base_name]}"
+        else:
+            self.variable_counters[base_name] = 1
+            return base_name
+    
+    def _sanitize_variable_name(self, name: str) -> str:
+        """Sanitize a string to be a valid SPARQL variable name."""
+        # Keep only alphanumeric characters and underscores
+        sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', name)
+        # Remove leading/trailing underscores
+        sanitized = sanitized.strip('_')
+        # Ensure it doesn't start with a number
+        if sanitized and sanitized[0].isdigit():
+            sanitized = 'v_' + sanitized
+        return sanitized if sanitized else 'var'
     
     def get_id(self, key: str) -> str:
         """Get or create an ID for a key."""
         if key in self.codex.keys():
             return self.codex[key]
         else:
-            self.codex[key] = str(self.idGenerator.get_id())
+            self.codex[key] = self._generate_descriptive_id(key)
             return self.codex[key]
         
     def get_id_and_is_bound(self, key: str) -> tuple[str, bool]:
