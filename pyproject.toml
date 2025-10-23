@@ -30,3 +30,39 @@ dev = [
     "isort>=5.0.0",
     "flake8>=5.0.0"
 ]
+
+[tool.semantic_release]
+version_toml = ["pyproject.toml:project.version"]
+branch = "master"
+build_command = ""
+commit_message = "chore: release v{version} [skip ci]"
+commit_parser = "angular"
+tag_format = "v{version}"
+
+[tool.semantic_release.branches.master]
+match = "master"
+prerelease = false
+
+[tool.semantic_release.commit_parser_options]
+# Parse conventional commits
+allowed_tags = [
+    "feat",    # New feature (minor version bump)
+    "fix",     # Bug fix (patch version bump)
+    "docs",    # Documentation changes
+    "style",   # Code style changes (formatting, etc)
+    "refactor",# Code refactoring
+    "perf",    # Performance improvements
+    "test",    # Adding or updating tests
+    "build",   # Build system changes
+    "ci",      # CI/CD changes
+    "chore",   # Other changes
+    "revert"   # Revert previous commit
+]
+minor_tags = ["feat"]
+patch_tags = ["fix", "perf"]
+
+[tool.semantic_release.changelog]
+exclude_commit_patterns = []
+
+[tool.semantic_release.changelog.environment]
+keep_trailing_newline = true

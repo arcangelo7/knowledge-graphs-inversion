@@ -1,0 +1,59 @@
+name: Semantic Release
+
+on:
+  push:
+    branches:
+      - master
+    # Trigger only when commit message contains [release]
+
+jobs:
+  check-release:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.result }}
+    steps:
+      - name: Check commit message
+        id: check
+        run: |
+          if [[ "${{ github.event.head_commit.message }}" == *"[release]"* ]]; then
+            echo "result=true" >> $GITHUB_OUTPUT
+          else
+            echo "result=false" >> $GITHUB_OUTPUT
+          fi
+
+  release:
+    needs: check-release
+    if: needs.check-release.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    concurrency: release
+    permissions:
+      id-token: write
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install python-semantic-release
+        run: |
+          pip install python-semantic-release
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Run semantic release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          semantic-release version
+          semantic-release publish
