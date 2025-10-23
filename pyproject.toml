@@ -1,6 +1,6 @@
 [project]
 name = "knowledge-graphs-inversion"
-version = "0.1.0"
+version = "1.0.0"
 description = "Knowledge graphs inversion tool using R2RML and RML mappings"
 authors = [
     { name = "Arcangelo Massari", email = "arcangelo.massari@unibo.it" }
