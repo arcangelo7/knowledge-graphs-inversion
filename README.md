@@ -48,10 +48,10 @@ git submodule update --init --recursive
 docker compose -f docker-compose.benchmark.yml up
 
 # Run with validation
-docker compose -f docker-compose.benchmark.yml run benchmark --validate
+docker compose -f docker-compose.benchmark.yml run benchmark benchmark --validate
 
 # Run without Virtuoso (in-memory RDF)
-docker compose -f docker-compose.benchmark.yml run benchmark --no-virtuoso
+docker compose -f docker-compose.benchmark.yml run benchmark benchmark --no-virtuoso
 
 # Stop all services
 docker compose -f docker-compose.benchmark.yml down

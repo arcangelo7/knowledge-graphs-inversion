@@ -114,39 +114,48 @@ class KrownBenchmarkRunner:
     def execute_krown_scenario(self, scenario_path):
         """Execute a single KROWN scenario using KROWN's execution framework."""
         scenario_name = scenario_path.name
-        
+
         metadata_file = scenario_path / "metadata.json"
         with open(metadata_file, 'r') as f:
             metadata = json.load(f)
-        
+
         shared_dir = scenario_path / "data" / "shared"
         start_time = time.time()
-        
+
         try:
             self.execute_load_rdb_step(metadata, shared_dir, scenario_name)
-            self.execute_morph_kgc_step(metadata, shared_dir)
-            inversion_results = self.execute_inversion_step(metadata, shared_dir, scenario_name)
-            
+            morph_kgc_time = self.execute_morph_kgc_step(metadata, shared_dir)
+            inversion_results, inversion_time = self.execute_inversion_step(metadata, shared_dir, scenario_name)
+
             validation_results = None
             if self.validate:
                 validation_results = self.validate_scenario(scenario_name)
-            
+
             end_time = time.time()
-            execution_time = end_time - start_time
-            
+            total_time = end_time - start_time
+
+            # Calculate overhead percentage
+            inversion_overhead_percentage = (inversion_time / morph_kgc_time * 100) if morph_kgc_time > 0 else 0
+
             mapping_file = shared_dir / "mapping.r2rml.ttl"
             data_file = shared_dir / "data.csv"
-            
+
             with open(mapping_file, 'r') as f:
                 mapping_content = f.read()
-            
+
             tm_count = mapping_content.count('rr:TriplesMap')
             pom_count = mapping_content.count('rr:predicateObjectMap')
-            
+
             result = {
                 "status": "completed",
                 "scenario_name": scenario_name,
-                "execution_time": execution_time,
+                "execution_time": total_time,
+                "timing_breakdown": {
+                    "morph_kgc_time": morph_kgc_time,
+                    "inversion_time": inversion_time,
+                    "inversion_overhead_percentage": inversion_overhead_percentage,
+                    "total_time": total_time
+                },
                 "mapping_file": str(mapping_file),
                 "data_file": str(data_file),
                 "mapping_size_bytes": mapping_file.stat().st_size,
@@ -156,13 +165,13 @@ class KrownBenchmarkRunner:
                 "inversion_results": inversion_results,
                 "validation_results": validation_results
             }
-            
+
             return result
-            
+
         except Exception as e:
             end_time = time.time()
             execution_time = end_time - start_time
-            
+
             logger.error(f"Error executing {scenario_name}: {e}")
             return {
                 "status": "failed",
@@ -200,18 +209,20 @@ class KrownBenchmarkRunner:
         engine.dispose()
     
     def execute_morph_kgc_step(self, metadata, shared_dir):
-        """Execute Morph-KGC mapping step."""
+        """Execute Morph-KGC mapping step and return execution time."""
+        start_time = time.time()
+
         mapping_step = None
         for step in metadata["steps"]:
             if step["command"] == "execute_mapping":
                 mapping_step = step
                 break
-        
+
         if not mapping_step:
             raise ValueError("No mapping step found in metadata")
-        
+
         config = ConfigParser()
-        
+
         config.add_section('CONFIGURATION')
         config.set('CONFIGURATION', 'na_values', ',#N/A,N/A,#N/A N/A,n/a,NA,<NA>,#NA,NULL,null,NaN,nan,None')
         config.set('CONFIGURATION', 'output_file', str(shared_dir / mapping_step["parameters"]["output_file"]))
@@ -223,49 +234,54 @@ class KrownBenchmarkRunner:
         config.set('CONFIGURATION', 'number_of_processes', '')
         config.set('CONFIGURATION', 'logging_level', 'ERROR')
         config.set('CONFIGURATION', 'logs_file', '')
-        
+
         config.add_section('DataSource1')
         config.set('DataSource1', 'mappings', str(shared_dir / mapping_step["parameters"]["mapping_file"]))
-        
+
         conn_string = self.get_connection_string()
         morph_conn = conn_string.replace('postgresql://', 'postgresql+psycopg2://')
         config.set('DataSource1', 'db_url', morph_conn)
-        
+
         config_file = shared_dir / "morph_kgc_config.ini"
         with open(config_file, 'w') as f:
             config.write(f)
-        
+
         morph_cmd = ["python3", "-m", "morph_kgc", str(config_file)]
-        
+
         morph_result = subprocess.run(
-            morph_cmd, 
-            cwd=shared_dir, 
-            capture_output=True, 
+            morph_cmd,
+            cwd=shared_dir,
+            capture_output=True,
             text=True
         )
-        
+
         if morph_result.returncode != 0:
             raise RuntimeError(f"Morph-KGC failed: {morph_result.stderr}")
-        
+
         output_file = shared_dir / mapping_step["parameters"]["output_file"]
         if not output_file.exists():
             raise FileNotFoundError(f"Expected output file not found: {output_file}")
+
+        end_time = time.time()
+        return end_time - start_time
     
     def execute_inversion_step(self, metadata, shared_dir, scenario_name):
-        """Execute our Knowledge Graph Inversion step."""
+        """Execute our Knowledge Graph Inversion step and return results with execution time."""
+        start_time = time.time()
+
         mapping_step = None
         for step in metadata["steps"]:
             if step["command"] == "execute_mapping":
                 mapping_step = step
                 break
-        
+
         if not mapping_step:
             raise ValueError("No mapping step found in metadata for fallback")
-        
+
         endpoint_url = None
         if self.use_virtuoso:
             endpoint_url = f"http://{self.virtuoso_config['host']}:{self.virtuoso_config['port']}/sparql"
-        
+
         inversion_step = {
             "command": "execute_inversion",
             "parameters": {
@@ -279,35 +295,36 @@ class KrownBenchmarkRunner:
                 "rdb_name": self.db_config['database']
             }
         }
-        
+
         config = ConfigParser()
-        
+
         config.add_section('CONFIGURATION')
         config.set('CONFIGURATION', 'output_file', str(shared_dir / inversion_step["parameters"]["rdf_file"]))
         config.set('CONFIGURATION', 'output_format', 'N-TRIPLES')
-        
+
         config.add_section('DataSource1')
         config.set('DataSource1', 'mappings', str(shared_dir / inversion_step["parameters"]["mapping_file"]))
-        
+
         conn_string = self.get_connection_string()
         morph_conn = conn_string.replace('postgresql://', 'postgresql+psycopg2://')
         config.set('DataSource1', 'db_url', morph_conn)
-        
+
         inversion_config_file = shared_dir / "inversion_config.ini"
         with open(inversion_config_file, 'w') as f:
             config.write(f)
-        
+
         original_cwd = os.getcwd()
         try:
             os.chdir(shared_dir)
             inversion_results = inversion(
-                inversion_config_file, 
-                test_id=scenario_name, 
-                sparql_endpoint=endpoint_url, 
+                inversion_config_file,
+                test_id=scenario_name,
+                sparql_endpoint=endpoint_url,
                 use_virtuoso=self.use_virtuoso,
                 virtuoso_container='kgi-virtuoso'
             )
-            return inversion_results
+            end_time = time.time()
+            return inversion_results, end_time - start_time
         finally:
             os.chdir(original_cwd)
     
@@ -372,15 +389,28 @@ class KrownBenchmarkRunner:
         total = len(results)
         completed = len([r for r in results if r["status"] == "completed"])
         failed = total - completed
-        
+
         logger.info(f"Total: {total}, Completed: {completed}, Failed: {failed}")
-        
+
         if completed > 0:
             execution_times = [r["execution_time"] for r in results if r["status"] == "completed"]
             avg_time = sum(execution_times) / len(execution_times)
-            
+
+            # Calculate average timing breakdown
+            morph_times = [r.get("timing_breakdown", {}).get("morph_kgc_time", 0)
+                          for r in results if r["status"] == "completed"]
+            inversion_times = [r.get("timing_breakdown", {}).get("inversion_time", 0)
+                              for r in results if r["status"] == "completed"]
+            overhead_percentages = [r.get("timing_breakdown", {}).get("inversion_overhead_percentage", 0)
+                                   for r in results if r["status"] == "completed"]
+
+            avg_morph = sum(morph_times) / len(morph_times) if morph_times else 0
+            avg_inversion = sum(inversion_times) / len(inversion_times) if inversion_times else 0
+            avg_overhead = sum(overhead_percentages) / len(overhead_percentages) if overhead_percentages else 0
+
             logger.info(f"Avg time: {avg_time:.2f}s, Min: {min(execution_times):.2f}s, Max: {max(execution_times):.2f}s")
-            
+            logger.info(f"Avg Morph-KGC: {avg_morph:.2f}s, Avg Inversion: {avg_inversion:.2f}s, Avg Overhead: {avg_overhead:.1f}%")
+
             for result in results:
                 if result["status"] == "completed":
                     tm_count = result.get("triples_maps_count", 0)
@@ -390,9 +420,16 @@ class KrownBenchmarkRunner:
                     if self.validate and result.get("validation_results"):
                         val_passed = result["validation_results"].get("validation_passed", False)
                         val_status = " [PASS]" if val_passed else " [FAIL]"
+
+                    timing = result.get("timing_breakdown", {})
+                    morph_time = timing.get("morph_kgc_time", 0)
+                    inv_time = timing.get("inversion_time", 0)
+                    overhead = timing.get("inversion_overhead_percentage", 0)
+
                     logger.info(f"  {result['scenario_name']}: {result['execution_time']:.2f}s "
-                          f"[TM:{tm_count}, POM:{pom_count}, INV:{inv_count}]{val_status}")
-        
+                          f"[TM:{tm_count}, POM:{pom_count}, INV:{inv_count}] "
+                          f"Morph:{morph_time:.2f}s, Inv:{inv_time:.2f}s, OH:{overhead:.1f}%{val_status}")
+
         if failed > 0:
             for result in results:
                 if result["status"] == "failed":
