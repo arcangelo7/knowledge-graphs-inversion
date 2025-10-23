@@ -14,38 +14,19 @@ Currently supports:
 
 ## Requirements
 
-- Python 3.12+
-- [uv](https://docs.astral.sh/uv/) package manager
+- Python 3.12
+- Docker
 
 ## Quick Start
 
 ```bash
-# Install uv if needed
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Setup project
+# Clone the repository
 git clone https://github.com/arcangelo7/knowledge-graphs-inversion.git
 cd knowledge-graphs-inversion
-uv sync
 
-# Run the main application
-uv run python app.py
-```
+docker compose up
 
-## Managing Dependencies with uv
-
-```bash
-# Add new dependency
-uv add package-name
-
-# Remove dependency  
-uv remove package-name
-
-# Update all
-uv sync --upgrade
-
-# Run without activating venv
-uv run python script.py
+# Access the web interface at http://localhost:5000
 ```
 
 ## Benchmarking
@@ -54,15 +35,10 @@ This project integrates the [KROWN benchmark framework](https://github.com/kg-co
 
 ### Setup Benchmark Environment
 
-1. **Initialize KROWN submodule:**
-   ```bash
-   git submodule update --init --recursive
-   ```
-
-2. **Install dependencies:**
-   ```bash
-   uv sync
-   ```
+**Initialize KROWN submodule:**
+```bash
+git submodule update --init --recursive
+```
 
 ### Running KROWN Benchmark
 

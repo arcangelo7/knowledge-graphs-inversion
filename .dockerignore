@@ -1,0 +1,67 @@
+# PostgreSQL data directories (used by docker-compose volumes)
+postgresql_data/
+dest_postgresql_data/
+benchmark_postgresql_data/
+
+# Virtuoso data
+virtuoso_data/
+
+# Python cache and build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# Test and benchmark results
+r2rml_inversion_test_results/
+benchmarks/krown/results/
+test_logs/
+
+# Logs
+*.log
+inversion.log
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+.gitmodules
+
+# Documentation
+*.md
+!README.md
+
+# Docker
+.dockerignore
+Dockerfile
+docker-compose*.yml
+
+# CI/CD
+.github/
