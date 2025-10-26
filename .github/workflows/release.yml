@@ -14,8 +14,10 @@ jobs:
     steps:
       - name: Check commit message
         id: check
+        env:
+          COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
-          if [[ "${{ github.event.head_commit.message }}" == *"[release]"* ]]; then
+          if [[ "$COMMIT_MSG" == *"[release]"* ]]; then
             echo "result=true" >> $GITHUB_OUTPUT
           else
             echo "result=false" >> $GITHUB_OUTPUT

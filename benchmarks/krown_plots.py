@@ -66,19 +66,18 @@ def plot_timing_bar_charts(
     ]
 
     for metric_key, metric_label, unit in metrics:
-        # Create figure with plot + stats panel layout
-        fig = plt.figure(figsize=(16, 6))
-        gs = fig.add_gridspec(1, 2, width_ratios=[2, 1], wspace=0.3)
+        # Create figure with plot above and stats below
+        fig = plt.figure(figsize=(16, 10))
+        gs = fig.add_gridspec(2, 1, height_ratios=[2, 1], hspace=0.35)
 
         ax_plot = fig.add_subplot(gs[0, 0])
-        ax_stats = fig.add_subplot(gs[0, 1])
 
         box_data = []
         labels = []
         means = []
         ci_lowers = []
         ci_uppers = []
-        stats_lines = [f"{metric_label} statistics", ""]
+        scenario_stats_data = []
 
         for scenario in scenarios:
             scenario_stats = scenarios_data[scenario]
@@ -105,19 +104,9 @@ def plot_timing_bar_charts(
             ci_lowers.append(metric_stats["ci_95_lower"])
             ci_uppers.append(metric_stats["ci_95_upper"])
 
-            # Add statistics text
-            stats_lines.append(f"{human_label}:")
-            stats_lines.append(f"  N: {metric_stats['n']}")
-            stats_lines.append(f"  Mean: {metric_stats['mean']:.1f} {unit}")
-            stats_lines.append(f"  Median: {metric_stats['median']:.1f} {unit}")
-            stats_lines.append(f"  Std Dev: {metric_stats['std']:.1f} {unit}")
-            stats_lines.append(f"  95% CI: [{metric_stats['ci_95_lower']:.1f}, "
-                             f"{metric_stats['ci_95_upper']:.1f}]")
-            stats_lines.append(f"  Q1: {metric_stats['q1']:.1f} {unit}")
-            stats_lines.append(f"  Q3: {metric_stats['q3']:.1f} {unit}")
-            stats_lines.append(f"  Min: {metric_stats['min']:.1f} {unit}")
-            stats_lines.append(f"  Max: {metric_stats['max']:.1f} {unit}")
+            # Store statistics for this scenario
             outliers = metric_stats['outliers']
+            outliers_str = None
             if outliers:
                 # Group outliers by rounded value, reducing precision if too many unique values
                 max_unique = 10
@@ -146,8 +135,11 @@ def plot_timing_bar_charts(
                         for val, count in sorted(outlier_counts.items())
                     ])
 
-                stats_lines.append(f"  Outliers: {outliers_str}")
-            stats_lines.append("")
+            scenario_stats_data.append({
+                'label': human_label,
+                'stats': metric_stats,
+                'outliers_str': outliers_str
+            })
 
         # Create box plot
         ax_plot.boxplot(
@@ -186,24 +178,65 @@ def plot_timing_bar_charts(
         ax_plot.plot([], [], marker='o', markerfacecolor='none',
                     markeredgecolor='black', linestyle='None',
                     markersize=5, label='Outliers')
-        ax_plot.legend(loc='upper left', frameon=True, fontsize=10)
+        ax_plot.legend(loc='upper left', frameon=True, fontsize=13)
 
-        ax_plot.set_ylabel(f'{metric_label} ({unit})', fontsize=12)
-        ax_plot.set_title(f'{metric_label} distribution', fontsize=13, fontweight='bold')
-        ax_plot.set_xlabel('Scenario', fontsize=11)
+        ax_plot.set_ylabel(f'{metric_label} ({unit})', fontsize=15)
+        ax_plot.set_title(f'{metric_label} distribution', fontsize=16, fontweight='bold')
+        ax_plot.set_xlabel('Scenario', fontsize=15)
         ax_plot.grid(True, alpha=0.3, axis='y')
         ax_plot.set_xticklabels(labels, rotation=45, ha='right')
 
-        # Add statistics panel
+        # Create statistics panel below the plot
+        # Add statistics title and data in columns
+        n_scenarios = len(scenario_stats_data)
+
+        # Create a grid for statistics columns
+        ax_stats = fig.add_subplot(gs[1, 0])
         ax_stats.axis('off')
-        stats_text = "\n".join(stats_lines)
-        ax_stats.text(0.05, 0.95, stats_text, transform=ax_stats.transAxes,
-                     fontsize=9, verticalalignment='top', fontfamily='monospace')
+
+        # Add title for statistics section
+        stats_title = f'{metric_label} - Statistics'
+        ax_stats.text(0.5, 0.95, stats_title, transform=ax_stats.transAxes,
+                     fontsize=16, fontweight='bold', ha='center', va='top')
+
+        # Arrange scenario statistics in columns
+        # Position and alignment for each column: (x_position, horizontal_alignment)
+        if n_scenarios == 3:
+            positions = [(0.02, 'left'), (0.5, 'center'), (0.98, 'right')]
+        elif n_scenarios == 2:
+            positions = [(0.02, 'left'), (0.98, 'right')]
+        else:
+            # Fallback for other numbers of scenarios
+            positions = [(i / (n_scenarios - 1) if n_scenarios > 1 else 0.5, 'left')
+                        for i in range(n_scenarios)]
+
+        for idx, scenario_data in enumerate(scenario_stats_data):
+            x_pos, h_align = positions[idx]
+
+            stats_lines = []
+            stats_lines.append(f"{scenario_data['label']}:")
+            stats_lines.append(f"N: {scenario_data['stats']['n']}")
+            stats_lines.append(f"Mean: {scenario_data['stats']['mean']:.1f} {unit}")
+            stats_lines.append(f"Median: {scenario_data['stats']['median']:.1f} {unit}")
+            stats_lines.append(f"Std Dev: {scenario_data['stats']['std']:.1f} {unit}")
+            stats_lines.append(f"95% CI: [{scenario_data['stats']['ci_95_lower']:.1f}, "
+                             f"{scenario_data['stats']['ci_95_upper']:.1f}]")
+            stats_lines.append(f"Q1: {scenario_data['stats']['q1']:.1f} {unit}")
+            stats_lines.append(f"Q3: {scenario_data['stats']['q3']:.1f} {unit}")
+            stats_lines.append(f"Min: {scenario_data['stats']['min']:.1f} {unit}")
+            stats_lines.append(f"Max: {scenario_data['stats']['max']:.1f} {unit}")
+            if scenario_data['outliers_str']:
+                stats_lines.append(f"Outliers: {scenario_data['outliers_str']}")
+
+            stats_text = "\n".join(stats_lines)
+            ax_stats.text(x_pos, 0.80, stats_text, transform=ax_stats.transAxes,
+                         fontsize=14, verticalalignment='top', ha=h_align,
+                         fontfamily='monospace')
 
         # Add overall title
         fig.suptitle(
             f'{metric_label} (N={iterations} iterations)',
-            fontsize=15, fontweight='bold'
+            fontsize=17, fontweight='bold'
         )
 
         fig.tight_layout(rect=[0, 0, 1, 0.96])
