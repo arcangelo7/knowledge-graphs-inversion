@@ -9,8 +9,8 @@ import argparse
 import json
 import re
 from pathlib import Path
-from typing import Dict, List, Any
-
+from typing import Dict, Any
+from collections import Counter
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -119,7 +119,33 @@ def plot_timing_bar_charts(
             stats_lines.append(f"  Max: {metric_stats['max']:.1f} {unit}")
             outliers = metric_stats['outliers']
             if outliers:
-                outliers_str = ", ".join([f"{o:.1f}" for o in outliers])
+                # Group outliers by rounded value, reducing precision if too many unique values
+                max_unique = 10
+
+                # Try different precision levels until we get few enough unique values
+                for decimals in [1, 0]:
+                    rounded_outliers = [round(o, decimals) for o in outliers]
+                    outlier_counts = Counter(rounded_outliers)
+                    if len(outlier_counts) <= max_unique:
+                        break
+                else:
+                    # If still too many, round to nearest 10
+                    rounded_outliers = [round(o / 10) * 10 for o in outliers]
+                    outlier_counts = Counter(rounded_outliers)
+                    decimals = 0
+
+                # Format output based on precision used
+                if decimals == 1:
+                    outliers_str = ", ".join([
+                        f"{val:.1f} (×{count})" if count > 1 else f"{val:.1f}"
+                        for val, count in sorted(outlier_counts.items())
+                    ])
+                else:
+                    outliers_str = ", ".join([
+                        f"{int(val)} (×{count})" if count > 1 else f"{int(val)}"
+                        for val, count in sorted(outlier_counts.items())
+                    ])
+
                 stats_lines.append(f"  Outliers: {outliers_str}")
             stats_lines.append("")
 
