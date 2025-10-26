@@ -47,8 +47,8 @@ git submodule update --init --recursive
 # Start all services and run benchmark
 docker compose -f docker-compose.benchmark.yml up
 
-# Run with validation
-docker compose -f docker-compose.benchmark.yml run benchmark benchmark --validate
+# Run with multiple iterations for statistical analysis (plots auto-generated)
+docker compose -f docker-compose.benchmark.yml run benchmark benchmark --iterations 10
 
 # Run without Virtuoso (in-memory RDF)
 docker compose -f docker-compose.benchmark.yml run benchmark benchmark --no-virtuoso
@@ -61,6 +61,10 @@ docker compose -f docker-compose.benchmark.yml down
 
 Results are stored in `benchmarks/krown/results/` with:
 - Execution times for each scenario
+- Statistical metrics when using `--iterations > 1`:
+  - Mean, median, standard deviation, 95% confidence intervals
+  - Outlier detection and percentiles
+  - Box plots automatically generated (PNG files)
 - Data and mapping file sizes
 - Triple Maps and Predicate Object Maps counts
 - JSON format for analysis

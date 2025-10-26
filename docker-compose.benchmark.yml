@@ -22,6 +22,7 @@ services:
     container_name: kgi-benchmark
     volumes:
       - .:/app
+      - benchmark-venv:/app/.venv
       - ./benchmarks/krown/results:/app/benchmarks/krown/results
     working_dir: /app
     environment:
@@ -35,3 +36,5 @@ services:
       benchmark_postgresql:
         condition: service_healthy
     command: ["benchmark"]  # Use the benchmark mode of the unified container
+volumes:
+  benchmark-venv:

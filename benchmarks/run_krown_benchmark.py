@@ -26,18 +26,22 @@ kgi_logger = logging.getLogger('kgi')
 kgi_logger.setLevel(logging.INFO)
 
 from benchmarks.krown_validator import KrownValidator
+from benchmarks.krown_stats import aggregate_scenario_statistics
 from kgi.core import inversion
+
+from benchmarks.krown_plots import plot_timing_bar_charts
 
 
 class KrownBenchmarkRunner:
     """KROWN Benchmark Runner for Docker environment."""
-    
-    def __init__(self, use_virtuoso=True, validate=False, cleanup_tables=True):
+
+    def __init__(self, use_virtuoso=True, validate=False, cleanup_tables=True, iterations=1):
         self.project_root = Path(__file__).parent.parent
         self.krown_dir = self.project_root / "KROWN"
         self.use_virtuoso = use_virtuoso
         self.validate = validate
         self.cleanup_tables = cleanup_tables
+        self.iterations = iterations
         self.validator = None
         
         self.db_config = {
@@ -146,6 +150,9 @@ class KrownBenchmarkRunner:
             tm_count = mapping_content.count('rr:TriplesMap')
             pom_count = mapping_content.count('rr:predicateObjectMap')
 
+            # Count inversions instead of saving full results (reduces JSON noise)
+            inv_count = len(inversion_results) if isinstance(inversion_results, dict) else 0
+
             result = {
                 "status": "completed",
                 "scenario_name": scenario_name,
@@ -162,7 +169,7 @@ class KrownBenchmarkRunner:
                 "data_size_bytes": data_file.stat().st_size,
                 "triples_maps_count": tm_count,
                 "predicate_object_maps_count": pom_count,
-                "inversion_results": inversion_results,
+                "inversion_count": inv_count,
                 "validation_results": validation_results
             }
 
@@ -329,28 +336,81 @@ class KrownBenchmarkRunner:
             os.chdir(original_cwd)
     
     def save_results(self, results):
-        """Save benchmark results."""
+        """Save benchmark results (raw data only for single iteration)."""
         results_dir = Path(__file__).parent / "krown" / "results"
         results_dir.mkdir(exist_ok=True, parents=True)
-        
+
         timestamp = int(time.time())
         results_file = results_dir / f"krown_benchmark_results_{timestamp}.json"
-        
+
         benchmark_data = {
             "timestamp": timestamp,
             "benchmark_type": "KROWN",
             "framework": "Knowledge Graph Inversion",
             "environment": "Docker",
+            "iterations": self.iterations,
             "total_scenarios": len(results),
             "completed_scenarios": len([r for r in results if r["status"] == "completed"]),
             "failed_scenarios": len([r for r in results if r["status"] == "failed"]),
             "results": results
         }
-        
+
         with open(results_file, 'w') as f:
             json.dump(benchmark_data, f, indent=2)
-        
+
         return results_file
+
+    def save_aggregated_results(self, scenario_runs):
+        """Save aggregated results with statistics for multiple iterations.
+
+        Args:
+            scenario_runs: Dictionary mapping scenario names to list of run results
+
+        Returns:
+            Tuple of (raw_file, stats_file) paths
+        """
+        results_dir = Path(__file__).parent / "krown" / "results"
+        results_dir.mkdir(exist_ok=True, parents=True)
+
+        timestamp = int(time.time())
+
+        raw_file = results_dir / f"krown_benchmark_results_raw_{timestamp}.json"
+        raw_data = {
+            "timestamp": timestamp,
+            "benchmark_type": "KROWN",
+            "framework": "Knowledge Graph Inversion",
+            "environment": "Docker",
+            "iterations": self.iterations,
+            "scenarios": {
+                name: runs for name, runs in scenario_runs.items()
+            }
+        }
+
+        with open(raw_file, 'w') as f:
+            json.dump(raw_data, f, indent=2)
+
+        stats_file = results_dir / f"krown_benchmark_results_stats_{timestamp}.json"
+        stats_data = {
+            "timestamp": timestamp,
+            "benchmark_type": "KROWN",
+            "framework": "Knowledge Graph Inversion",
+            "environment": "Docker",
+            "iterations": self.iterations,
+            "scenarios": {}
+        }
+
+        for scenario_name, runs in scenario_runs.items():
+            completed_runs = [r for r in runs if r["status"] == "completed"]
+            if completed_runs:
+                stats_data["scenarios"][scenario_name] = {
+                    "raw_runs": runs,
+                    "statistics": aggregate_scenario_statistics(completed_runs)
+                }
+
+        with open(stats_file, 'w') as f:
+            json.dump(stats_data, f, indent=2)
+
+        return raw_file, stats_file
     
     def generate_validation_summary(self, results):
         """Generate validation summary from benchmark results."""
@@ -365,12 +425,12 @@ class KrownBenchmarkRunner:
         }
         
         for result in results:
-            if result["status"] == "completed" and result.get("validation_results"):
+            if result["status"] == "completed" and "validation_results" in result:
                 validation_summary["total_scenarios"] += 1
                 val_result = result["validation_results"]
                 validation_summary["scenario_results"].append(val_result)
-                
-                if val_result.get("validation_passed", False):
+
+                if val_result["validation_passed"]:
                     validation_summary["passed"] += 1
                 else:
                     validation_summary["failed"] += 1
@@ -385,7 +445,7 @@ class KrownBenchmarkRunner:
         return validation_summary
     
     def print_summary(self, results):
-        """Print benchmark summary."""
+        """Print benchmark summary for single iteration."""
         total = len(results)
         completed = len([r for r in results if r["status"] == "completed"])
         failed = total - completed
@@ -397,11 +457,11 @@ class KrownBenchmarkRunner:
             avg_time = sum(execution_times) / len(execution_times)
 
             # Calculate average timing breakdown
-            morph_times = [r.get("timing_breakdown", {}).get("morph_kgc_time", 0)
+            morph_times = [r["timing_breakdown"]["morph_kgc_time"]
                           for r in results if r["status"] == "completed"]
-            inversion_times = [r.get("timing_breakdown", {}).get("inversion_time", 0)
+            inversion_times = [r["timing_breakdown"]["inversion_time"]
                               for r in results if r["status"] == "completed"]
-            overhead_percentages = [r.get("timing_breakdown", {}).get("inversion_overhead_percentage", 0)
+            overhead_percentages = [r["timing_breakdown"]["inversion_overhead_percentage"]
                                    for r in results if r["status"] == "completed"]
 
             avg_morph = sum(morph_times) / len(morph_times) if morph_times else 0
@@ -413,18 +473,18 @@ class KrownBenchmarkRunner:
 
             for result in results:
                 if result["status"] == "completed":
-                    tm_count = result.get("triples_maps_count", 0)
-                    pom_count = result.get("predicate_object_maps_count", 0)
-                    inv_count = len(result.get("inversion_results", []))
+                    tm_count = result["triples_maps_count"]
+                    pom_count = result["predicate_object_maps_count"]
+                    inv_count = result["inversion_count"]
                     val_status = ""
-                    if self.validate and result.get("validation_results"):
-                        val_passed = result["validation_results"].get("validation_passed", False)
+                    if self.validate and "validation_results" in result:
+                        val_passed = result["validation_results"]["validation_passed"]
                         val_status = " [PASS]" if val_passed else " [FAIL]"
 
-                    timing = result.get("timing_breakdown", {})
-                    morph_time = timing.get("morph_kgc_time", 0)
-                    inv_time = timing.get("inversion_time", 0)
-                    overhead = timing.get("inversion_overhead_percentage", 0)
+                    timing = result["timing_breakdown"]
+                    morph_time = timing["morph_kgc_time"]
+                    inv_time = timing["inversion_time"]
+                    overhead = timing["inversion_overhead_percentage"]
 
                     logger.info(f"  {result['scenario_name']}: {result['execution_time']:.2f}s "
                           f"[TM:{tm_count}, POM:{pom_count}, INV:{inv_count}] "
@@ -433,8 +493,46 @@ class KrownBenchmarkRunner:
         if failed > 0:
             for result in results:
                 if result["status"] == "failed":
-                    error = result.get("error", "Unknown error")
+                    error = result["error"]
                     logger.error(f"  {result['scenario_name']}: {error}")
+
+    def print_aggregated_summary(self, scenario_runs):
+        """Print summary for multiple iterations with statistics."""
+        logger.info(f"Benchmark completed with {self.iterations} iterations per scenario")
+        logger.info("")
+
+        for scenario_name, runs in sorted(scenario_runs.items()):
+            completed_runs = [r for r in runs if r["status"] == "completed"]
+            failed_runs = [r for r in runs if r["status"] == "failed"]
+
+            logger.info(f"Scenario: {scenario_name}")
+            logger.info(f"  Completed: {len(completed_runs)}/{len(runs)}, Failed: {len(failed_runs)}")
+
+            if completed_runs:
+                stats = aggregate_scenario_statistics(completed_runs)
+
+                # Print execution time statistics
+                exec_stats = stats["execution_time"]
+                logger.info(f"  Execution time: {exec_stats['mean']:.2f}s ± {exec_stats['std']:.2f}s "
+                          f"(median: {exec_stats['median']:.2f}s, "
+                          f"95% CI: [{exec_stats['ci_95_lower']:.2f}, {exec_stats['ci_95_upper']:.2f}])")
+
+                # Print timing breakdown
+                morph_stats = stats["morph_kgc_time"]
+                inv_stats = stats["inversion_time"]
+                overhead_stats = stats["inversion_overhead_percentage"]
+
+                logger.info(f"  Morph-KGC: {morph_stats['mean']:.2f}s ± {morph_stats['std']:.2f}s")
+                logger.info(f"  Inversion: {inv_stats['mean']:.2f}s ± {inv_stats['std']:.2f}s")
+                logger.info(f"  Overhead: {overhead_stats['mean']:.1f}% ± {overhead_stats['std']:.1f}%")
+
+                # Print outliers if any
+                outliers = exec_stats['outliers']
+                if outliers:
+                    outliers_str = ", ".join([f"{o:.2f}s" for o in outliers])
+                    logger.info(f"  Outliers detected: {outliers_str}")
+
+            logger.info("")
     
     def validate_scenario(self, scenario_name: str) -> dict:
         """Validate inversion results for a scenario."""
@@ -470,59 +568,107 @@ class KrownBenchmarkRunner:
         """Cleanup all database tables."""
         conn_string = self.get_connection_string()
         engine = create_engine(conn_string)
-        
+
         try:
             with engine.connect() as conn:
                 result = conn.execute(text(
                     "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
                 ))
                 tables = [row[0] for row in result]
-                
+
                 for table in tables:
                     conn.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))
-                
+
                 conn.commit()
         except Exception as e:
             logger.error(f"Error cleaning up tables: {e}")
         finally:
             engine.dispose()
-    
+
+    def generate_plots(self, stats_file: Path):
+        """Generate plots from statistics file.
+
+        Args:
+            stats_file: Path to statistics JSON file
+        """
+        with open(stats_file, 'r') as f:
+            stats_data = json.load(f)
+
+        output_dir = stats_file.parent
+
+        plot_timing_bar_charts(stats_data, output_dir)
+
     def run_benchmark(self):
         """Run the complete KROWN benchmark."""
         logger.info("Starting KROWN benchmark")
-        
+        logger.info(f"Running {self.iterations} iteration(s) per scenario")
+
         try:
             if self.validate:
                 conn_string = self.get_connection_string()
                 self.validator = KrownValidator(conn_string, verbose=False)
-            
+
             if not self.run_krown_data_generation():
                 logger.warning("Data generation failed, continuing with existing data")
-            
+
             scenarios = self.find_krown_scenarios()
             if not scenarios:
                 logger.error("No scenarios found")
                 return 1
-            
-            results = []
-            for i, scenario_path in enumerate(scenarios, 1):
-                logger.info(f"[{i}/{len(scenarios)}] {scenario_path.name}")
-                result = self.execute_krown_scenario(scenario_path)
-                results.append(result)
-            
-            results_file = self.save_results(results)
-            self.print_summary(results)
-            
-            if self.validate:
-                validation_summary = self.generate_validation_summary(results)
-                if validation_summary:
-                    validation_file = results_file.parent / f"validation_{results_file.name}"
-                    self.validator.save_validation_report(validation_summary, validation_file)
-                    self.validator.print_summary(validation_summary)
-            
+
+            if self.iterations == 1:
+                # Single iteration: use original behavior
+                results = []
+                for i, scenario_path in enumerate(scenarios, 1):
+                    logger.info(f"[{i}/{len(scenarios)}] {scenario_path.name}")
+                    result = self.execute_krown_scenario(scenario_path)
+                    results.append(result)
+
+                results_file = self.save_results(results)
+                self.print_summary(results)
+
+                if self.validate:
+                    validation_summary = self.generate_validation_summary(results)
+                    if validation_summary:
+                        validation_file = results_file.parent / f"validation_{results_file.name}"
+                        self.validator.save_validation_report(validation_summary, validation_file)
+                        self.validator.print_summary(validation_summary)
+
+                logger.info(f"Results saved to {results_file}")
+
+            else:
+                # Multiple iterations: collect all runs per scenario
+                scenario_runs = {scenario.name: [] for scenario in scenarios}
+
+                for iteration in range(1, self.iterations + 1):
+                    logger.info(f"\n{'='*60}")
+                    logger.info(f"Iteration {iteration}/{self.iterations}")
+                    logger.info(f"{'='*60}")
+
+                    for i, scenario_path in enumerate(scenarios, 1):
+                        logger.info(f"[{i}/{len(scenarios)}] {scenario_path.name}")
+                        result = self.execute_krown_scenario(scenario_path)
+                        scenario_runs[scenario_path.name].append(result)
+
+                # Save aggregated results with statistics
+                raw_file, stats_file = self.save_aggregated_results(scenario_runs)
+                self.print_aggregated_summary(scenario_runs)
+
+                logger.info(f"\nRaw results saved to {raw_file}")
+                logger.info(f"Statistics saved to {stats_file}")
+
+                logger.info("\nGenerating plots...")
+                
+                try:
+                    self.generate_plots(stats_file)
+                    logger.info(f"Plots saved to {stats_file.parent}")
+                except Exception as e:
+                    logger.error(f"Failed to generate plots: {e}")
+                    logger.info(f"You can try manually: uv run python -m benchmarks.krown_plots {stats_file}")
+
             logger.info("Benchmark completed")
             return 0
-            
+
         except KeyboardInterrupt:
             logger.warning("Benchmark interrupted")
             return 1
@@ -558,7 +704,11 @@ Docker Usage:
 
 Command Line Options (passed to container):
   docker compose -f docker-compose.benchmark.yml run benchmark --no-virtuoso
-  docker compose -f docker-compose.benchmark.yml run benchmark --validate
+  docker compose -f docker-compose.benchmark.yml run benchmark --iterations 10
+
+Notes:
+  # When using --iterations > 1, plots are automatically generated
+  # Results and plots are saved to benchmarks/krown/results/
         """
     )
     
@@ -579,15 +729,23 @@ Command Line Options (passed to container):
         action="store_true",
         help="Keep database tables after benchmark for manual inspection (default: cleanup all tables)"
     )
-    
+
+    parser.add_argument(
+        "--iterations",
+        type=int,
+        default=1,
+        help="Number of times to run each scenario (default: 1). Use multiple iterations for statistical analysis."
+    )
+
     args = parser.parse_args()
-    
+
     use_virtuoso = not args.no_virtuoso
-    
+
     runner = KrownBenchmarkRunner(
         use_virtuoso=use_virtuoso,
         validate=args.validate,
-        cleanup_tables=not args.no_cleanup
+        cleanup_tables=not args.no_cleanup,
+        iterations=args.iterations
     )
     return runner.run_benchmark()
 

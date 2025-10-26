@@ -8,6 +8,7 @@ services:
       - "1111:1111"  # Virtuoso ISQL port
     volumes:
       - .:/app
+      - app-venv:/app/.venv
     working_dir: /app
     environment:
       - FLASK_ENV=development
@@ -55,3 +56,5 @@ services:
       timeout: 5s
       retries: 5
     restart: unless-stopped
+volumes:
+  app-venv:
