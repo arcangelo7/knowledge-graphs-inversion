@@ -1,6 +1,7 @@
 """Utility functions and classes."""
 
 import functools
+import json
 import logging
 import re
 from decimal import Decimal
@@ -352,7 +353,6 @@ def insert_columns(df: pd.DataFrame, pure=False) -> pd.DataFrame:
                     )
                 )
             case "http://w3id.org/rml/parentTriplesMap":
-                import json
                 df.at[index, "object_references"] = [
                     list(
                         json.loads(

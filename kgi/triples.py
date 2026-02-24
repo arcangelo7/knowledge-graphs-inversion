@@ -1,6 +1,8 @@
 """Triple classes for SPARQL query generation."""
 
+import json
 import logging
+
 import pandas as pd
 
 from .base import Triple
@@ -44,8 +46,7 @@ class QueryTriple(Triple):
     @property
     def plain_references(self) -> set[str]:
         """Get references that are plain literals (no URI encoding needed)."""
-        # Only object references of type REFERENCE are plain literals
-        if self.rule["object_map_type"] == RML_REFERENCE:
+        if self.rule["object_map_type"] in (RML_REFERENCE, RML_PARENT_TRIPLES_MAP):
             return set(self.object_references)
         return set()
 
@@ -169,7 +170,51 @@ class QueryTriple(Triple):
             object_map_value = object_rule["subject_map_value"]
             object_reference = codex.get_id(object_map_value)
             predicate = f'<{self.rule["predicate_map_value"]}>'
-            return f"?{subject_reference} {predicate} ?{object_reference} ."
+
+            lines = [f"OPTIONAL {{ ?{subject_reference} {predicate} ?{object_reference} ."]
+
+            join_conditions = json.loads(
+                self.rule["object_join_conditions"].replace("'", '"')
+            )
+            parent_template = object_rule["subject_references_template"]
+            parent_references = object_rule["subject_references"]
+
+            for jc in join_conditions.values():
+                child_value = jc["child_value"]
+                parent_value = jc["parent_value"]
+                child_identifier = Identifier.generate_plain_identifier(self.rule, child_value)
+                child_ref = codex.get_id(child_identifier)
+
+                evaluated_template = parent_template
+                current_slice = object_reference
+
+                for ref in parent_references:
+                    pre_string = evaluated_template.split("(", 1)[0]
+                    post_string = evaluated_template.split(")", 1)[1]
+                    next_slice_id = f"{object_map_value}_join_slice_{id_generator.get_id()}"
+                    next_slice = codex.get_id(next_slice_id)
+                    lines.append(
+                        f"BIND(STRAFTER(STR(?{current_slice}), '{pre_string}') as ?{next_slice})"
+                    )
+
+                    if ref == parent_value:
+                        if post_string == "":
+                            lines.append(f"BIND(?{next_slice} as ?{child_ref})")
+                        else:
+                            next_pre = post_string.split("(", 1)[0]
+                            temp_id = f"{child_identifier}_temp_{id_generator.get_id()}"
+                            temp_ref = codex.get_id(temp_id)
+                            lines.append(
+                                f"BIND(STRBEFORE(STR(?{next_slice}), '{next_pre}') AS ?{temp_ref})"
+                            )
+                            lines.append(f"BIND(?{temp_ref} as ?{child_ref})")
+                        break
+
+                    evaluated_template = post_string
+                    current_slice = next_slice
+
+            lines.append("}")
+            return "\n".join(lines)
             
         else:
             logging.getLogger("kgi").error(f"Unsupported object map type: {object_map_type}")

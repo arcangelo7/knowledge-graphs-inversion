@@ -68,8 +68,8 @@ class Query:
         template_triples = [t for t in self.triples if t.rule["object_map_type"] == RML_TEMPLATE]
         parent_triples = [t for t in self.triples if t.rule["object_map_type"] == RML_PARENT_TRIPLES_MAP]
                             
-        # Process triples in order for performance
-        for triple_group in [constant_triples, parent_triples, template_triples, reference_triples]:
+        # Process triples: mandatory patterns first, OPTIONAL parent triples last
+        for triple_group in [constant_triples, template_triples, reference_triples, parent_triples]:
             for triple in triple_group:
                 triple_string = triple.generate(
                     uri_encoded_references, self.id_generator, self.codex, all_mapping_rules

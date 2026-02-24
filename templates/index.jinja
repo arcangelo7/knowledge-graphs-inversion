@@ -585,7 +585,7 @@
         function showMapping(testId) {
             const response = testResults[testId];
             if (response && response.results && response.results.data && response.results.data[0]) {
-                showModal('R2RML Mapping', response.results.data[0].mapping);
+                showModal('R2RML Mapping', `<pre>${escapeHtml(response.results.data[0].mapping)}</pre>`);
             } else {
                 showModal('Error', 'Unable to display mapping. Invalid data structure.');
             }
