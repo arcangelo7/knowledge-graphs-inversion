@@ -53,35 +53,35 @@ class QueryTriple(Triple):
     @property
     def subject_references(self) -> set[str]:
         """Get subject references."""
-        return set(
-            [Identifier.generate_plain_identifier(self.rule, value) 
-             for value in self.rule["subject_references"]]
-        )
+        return {
+            ident for value in self.rule["subject_references"]
+            if (ident := Identifier.generate_plain_identifier(self.rule, str(value))) is not None
+        }
 
     @property
     def predicate_references(self) -> set[str]:
         """Get predicate references."""
-        return set(
-            [Identifier.generate_plain_identifier(self.rule, value) 
-             for value in self.rule["predicate_references"]]
-        )
+        return {
+            ident for value in self.rule["predicate_references"]
+            if (ident := Identifier.generate_plain_identifier(self.rule, str(value))) is not None
+        }
 
     @property
     def object_references(self) -> set[str]:
         """Get object references."""
-        return set(
-            [Identifier.generate_plain_identifier(self.rule, value) 
-             for value in self.rule["object_references"]]
-        )
+        return {
+            ident for value in self.rule["object_references"]
+            if (ident := Identifier.generate_plain_identifier(self.rule, str(value))) is not None
+        }
 
     def generate(self, encoded_references: set[str], id_generator: IdGenerator, 
                 codex: Codex, all_mapping_rules: pd.DataFrame) -> str | None:
         """Generate SPARQL triple pattern."""
-        subject_reference = codex.get_id(self.rule["subject_map_value"])
+        subject_reference = codex.get_id(str(self.rule["subject_map_value"]))
         predicate = f'<{self.rule["predicate_map_value"]}>'
-        object_map_value = self.rule["object_map_value"]
-        object_map_type = self.rule["object_map_type"]
-        object_references_template = self.rule["object_references_template"]
+        object_map_value = str(self.rule["object_map_value"])
+        object_map_type = str(self.rule["object_map_type"])
+        object_references_template = str(self.rule["object_references_template"])
         
         if object_map_type == RML_CONSTANT:
             object_term_type = self.rule["object_termtype"]
@@ -94,7 +94,7 @@ class QueryTriple(Triple):
             return f"?{subject_reference} {predicate} {object_map_value} ."
 
         if object_map_type == RML_REFERENCE:
-            object_identifier = Identifier.generate_plain_identifier(self.rule, object_map_value)
+            object_identifier = Identifier.generate_plain_identifier(self.rule, object_map_value) or object_map_value
             object_reference, already_bound = codex.get_id_and_is_bound(object_identifier)
             
             if object_identifier in encoded_references:
@@ -126,7 +126,7 @@ class QueryTriple(Triple):
                 return "\n".join(lines)
             
         elif object_map_type == RML_TEMPLATE:
-            object_identifier = Identifier.generate_plain_identifier(self.rule, object_map_value)
+            object_identifier = Identifier.generate_plain_identifier(self.rule, object_map_value) or object_map_value
             object_reference, already_bound = codex.get_id_and_is_bound(object_identifier)
             lines = []
             lines.append(f"?{subject_reference} {predicate} ?{object_reference}")
@@ -134,11 +134,12 @@ class QueryTriple(Triple):
             evaluated_template = object_references_template
             current_slice = object_reference
             
-            for i, obj in enumerate(self.rule["object_references"]):
+            for obj in self.rule["object_references"]:
                 current_pre_string = evaluated_template.split("(", 1)[0]
                 current_post_string = evaluated_template.split(")", 1)[1]
                 next_pre_string = current_post_string.split("(", 1)[0]
-                object_identifier = Identifier.generate_plain_identifier(self.rule, obj)
+                obj_str = str(obj)
+                object_identifier = Identifier.generate_plain_identifier(self.rule, obj_str) or obj_str
                 object_reference, already_bound = codex.get_id_and_is_bound(object_identifier)
                 next_slice_identifier = f"{object_identifier}_slice_{id_generator.get_id()}"
                 next_slice = codex.get_id(next_slice_identifier)
@@ -174,7 +175,7 @@ class QueryTriple(Triple):
             lines = [f"OPTIONAL {{ ?{subject_reference} {predicate} ?{object_reference} ."]
 
             join_conditions = json.loads(
-                self.rule["object_join_conditions"].replace("'", '"')
+                str(self.rule["object_join_conditions"]).replace("'", '"')
             )
             parent_template = object_rule["subject_references_template"]
             parent_references = object_rule["subject_references"]
@@ -182,7 +183,7 @@ class QueryTriple(Triple):
             for jc in join_conditions.values():
                 child_value = jc["child_value"]
                 parent_value = jc["parent_value"]
-                child_identifier = Identifier.generate_plain_identifier(self.rule, child_value)
+                child_identifier = Identifier.generate_plain_identifier(self.rule, child_value) or child_value
                 child_ref = codex.get_id(child_identifier)
 
                 evaluated_template = parent_template
@@ -237,7 +238,7 @@ class SubjectTriple(QueryTriple):
         """Subject triples have no plain references."""
         return set()
 
-    def generate(self, encoded_references: set[str], id_generator: IdGenerator, 
+    def generate(self, encoded_references: set[str], id_generator: IdGenerator,
                 codex: Codex, all_mapping_rules: pd.DataFrame) -> str | None:
         """Generate SPARQL pattern for subject extraction."""
         subject_map_type = self.rule["subject_map_type"]
@@ -256,22 +257,23 @@ class SubjectTriple(QueryTriple):
     
     def _generate_iri_template(self, codex: Codex, id_generator: IdGenerator):
         """Generate SPARQL for IRI template."""
-        subject_map_value = self.rule["subject_map_value"]
-        subject_references_template = self.rule["subject_references_template"]
+        subject_map_value = str(self.rule["subject_map_value"])
+        subject_references_template = str(self.rule["subject_references_template"])
         subject_reference = codex.get_id(subject_map_value)
-        
+
         lines = []
         lines.append(f"FILTER(REGEX(STR(?{subject_reference}), '{subject_references_template}'))")
-        
+
         evaluated_template = subject_references_template
         current_slice_reference = subject_reference
-        
+
         for reference in self.rule["subject_references"]:
             current_pre_string = evaluated_template.split("(", 1)[0]
             current_post_string = evaluated_template.split(")", 1)[1]
             next_pre_string = current_post_string.split("(", 1)[0]
-            reference_identifier = Identifier.generate_plain_identifier(self.rule, reference)
-            current_reference, already_bound = codex.get_id_and_is_bound(reference_identifier)
+            ref_str = str(reference)
+            reference_identifier = Identifier.generate_plain_identifier(self.rule, ref_str) or ref_str
+            current_reference, _ = codex.get_id_and_is_bound(reference_identifier)
             next_slice_reference_identifier = f"{subject_map_value}_slice_subject_{id_generator.get_id()}"
             next_slice_reference = codex.get_id(next_slice_reference_identifier)
             lines.append(f"BIND(STRAFTER(STR(?{current_slice_reference}), '{current_pre_string}') as ?{next_slice_reference})")
@@ -292,10 +294,10 @@ class SubjectTriple(QueryTriple):
 
     def _generate_blank_node_template(self, codex: Codex, id_generator: IdGenerator):
         """Generate SPARQL for blank node template."""
-        subject_map_value = self.rule["subject_map_value"]
-        subject_references_template = self.rule["subject_references_template"]
+        subject_map_value = str(self.rule["subject_map_value"])
+        subject_references_template = str(self.rule["subject_references_template"])
         subject_reference = codex.get_id(subject_map_value)
-        
+
         lines = []
         evaluated_template = subject_references_template
         current_slice_reference = subject_reference
@@ -307,7 +309,8 @@ class SubjectTriple(QueryTriple):
             next_slice_reference_identifier = f"{subject_map_value}_slice_{id_generator.get_id()}"
             next_slice_reference = codex.get_id(next_slice_reference_identifier)
 
-            reference_identifier = Identifier.generate_plain_identifier(self.rule, reference)
+            ref_str = str(reference)
+            reference_identifier = Identifier.generate_plain_identifier(self.rule, ref_str) or ref_str
             current_reference = codex.get_id(reference_identifier)
 
             unescaped_current_pre_string = current_pre_string.replace('\\', "")

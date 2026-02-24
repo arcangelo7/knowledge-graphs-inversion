@@ -15,7 +15,7 @@ from .utils import Codex, IdGenerator, sparql_to_python_type, url_decode
 class Query:
     """Represents a SPARQL query for data inversion."""
     
-    def __init__(self, triples: list[QueryTriple] = None):
+    def __init__(self, triples: list[QueryTriple] | None = None):
         self.triples: list[QueryTriple] = triples or []
         self.id_generator = IdGenerator()
         self.codex = Codex()
@@ -51,11 +51,11 @@ class Query:
         # Exclude references that also need URI encoding
         return [ref for ref in plain_refs if ref not in self.uri_encoded_references]
 
-    def generate(self, all_mapping_rules: pd.DataFrame) -> str:
+    def generate(self, all_mapping_rules: pd.DataFrame) -> str | None:
         """Generate SPARQL query string."""
         all_references = self.references
-        uri_encoded_references = self.uri_encoded_references
-        
+        uri_encoded_references = set(self.uri_encoded_references)
+
         if not all_references:
             logging.getLogger("kgi").warning("No references found, no query generated")
             return None
@@ -122,6 +122,7 @@ class Query:
     def execute_on_endpoint(self, endpoint: Endpoint, all_mapping_rules: pd.DataFrame) -> pd.DataFrame:
         """Execute query on a SPARQL endpoint."""
         self.generated_query = self.generate(all_mapping_rules)
+        assert self.generated_query is not None
         csv_result = endpoint.query(self.generated_query)
         df = pd.read_csv(StringIO(csv_result))
         return self.decode_dataframe(df)

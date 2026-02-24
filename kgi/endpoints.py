@@ -3,13 +3,12 @@
 import gzip
 import logging
 import os
-import pathlib
 import re
 import shutil
 import subprocess
 import tempfile
 
-from rdflib import BNode, ConjunctiveGraph, Literal, URIRef
+from rdflib import BNode, Dataset, Literal, URIRef
 from SPARQLWrapper import CSV, SPARQLWrapper, POST
 
 from .base import Endpoint
@@ -19,7 +18,7 @@ from .utils import Validator
 class RemoteEndpoint(Endpoint):
     """Remote SPARQL endpoint implementation."""
     
-    def __init__(self, url: str, rdf_file_to_load: str = None):
+    def __init__(self, url: str, rdf_file_to_load: str | None = None):
         self._sparql = SPARQLWrapper(url)
         self._sparql.setReturnFormat(CSV)
         self.endpoint_url = url
@@ -32,11 +31,12 @@ class RemoteEndpoint(Endpoint):
 
     def _load_data(self):
         """Load RDF data into the SPARQL endpoint using INSERT DATA."""
+        assert self.rdf_file_path is not None
         clear_query = f"CLEAR GRAPH <{self._graph_uri}>"
         self._sparql.setQuery(clear_query)
         self._sparql.setMethod(POST)
         self._sparql.query()
-        
+
         with open(self.rdf_file_path, 'r', encoding='utf-8') as f:
             chunk_size = 1000
             triples = []
@@ -101,7 +101,7 @@ class RemoteEndpoint(Endpoint):
 class VirtuosoEndpoint(RemoteEndpoint):
     """Virtuoso-specific endpoint that uses bulk loading for better performance."""
     
-    def __init__(self, url: str, rdf_file_to_load: str = None, container_name: str = 'virtuoso-kgi'):
+    def __init__(self, url: str, rdf_file_to_load: str | None = None, container_name: str = 'virtuoso-kgi'):
         self.container_name = container_name
         self.host_bulk_load_dir = os.environ['VIRTUOSO_BULK_DIR']
         
@@ -119,7 +119,7 @@ class VirtuosoEndpoint(RemoteEndpoint):
     
     def _bulk_load_data(self):
         """Load RDF data using Virtuoso bulk loading instead of INSERT queries."""
-        logger = logging.getLogger("kgi")
+        assert self.rdf_file_path is not None
         
         # Clear existing graph first
         clear_query = f"CLEAR GRAPH <{self._graph_uri}>"
@@ -186,9 +186,10 @@ class VirtuosoEndpoint(RemoteEndpoint):
             self._sparql.setQuery(count_query)
             self._sparql.setMethod(POST)
             try:
-                results = self._sparql.query().convert()
+                raw_results = self._sparql.query().convert()
+                results_str = raw_results.decode('utf-8') if isinstance(raw_results, bytes) else str(raw_results)
                 triple_count_in_graph = 0
-                for line in results.decode('utf-8').split('\n'):
+                for line in results_str.split('\n'):
                     if line and not line.startswith('"'):
                         try:
                             triple_count_in_graph = int(line)
@@ -253,7 +254,7 @@ class LocalSparqlGraphStore(Endpoint):
         with open(url, "r", encoding="utf-8") as f:
             data = f.read()
         
-        self._graph = ConjunctiveGraph()
+        self._graph: Dataset | None = Dataset(default_union=True)
         try:
             self._parse_ntriples_preserve_bnode_ids(data)
         except Exception as e:
@@ -314,10 +315,12 @@ class LocalSparqlGraphStore(Endpoint):
             else:
                 continue
 
+            assert self._graph is not None
             self._graph.add((s_node, p_node, o_node))
 
     def query(self, query: str):
         """Execute a SPARQL query on the local graph."""
+        assert self._graph is not None
         try:
             results = self._graph.query(query)
             if results.type == 'SELECT':

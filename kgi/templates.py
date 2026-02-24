@@ -1,8 +1,6 @@
 """Template implementations for different data formats."""
 
-import json
-from datetime import date, datetime
-from typing import Self
+from __future__ import annotations
 
 import jsonpath_ng
 import pandas as pd
@@ -50,8 +48,9 @@ class RDBTemplate(Template):
         """RDB template structure is determined by database schema."""
         return "RDB template: structure will be determined by the database schema"
 
-    def fill_data(self, data: pd.DataFrame, table_name: str) -> str:
+    def fill_data(self, data: pd.DataFrame, source_name: str) -> str:
         """Fill template with data and create SQL statements."""
+        table_name = source_name
         engine = self.create_engine()
         table = self._get_sqla_table(data, table_name)
         
@@ -143,7 +142,7 @@ class RDBTemplate(Template):
             else:
                 col_type = String()
             
-            columns.append(Column(column_name, col_type))
+            columns.append(Column(column_name, col_type))  # type: ignore[arg-type]
         
         return Table(table_name, metadata, *columns)
 
@@ -182,33 +181,37 @@ class JSONTemplate(Template):
             raise ValueError("No root path found")
             
         root = self._create_node_tree(JSONPathFunctions.list_path_steps(root_path))
-        
+        assert root is not None
+
         for path in self.paths:
-            # Merge paths into the tree
             node = self._create_node_tree(JSONPathFunctions.list_path_steps(path))
             self._merge_node_trees(root, node)
-            
+
         return root
     
     def add_path(self, jsonpath: jsonpath_ng.JSONPath | str) -> bool:
         """Add a full path to the template."""
         if isinstance(jsonpath, str):
-            jsonpath = jsonpath_ng.parse(jsonpath)
+            parsed: jsonpath_ng.JSONPath = jsonpath_ng.parse(jsonpath)
+            jsonpath = parsed
         if jsonpath in self.paths:
             return False
         self.paths.append(jsonpath)
         return True
     
-    def _create_node_tree(self, steps: list[jsonpath_ng.JSONPath]) -> Node:
+    def _create_node_tree(self, steps: list[jsonpath_ng.JSONPath]) -> Node | None:
         """Create a tree of nodes from path steps."""
         if len(steps) == 0:
             return None
         if len(steps) == 1:
-            return Object(values=[steps[0].fields[0]])
+            step = steps[0]
+            assert isinstance(step, jsonpath_ng.Fields)
+            return Object(values=[step.fields[0]])
             
         root_step = steps[0]
+        key = ""
         if isinstance(root_step, jsonpath_ng.Root):
-            root = Root()
+            root: Node = Root()
         elif isinstance(root_step, jsonpath_ng.Fields):
             root = Object()
             key = root_step.fields[0]
@@ -216,27 +219,29 @@ class JSONTemplate(Template):
             root = Array()
         else:
             raise ValueError(f"Unsupported step type: {type(root_step)}")
-            
+
         current = root
         for step in steps[1:-1]:
             if isinstance(step, jsonpath_ng.Fields):
-                next_node = Object()
+                next_node: Node = Object()
                 key = step.fields[0]
             elif isinstance(step, jsonpath_ng.Slice):
                 next_node = Array()
             else:
                 raise ValueError(f"Unsupported step type: {type(step)}")
-                
+
             if isinstance(current, Object):
                 current.add_child(key, next_node)
             elif isinstance(current, Array):
                 current.content = next_node
             elif isinstance(current, Root):
                 current.child = next_node
-                
+
             current = next_node
-            
-        leaf = Object(values=[steps[-1].fields[0]])
+
+        last_step = steps[-1]
+        assert isinstance(last_step, jsonpath_ng.Fields)
+        leaf = Object(values=[last_step.fields[0]])
         if isinstance(current, Object):
             current.add_child(key, leaf)
         elif isinstance(current, Array):
@@ -244,7 +249,7 @@ class JSONTemplate(Template):
             
         return root
     
-    def _merge_node_trees(self, base: Node, other: Node):
+    def _merge_node_trees(self, base: Node | None, other: Node | None):
         """Merge two node trees."""
         if isinstance(base, Object):
             if isinstance(other, Object):
@@ -285,7 +290,7 @@ class JSONTemplate(Template):
 class Object(Node):
     """JSON object node."""
     
-    def __init__(self, children: dict[str, Node] = None, values: list[str] = None):
+    def __init__(self, children: dict[str, Node] | None = None, values: list[str] | None = None):
         self._parent_path = ""
         self.children = children or {}
         self.values = values or []
@@ -307,7 +312,7 @@ class Object(Node):
     def parent_path(self, value: str):
         self._parent_path = value
     
-    def find(self, key: str) -> Self | None:
+    def find(self, key: str) -> Node | None:
         """Find a child by key."""
         if key in self.children.keys():
             return self.children[key]
@@ -342,9 +347,9 @@ class Object(Node):
 class Array(Node):
     """JSON array node."""
     
-    def __init__(self, content: Node = None):
+    def __init__(self, content: Node | None = None):
         self._parent_path = ""
-        self._content = None
+        self._content: Node | None = None
         if content is not None:
             self.content = content
     
@@ -361,7 +366,7 @@ class Array(Node):
         self._parent_path = value
     
     @property
-    def content(self) -> Node:
+    def content(self) -> Node | None:
         return self._content
     
     @content.setter
@@ -370,7 +375,7 @@ class Array(Node):
         if self._content:
             self._content.parent_path = self.path
 
-    def find(self, key: str) -> Self | None:
+    def find(self, key: str) -> Node | None:
         """Find in content."""
         if self._content:
             return self._content.find(key)
@@ -405,13 +410,13 @@ class Array(Node):
 class Root(Node):
     """JSON root node."""
     
-    def __init__(self, child: Node = None):
-        self._child = None
+    def __init__(self, child: Node | None = None):
+        self._child: Node | None = None
         if child is not None:
             self.child = child
             
     @property
-    def child(self) -> Node:
+    def child(self) -> Node | None:
         return self._child
     
     @child.setter
@@ -428,7 +433,11 @@ class Root(Node):
     def parent_path(self) -> str:
         return ""
 
-    def find(self, key: str) -> Self | None:
+    @parent_path.setter
+    def parent_path(self, value: str) -> None:
+        pass
+
+    def find(self, key: str) -> Node | None:
         """Find in child."""
         if self.child is None:
             return None

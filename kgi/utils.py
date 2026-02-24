@@ -75,13 +75,14 @@ class Identifier:
     @staticmethod
     def generate_plain_identifier(rule: pd.Series, value: str) -> str | None:
         """Generate a plain identifier from a rule and value."""
-        source_type: str = rule["source_type"]
-        
+        source_type = str(rule["source_type"])
+
         if source_type == "CSV":
             return value
         elif source_type == "JSON":
             try:
-                return JSONPathFunctions.extend_string_path(rule["iterator"], value)
+                iterator = str(rule["iterator"])
+                return JSONPathFunctions.extend_string_path(iterator, value)
             except Exception:
                 return value
         elif source_type == "RDB":
@@ -250,40 +251,26 @@ def insert_columns(df: pd.DataFrame, pure=False) -> pd.DataFrame:
     if pure:
         df = df.copy(deep=True)
 
+    def _col_pos(name: str) -> int:
+        loc = df.columns.get_loc(name)
+        assert isinstance(loc, int)
+        return loc
+
+    def _empty_lists() -> pd.Series:  # type: ignore[type-arg]
+        return pd.Series([[] for _ in range(df.shape[0])])
+
+    nan_col = float("nan")
+
     # Add columns at specific positions
-    df.insert(
-        df.columns.get_loc("subject_map_value") + 1,
-        "subject_references",
-        [[] for _ in range(df.shape[0])],
-    )
-    df.insert(
-        df.columns.get_loc("subject_map_value") + 1, "subject_references_template", None
-    )
-    df.insert(
-        df.columns.get_loc("subject_references") + 1, "subject_reference_count", 0
-    )
-    df.insert(
-        df.columns.get_loc("predicate_map_value") + 1,
-        "predicate_references",
-        [[] for _ in range(df.shape[0])],
-    )
-    df.insert(
-        df.columns.get_loc("predicate_map_value") + 1,
-        "predicate_references_template",
-        None,
-    )
-    df.insert(
-        df.columns.get_loc("predicate_references") + 1, "predicate_reference_count", 0
-    )
-    df.insert(
-        df.columns.get_loc("object_map_value") + 1,
-        "object_references",
-        [[] for _ in range(df.shape[0])],
-    )
-    df.insert(
-        df.columns.get_loc("object_map_value") + 1, "object_references_template", None
-    )
-    df.insert(df.columns.get_loc("object_references") + 1, "object_reference_count", 0)
+    df.insert(_col_pos("subject_map_value") + 1, "subject_references", _empty_lists())
+    df.insert(_col_pos("subject_map_value") + 1, "subject_references_template", nan_col)
+    df.insert(_col_pos("subject_references") + 1, "subject_reference_count", 0)
+    df.insert(_col_pos("predicate_map_value") + 1, "predicate_references", _empty_lists())
+    df.insert(_col_pos("predicate_map_value") + 1, "predicate_references_template", nan_col)
+    df.insert(_col_pos("predicate_references") + 1, "predicate_reference_count", 0)
+    df.insert(_col_pos("object_map_value") + 1, "object_references", _empty_lists())
+    df.insert(_col_pos("object_map_value") + 1, "object_references_template", nan_col)
+    df.insert(_col_pos("object_references") + 1, "object_reference_count", 0)
 
     # Process each mapping rule to extract references
     for index in df.index:

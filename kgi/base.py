@@ -1,9 +1,14 @@
 """Abstract base classes for the KGI library."""
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
-from typing import Self
+from typing import TYPE_CHECKING
 
 import pandas as pd
+
+if TYPE_CHECKING:
+    from .utils import Codex, IdGenerator
 
 
 class Endpoint(ABC):
@@ -19,28 +24,34 @@ class Triple(ABC):
     """Abstract base class for RDF triples."""
     
     @abstractmethod
-    def generate(self) -> str:
+    def generate(self, encoded_references: set[str], id_generator: IdGenerator,
+                codex: Codex, all_mapping_rules: pd.DataFrame) -> str | None:
         """Generate the string representation of the triple."""
         raise NotImplementedError
 
 
 class Node(ABC):
     """Abstract base class for JSON template nodes."""
-    
-    def find(self, key: str) -> Self | None:
+
+    def find(self, key: str) -> Node | None:
         """Find a child node by key."""
         raise NotImplementedError
-    
+
     @property
     @abstractmethod
     def path(self) -> str:
         """Get the path of this node."""
         raise NotImplementedError
-    
+
     @property
     @abstractmethod
     def parent_path(self) -> str:
         """Get the parent path of this node."""
+        raise NotImplementedError
+
+    @parent_path.setter
+    @abstractmethod
+    def parent_path(self, value: str) -> None:
         raise NotImplementedError
         
     @abstractmethod

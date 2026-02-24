@@ -64,7 +64,7 @@ def check_for_multiple_subject_maps(config: morph_kgc.config.Config) -> bool:
         return False
 
 
-def generate_template(source_rules: pd.DataFrame, db_url: str = None):
+def generate_template(source_rules: pd.DataFrame, db_url: str | None = None):
     """Generate appropriate template based on source type."""
     source_type = source_rules.iloc[0]["source_type"]
 
@@ -168,8 +168,8 @@ def check_for_constant_only_mappings(mappings: pd.DataFrame) -> bool:
         return False
 
 
-def inversion(config_file: str | pathlib.Path, test_id: str = None, dest_db_url: str = None, 
-              sparql_endpoint: str = None, use_virtuoso: bool = False, 
+def inversion(config_file: str | pathlib.Path, test_id: str | None = None, dest_db_url: str | None = None,
+              sparql_endpoint: str | None = None, use_virtuoso: bool = False,
               virtuoso_container: str = 'virtuoso-kgi') -> dict[str, dict[str, str]] | dict:
     """
     Main inversion function.

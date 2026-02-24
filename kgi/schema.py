@@ -42,6 +42,7 @@ class DatabaseSchemaRetriever:
     def __init__(self, db_url: str):
         """Initialize with database URL."""
         self.db_url = db_url
+        self.logger = logging.getLogger("kgi")
         self._engine = None
     
     @property
@@ -189,7 +190,7 @@ def apply_schema_ordering(df: pd.DataFrame, schema: TableSchema) -> pd.DataFrame
     
     final_order = ordered_columns + remaining_columns
     
-    return df[final_order]
+    return pd.DataFrame(df[final_order])
 
 
 def apply_schema_types(df: pd.DataFrame, schema: TableSchema) -> pd.DataFrame:
