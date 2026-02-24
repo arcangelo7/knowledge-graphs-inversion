@@ -24,7 +24,7 @@ class Triple(ABC):
     """Abstract base class for RDF triples."""
     
     @abstractmethod
-    def generate(self, encoded_references: set[str], id_generator: IdGenerator,
+    def generate(self, id_generator: IdGenerator,
                 codex: Codex, all_mapping_rules: pd.DataFrame) -> str | None:
         """Generate the string representation of the triple."""
         raise NotImplementedError

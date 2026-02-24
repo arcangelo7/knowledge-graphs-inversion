@@ -30,62 +30,64 @@ class Query:
         return list(references)
 
     @property
-    def uri_encoded_references(self) -> list[str]:
-        """Get references that need URI encoding."""
-        uri_encoded_references = set()
+    def template_references(self) -> list[str]:
+        """Get references extracted from URI/blank node templates."""
+        refs = set()
         for triple in self.triples:
-            uri_encoded_references.update(triple.uri_encoded_references)
-        return list(uri_encoded_references)
-    
+            refs.update(triple.template_extracted_references)
+        return list(refs)
+
     @property
-    def plain_references(self) -> list[str]:
-        """Get references that are plain literals (not URI encoded).
-        
-        When a reference appears in both contexts (e.g., 'Name' used as both 
-        a subject template and an object literal), it's excluded from plain 
-        references since it needs URI encoding.
-        """
-        plain_refs = set()
+    def literal_references(self) -> list[str]:
+        """Get references available from object literals."""
+        refs = set()
         for triple in self.triples:
-            plain_refs.update(triple.plain_references)
-        # Exclude references that also need URI encoding
-        return [ref for ref in plain_refs if ref not in self.uri_encoded_references]
+            refs.update(triple.plain_references)
+        return list(refs)
+
+    @property
+    def template_only_references(self) -> list[str]:
+        """Get references only available from template extraction.
+
+        When a reference is available from both a template and a literal,
+        the literal value is preferred (no URL decoding needed).
+        """
+        literal = set(self.literal_references)
+        return [ref for ref in self.template_references
+                if ref not in literal]
 
     def generate(self, all_mapping_rules: pd.DataFrame) -> str | None:
         """Generate SPARQL query string."""
         all_references = self.references
-        uri_encoded_references = set(self.uri_encoded_references)
 
         if not all_references:
             logging.getLogger("kgi").warning("No references found, no query generated")
             return None
 
         triple_strings = []
-        
-        # Group triples by type for better performance
-        constant_triples = [t for t in self.triples if t.rule["object_map_type"] == RML_CONSTANT]
-        reference_triples = [t for t in self.triples if t.rule["object_map_type"] == RML_REFERENCE]
-        template_triples = [t for t in self.triples if t.rule["object_map_type"] == RML_TEMPLATE]
-        parent_triples = [t for t in self.triples if t.rule["object_map_type"] == RML_PARENT_TRIPLES_MAP]
-                            
-        # Process triples: mandatory patterns first, OPTIONAL parent triples last
-        for triple_group in [constant_triples, template_triples, reference_triples, parent_triples]:
+
+        # Separate SubjectTriples from ObjectTriples.
+        # SubjectTriples must be processed last so their BINDs are skipped
+        # when the reference is already available from a literal.
+        object_triples = [t for t in self.triples if not isinstance(t, SubjectTriple)]
+        subject_triples = [t for t in self.triples if isinstance(t, SubjectTriple)]
+
+        constant_triples = [t for t in object_triples if t.rule["object_map_type"] == RML_CONSTANT]
+        reference_triples = [t for t in object_triples if t.rule["object_map_type"] == RML_REFERENCE]
+        template_triples = [t for t in object_triples if t.rule["object_map_type"] == RML_TEMPLATE]
+        parent_triples = [t for t in object_triples if t.rule["object_map_type"] == RML_PARENT_TRIPLES_MAP]
+
+        for triple_group in [constant_triples, template_triples, reference_triples, parent_triples, subject_triples]:
             for triple in triple_group:
                 triple_string = triple.generate(
-                    uri_encoded_references, self.id_generator, self.codex, all_mapping_rules
+                    self.id_generator, self.codex, all_mapping_rules
                 )
                 if triple_string is not None:
                     triple_strings.append(triple_string)
-                        
-        plain_vars = [f'?{self.codex.get_id(reference)}' for reference in self.plain_references]
-        
-        select_part = "SELECT " + " ".join(
-            plain_vars + [
-                f'?{self.codex.get_id(reference)}_encoded ?{self.codex.get_id(reference)}_datatype'
-                for reference in uri_encoded_references
-            ]
-        ) + " WHERE {"
-        
+
+        all_vars = [f'?{self.codex.get_id(ref)}' for ref in all_references]
+        select_part = "SELECT " + " ".join(all_vars) + " WHERE {"
+
         generated_query = select_part + "\n".join(triple_strings) + "}"
         self.generated_query = generated_query.replace("\\", "\\\\")
         return self.generated_query
@@ -93,30 +95,14 @@ class Query:
     def decode_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
         """Decode query results DataFrame."""
         df = df.copy(deep=True)
-        
-        for reference in self.uri_encoded_references:
+
+        template_only = set(self.template_only_references)
+        for reference in self.references:
             column_reference = self.codex.get_id(reference)
-            encoded_column = f"{column_reference}_encoded"
-            datatype_column = f"{column_reference}_datatype"
-            
-            # Decode the encoded column
-            df[encoded_column] = df[encoded_column].apply(url_decode)
-            
-            # Apply datatype to the data
-            if datatype_column in df.columns:
-                df[encoded_column] = df.apply(
-                    lambda row: sparql_to_python_type(row[encoded_column], row[datatype_column]),
-                    axis=1
-                )
-                df.drop(columns=[datatype_column], inplace=True)
-            
-            # Rename the column
-            df.rename(columns={encoded_column: reference}, inplace=True)
-            
-        for reference in self.plain_references:
-            column_reference = self.codex.get_id(reference)
+            if reference in template_only:
+                df[column_reference] = df[column_reference].apply(url_decode)
             df.rename(columns={column_reference: reference}, inplace=True)
-            
+
         return df
 
     def execute_on_endpoint(self, endpoint: Endpoint, all_mapping_rules: pd.DataFrame) -> pd.DataFrame:

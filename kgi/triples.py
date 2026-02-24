@@ -29,23 +29,19 @@ class QueryTriple(Triple):
         )
 
     @property
-    def uri_encoded_references(self) -> set[str]:
-        """Get references that need URI encoding (for IRI generation)."""
-        # Subject and predicate references always need encoding
-        encoded = set.union(
+    def template_extracted_references(self) -> set[str]:
+        """Get references extracted from URI templates (subject, predicate, object template)."""
+        refs = set.union(
             self.subject_references,
             self.predicate_references
         )
-        
-        # Object references need encoding only for templates
         if self.rule["object_map_type"] == RML_TEMPLATE:
-            encoded = encoded.union(self.object_references)
-            
-        return encoded
+            refs = refs.union(self.object_references)
+        return refs
 
     @property
     def plain_references(self) -> set[str]:
-        """Get references that are plain literals (no URI encoding needed)."""
+        """Get references available directly from object literals."""
         if self.rule["object_map_type"] in (RML_REFERENCE, RML_PARENT_TRIPLES_MAP):
             return set(self.object_references)
         return set()
@@ -74,7 +70,7 @@ class QueryTriple(Triple):
             if (ident := Identifier.generate_plain_identifier(self.rule, str(value))) is not None
         }
 
-    def generate(self, encoded_references: set[str], id_generator: IdGenerator, 
+    def generate(self, id_generator: IdGenerator,
                 codex: Codex, all_mapping_rules: pd.DataFrame) -> str | None:
         """Generate SPARQL triple pattern."""
         subject_reference = codex.get_id(str(self.rule["subject_map_value"]))
@@ -82,7 +78,7 @@ class QueryTriple(Triple):
         object_map_value = str(self.rule["object_map_value"])
         object_map_type = str(self.rule["object_map_type"])
         object_references_template = str(self.rule["object_references_template"])
-        
+
         if object_map_type == RML_CONSTANT:
             object_term_type = self.rule["object_termtype"]
             if object_term_type == RML_IRI:
@@ -96,34 +92,18 @@ class QueryTriple(Triple):
         if object_map_type == RML_REFERENCE:
             object_identifier = Identifier.generate_plain_identifier(self.rule, object_map_value) or object_map_value
             object_reference, already_bound = codex.get_id_and_is_bound(object_identifier)
-            
-            if object_identifier in encoded_references:
-                lines = []
-                plain_object_reference, already_bound = codex.get_id_and_is_bound(
-                    f"{object_identifier}_plain_{id_generator.get_id()}"
-                )
-                if already_bound:
-                    lines.append(f"?{subject_reference} {predicate} ?{plain_object_reference} .")
-                    lines.append(f"BIND(DATATYPE(?{plain_object_reference}) AS ?{object_reference}_datatype)")
-                    lines.append(f"BIND(ENCODE_FOR_URI(STR(?{plain_object_reference})) as ?{object_reference}_encoded)")
-                    lines.append(f"FILTER(!BOUND(?{object_reference}_encoded) || !BOUND(?{plain_object_reference}) || ENCODE_FOR_URI(STR(?{plain_object_reference})) = ?{object_reference}_encoded)")
-                else:
-                    lines.append(f"?{subject_reference} {predicate} ?{plain_object_reference} .")
-                    lines.append(f"BIND(DATATYPE(?{plain_object_reference}) AS ?{object_reference}_datatype)")
-                    lines.append(f"BIND(ENCODE_FOR_URI(STR(?{plain_object_reference})) as ?{object_reference}_encoded)")
-                return "\n".join(lines)
+
+            lines = []
+            temp_object_reference, already_bound = codex.get_id_and_is_bound(
+                f"{object_identifier}_temp_{id_generator.get_id()}"
+            )
+            if already_bound:
+                lines.append(f"?{subject_reference} {predicate} ?{temp_object_reference} .")
+                lines.append(f"BIND(?{temp_object_reference} as ?{object_reference})")
+                lines.append(f"FILTER(!BOUND(?{object_reference}) || !BOUND(?{temp_object_reference})  || ?{temp_object_reference} = ?{object_reference})")
             else:
-                lines = []
-                temp_object_reference, already_bound = codex.get_id_and_is_bound(
-                    f"{object_identifier}_temp_{id_generator.get_id()}"
-                )
-                if already_bound:
-                    lines.append(f"?{subject_reference} {predicate} ?{temp_object_reference} .")
-                    lines.append(f"BIND(?{temp_object_reference} as ?{object_reference})")
-                    lines.append(f"FILTER(!BOUND(?{object_reference}) || !BOUND(?{temp_object_reference})  || ?{temp_object_reference} = ?{object_reference})")
-                else:
-                    lines.append(f"?{subject_reference} {predicate} ?{object_reference} .")
-                return "\n".join(lines)
+                lines.append(f"?{subject_reference} {predicate} ?{object_reference} .")
+            return "\n".join(lines)
             
         elif object_map_type == RML_TEMPLATE:
             object_identifier = Identifier.generate_plain_identifier(self.rule, object_map_value) or object_map_value
@@ -149,14 +129,16 @@ class QueryTriple(Triple):
                 lines.append(f"BIND(STRAFTER(STR(?{current_slice}), '{unescaped_current_pre_string}') as ?{next_slice})")
                 
                 if current_post_string == "":
-                    lines.append(f"BIND(?{next_slice} as ?{object_reference}_encoded)")
+                    if not already_bound:
+                        lines.append(f"BIND(?{next_slice} as ?{object_reference})")
                 else:
                     temp_reference_identifier = f"{object_identifier}_temp_{id_generator.get_id()}"
                     temp_reference = codex.get_id(temp_reference_identifier)
                     lines.append(
                         f"BIND(STRBEFORE(STR(?{next_slice}), '{unescaped_next_pre_string}') AS ?{temp_reference})"
                     )
-                    lines.append(f"BIND(?{temp_reference} as ?{object_reference}_encoded)")
+                    if not already_bound:
+                        lines.append(f"BIND(?{temp_reference} as ?{object_reference})")
 
                 evaluated_template = current_post_string
                 current_slice = next_slice
@@ -184,7 +166,7 @@ class QueryTriple(Triple):
                 child_value = jc["child_value"]
                 parent_value = jc["parent_value"]
                 child_identifier = Identifier.generate_plain_identifier(self.rule, child_value) or child_value
-                child_ref = codex.get_id(child_identifier)
+                child_ref, child_already_bound = codex.get_id_and_is_bound(child_identifier)
 
                 evaluated_template = parent_template
                 current_slice = object_reference
@@ -200,7 +182,8 @@ class QueryTriple(Triple):
 
                     if ref == parent_value:
                         if post_string == "":
-                            lines.append(f"BIND(?{next_slice} as ?{child_ref})")
+                            if not child_already_bound:
+                                lines.append(f"BIND(?{next_slice} as ?{child_ref})")
                         else:
                             next_pre = post_string.split("(", 1)[0]
                             temp_id = f"{child_identifier}_temp_{id_generator.get_id()}"
@@ -208,7 +191,8 @@ class QueryTriple(Triple):
                             lines.append(
                                 f"BIND(STRBEFORE(STR(?{next_slice}), '{next_pre}') AS ?{temp_ref})"
                             )
-                            lines.append(f"BIND(?{temp_ref} as ?{child_ref})")
+                            if not child_already_bound:
+                                lines.append(f"BIND(?{temp_ref} as ?{child_ref})")
                         break
 
                     evaluated_template = post_string
@@ -229,8 +213,8 @@ class SubjectTriple(QueryTriple):
         super().__init__(rule)
 
     @property
-    def uri_encoded_references(self) -> set[str]:
-        """Subject references need URI encoding."""
+    def template_extracted_references(self) -> set[str]:
+        """Subject references are extracted from templates."""
         return self.subject_references
     
     @property
@@ -238,8 +222,8 @@ class SubjectTriple(QueryTriple):
         """Subject triples have no plain references."""
         return set()
 
-    def generate(self, encoded_references: set[str], id_generator: IdGenerator,
-                codex: Codex, all_mapping_rules: pd.DataFrame) -> str | None:
+    def generate(self, id_generator: IdGenerator,
+                codex: Codex, all_mapping_rules: pd.DataFrame) -> str | None:  # pyright: ignore[reportUnusedParameter]
         """Generate SPARQL pattern for subject extraction."""
         subject_map_type = self.rule["subject_map_type"]
         subject_term_type = self.rule["subject_termtype"]
@@ -273,19 +257,21 @@ class SubjectTriple(QueryTriple):
             next_pre_string = current_post_string.split("(", 1)[0]
             ref_str = str(reference)
             reference_identifier = Identifier.generate_plain_identifier(self.rule, ref_str) or ref_str
-            current_reference, _ = codex.get_id_and_is_bound(reference_identifier)
+            current_reference, already_bound = codex.get_id_and_is_bound(reference_identifier)
             next_slice_reference_identifier = f"{subject_map_value}_slice_subject_{id_generator.get_id()}"
             next_slice_reference = codex.get_id(next_slice_reference_identifier)
             lines.append(f"BIND(STRAFTER(STR(?{current_slice_reference}), '{current_pre_string}') as ?{next_slice_reference})")
-            
+
             if current_post_string == "":
-                lines.append(f"BIND(?{next_slice_reference} as ?{current_reference}_encoded)")
+                if not already_bound:
+                    lines.append(f"BIND(?{next_slice_reference} as ?{current_reference})")
             else:
                 reference_placeholder = codex.get_id(f"{reference_identifier}_temp_{id_generator.get_id()}")
                 lines.append(
                     f"BIND(STRBEFORE(STR(?{next_slice_reference}), '{next_pre_string}') AS ?{reference_placeholder})"
                 )
-                lines.append(f"BIND(?{reference_placeholder} as ?{current_reference}_encoded)")
+                if not already_bound:
+                    lines.append(f"BIND(?{reference_placeholder} as ?{current_reference})")
                 
             evaluated_template = current_post_string
             current_slice_reference = next_slice_reference
@@ -311,11 +297,12 @@ class SubjectTriple(QueryTriple):
 
             ref_str = str(reference)
             reference_identifier = Identifier.generate_plain_identifier(self.rule, ref_str) or ref_str
-            current_reference = codex.get_id(reference_identifier)
+            current_reference, already_bound = codex.get_id_and_is_bound(reference_identifier)
 
             unescaped_current_pre_string = current_pre_string.replace('\\', "")
             if current_post_string == "":
-                lines.append(f"BIND(STRAFTER(STR(?{current_slice_reference}), '{unescaped_current_pre_string}') as ?{current_reference}_encoded)")
+                if not already_bound:
+                    lines.append(f"BIND(STRAFTER(STR(?{current_slice_reference}), '{unescaped_current_pre_string}') as ?{current_reference})")
             else:
                 unescaped_next_pre_string = current_post_string.split("(", 1)[0].replace('\\', "")
                 temp_reference_identifier = f"{reference_identifier}_temp_{id_generator.get_id()}"
@@ -323,7 +310,8 @@ class SubjectTriple(QueryTriple):
 
                 lines.append(f"BIND(STRAFTER(STR(?{current_slice_reference}), '{unescaped_current_pre_string}') as ?{next_slice_reference})")
                 lines.append(f"BIND(STRBEFORE(STR(?{next_slice_reference}), '{unescaped_next_pre_string}') AS ?{temp_reference})")
-                lines.append(f"BIND(?{temp_reference} as ?{current_reference}_encoded)")
+                if not already_bound:
+                    lines.append(f"BIND(?{temp_reference} as ?{current_reference})")
                 current_slice_reference = next_slice_reference
 
             evaluated_template = current_post_string
