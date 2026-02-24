@@ -8,7 +8,7 @@ import morph_kgc.config
 import pandas as pd
 from morph_kgc.args_parser import load_config_from_argument
 from morph_kgc.mapping.mapping_parser import retrieve_mappings
-from rdflib import Graph, Namespace
+from rdflib import RDF, Graph, Namespace
 
 from .constants import RML_BLANK_NODE, RML_PARENT_TRIPLES_MAP, RML_REFERENCE, RML_TEMPLATE, TEST_LOG_FOLDER
 from .endpoints import EndpointFactory, RemoteEndpoint, VirtuosoEndpoint
@@ -41,6 +41,26 @@ def check_for_sql_queries(config: morph_kgc.config.Config) -> bool:
         return False
     except Exception as e:
         get_logger().warning(f"Could not parse mapping file to check for SQL queries: {e}")
+        return False
+
+
+def check_for_multiple_subject_maps(config: morph_kgc.config.Config) -> bool:
+    """Check if any TriplesMap has more than one rr:subjectMap (invalid R2RML)."""
+    try:
+        data_source_sections = config.get_data_sources_sections()
+        for section in data_source_sections:
+            mapping_files = config.get_mappings_files(section)
+            for mapping_file in mapping_files:
+                if os.path.exists(mapping_file):
+                    graph = Graph()
+                    graph.parse(mapping_file)
+                    for triples_map in graph.subjects(RDF.type, RR.TriplesMap):
+                        subject_maps = list(graph.objects(triples_map, RR.subjectMap))
+                        if len(subject_maps) > 1:
+                            return True
+        return False
+    except Exception as e:
+        get_logger().warning(f"Could not check for multiple subject maps: {e}")
         return False
 
 
@@ -187,6 +207,10 @@ def inversion(config_file: str | pathlib.Path, test_id: str = None, dest_db_url:
             get_logger().warning("Mapping with missing information. Skipping.")
         return {'__status__': 'mapping_error', '__reason__': 'Mapping with missing object_map information'}
         
+    if check_for_multiple_subject_maps(config):
+        get_logger().warning("Invalid mapping: TriplesMap contains multiple subjectMaps.")
+        return {'__status__': 'mapping_error', '__reason__': 'Invalid mapping: TriplesMap contains multiple subjectMaps'}
+
     if check_for_constant_only_mappings(mappings):
         get_logger().warning("Constant-only mappings detected - cannot retrieve original data from constants.")
         return {'__status__': 'mapping_issue', '__reason__': 'Mappings contain only constants (no column references) - original data cannot be recovered'}

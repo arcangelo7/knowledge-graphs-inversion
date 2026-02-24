@@ -106,6 +106,79 @@ def check_mapping_column_coverage(mapping_content, source_content):
     return mapping_issues
 
 
+TEMPLATE_COLUMN_REGEX = re.compile(r'\{\\?"?\'?([^"\'{}\\]+)\\?"?\'?\}')
+
+
+def parse_mapping_graph(mapping_content):
+    g = Graph()
+    g.parse(data=mapping_content, format='turtle')
+    return g
+
+
+def get_mapped_table_names(mapping_graph):
+    tables = set()
+    for _, _, o in mapping_graph.triples((None, RR.tableName, None)):
+        tables.add(str(o).strip('"'))
+    return tables
+
+
+def find_subject_map_for_table(mapping_graph, table_name):
+    for logical_table in mapping_graph.subjects(RR.tableName, None):
+        tname = str(mapping_graph.value(logical_table, RR.tableName)).strip('"')
+        if tname != table_name:
+            continue
+        triples_map = next(mapping_graph.subjects(RR.logicalTable, logical_table), None)
+        if triples_map is None:
+            continue
+        for subject_map in mapping_graph.objects(triples_map, RR.subjectMap):
+            return subject_map
+    return None
+
+
+def check_null_in_subject_template(mapping_graph, source_df, table_name):
+    subject_map = find_subject_map_for_table(mapping_graph, table_name)
+    if subject_map is None:
+        return None, False
+    template = mapping_graph.value(subject_map, RR.template)
+    if template is None:
+        return None, False
+    column_refs = TEMPLATE_COLUMN_REGEX.findall(str(template))
+    for col in column_refs:
+        if col in source_df.columns and source_df[col].isna().any():
+            null_count = int(source_df[col].isna().sum())
+            return (
+                f"{table_name} (MAPPING ISSUE: NULL values in subject template column "
+                f"'{col}' cause {null_count} row(s) to be excluded from RDF)",
+                True
+            )
+    return None, False
+
+
+def check_column_as_iri_subject(mapping_graph, table_name):
+    subject_map = find_subject_map_for_table(mapping_graph, table_name)
+    if subject_map is None:
+        return None, False
+    column = mapping_graph.value(subject_map, RR.column)
+    term_type = mapping_graph.value(subject_map, RR.termType)
+    if column is not None and term_type == RR.IRI:
+        return (
+            f"{table_name} (MAPPING ISSUE: Column '{str(column).strip(chr(34))}' used "
+            f"directly as IRI subject - values may be distorted during RDF round-trip)",
+            True
+        )
+    return None, False
+
+
+def detect_mapping_issue(mapping_graph, source_df, table_name):
+    null_msg, is_null = check_null_in_subject_template(mapping_graph, source_df, table_name)
+    if is_null:
+        return null_msg, True
+    iri_msg, is_iri = check_column_as_iri_subject(mapping_graph, table_name)
+    if is_iri:
+        return iri_msg, True
+    return None, False
+
+
 def sanitize_data(data):
     if isinstance(data, dict):
         return {k: sanitize_data(v) for k, v in data.items()}
@@ -559,12 +632,30 @@ def compare_databases(db_connection, source_system, dest_system, mapping_content
         elif not source_content or not dest_content:
             return False, "One database is empty while the other is not", source_content, dest_content, None
 
-        if set(source_content.keys()) != set(dest_content.keys()):
-            return False, "Tables in source and destination databases do not match", source_content, dest_content, None
+        mapping_graph = parse_mapping_graph(mapping_content) if mapping_content else None
+
+        source_tables = set(source_content.keys())
+        dest_tables = set(dest_content.keys())
+        missing_from_dest = source_tables - dest_tables
 
         mismatched_tables = []
         has_mapping_issues = False
-        for table_name in source_content.keys():
+
+        if missing_from_dest:
+            if mapping_graph:
+                mapped_tables = get_mapped_table_names(mapping_graph)
+                unmapped_tables = {t for t in missing_from_dest if t not in mapped_tables}
+                if unmapped_tables == missing_from_dest:
+                    unmapped_str = ", ".join(sorted(unmapped_tables))
+                    mismatched_tables.append(f"MAPPING ISSUE: Unmapped tables: {unmapped_str}")
+                    has_mapping_issues = True
+                else:
+                    return False, "Tables in source and destination databases do not match", source_content, dest_content, None
+            else:
+                return False, "Tables in source and destination databases do not match", source_content, dest_content, None
+
+        common_tables = source_tables & dest_tables
+        for table_name in common_tables:
             source_table = source_content[table_name]
             dest_table = dest_content[table_name]
             
@@ -593,17 +684,23 @@ def compare_databases(db_connection, source_system, dest_system, mapping_content
             dest_df = dest_df.sort_values(by=dest_df.columns.tolist()).reset_index(drop=True)
 
             if not source_df.equals(dest_df):
-                # Check if this is a duplicate rows issue
+                resolved = False
                 if len(source_df) > len(dest_df):
-                    # Check if there are duplicate rows in source that are missing in destination
-                    duplicate_analysis, is_mapping_issue = analyze_duplicate_loss(source_df, dest_df, table_name)
+                    duplicate_analysis, is_dup_issue = analyze_duplicate_loss(source_df, dest_df, table_name)
                     if duplicate_analysis:
                         mismatched_tables.append(duplicate_analysis)
-                        if is_mapping_issue:
+                        if is_dup_issue:
                             has_mapping_issues = True
-                    else:
-                        mismatched_tables.append(f"{table_name} (data mismatch)")
-                else:
+                        resolved = True
+
+                if not resolved and mapping_graph:
+                    issue_msg, is_issue = detect_mapping_issue(mapping_graph, source_df, table_name)
+                    if is_issue:
+                        mismatched_tables.append(issue_msg)
+                        has_mapping_issues = True
+                        resolved = True
+
+                if not resolved:
                     mismatched_tables.append(f"{table_name} (data mismatch)")
         
         if mismatched_tables:
