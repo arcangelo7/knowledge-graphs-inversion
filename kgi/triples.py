@@ -247,42 +247,63 @@ class SubjectTriple(QueryTriple):
         return None
     
     def _generate_iri_template(self, codex: Codex, id_generator: IdGenerator):
-        """Generate SPARQL for IRI template."""
+        """Generate SPARQL for IRI template.
+
+        Example: template http://example.com/Student/{ID}/{Name}
+        with references_template http://example.com/Student/([^/]*)/([^/]*)
+        """
         subject_map_value = str(self.rule["subject_map_value"])
         subject_references_template = str(self.rule["subject_references_template"])
+        # Subject variable: ?Name_uri
         subject_reference = codex.get_id(subject_map_value)
 
         lines = []
+        # FILTER(REGEX(STR(?Name_uri), 'http://example.com/Student/([^/]*)/([^/]*)'))
         lines.append(f"FILTER(REGEX(STR(?{subject_reference}), '{subject_references_template}'))")
 
+        # evaluated_template: http://example.com/Student/([^/]*)/([^/]*)
         evaluated_template = subject_references_template
         current_slice_reference = subject_reference
 
         for reference in self.rule["subject_references"]:
+            # Iteration 1 (ID): pre=http://example.com/Student/ post=/([^/]*)
+            # Iteration 2 (Name): pre=/ post=""
             current_pre_string = evaluated_template.split("(", 1)[0]
             current_post_string = evaluated_template.split(")", 1)[1]
             next_pre_string = current_post_string.split("(", 1)[0]
             ref_str = str(reference)
             reference_identifier = Identifier.generate_plain_identifier(self.rule, ref_str) or ref_str
             current_reference, already_bound = codex.get_id_and_is_bound(reference_identifier)
-            next_slice_reference_identifier = f"{subject_map_value}_slice_subject_{id_generator.get_id()}"
-            next_slice_reference = codex.get_id(next_slice_reference_identifier)
-            lines.append(f"BIND(STRAFTER(STR(?{current_slice_reference}), '{current_pre_string}') as ?{next_slice_reference})")
 
             if current_post_string == "":
-                if not already_bound:
-                    lines.append(f"BIND(?{next_slice_reference} as ?{current_reference})")
-            else:
-                reference_placeholder = codex.get_id(f"{reference_identifier}_temp_{id_generator.get_id()}")
-                lines.append(
-                    f"BIND(STRBEFORE(STR(?{next_slice_reference}), '{next_pre_string}') AS ?{reference_placeholder})"
+                # Last reference (Name): STRAFTER gives the final value directly
+                # ?Name_uri_slice → "10/Venus" ; STRAFTER("10/Venus", "/") → "Venus"
+                target = current_reference if not already_bound else codex.get_id(
+                    f"{subject_map_value}_slice_subject_{id_generator.get_id()}"
                 )
-                if not already_bound:
-                    lines.append(f"BIND(?{reference_placeholder} as ?{current_reference})")
-                
+                # BIND(STRAFTER(STR(?Name_uri_slice), '/') as ?Name)
+                lines.append(f"BIND(STRAFTER(STR(?{current_slice_reference}), '{current_pre_string}') as ?{target})")
+            else:
+                # Intermediate reference (ID): need slice for next iteration
+                # ?Name_uri → "http://example.com/Student/10/Venus"
+                # STRAFTER → "10/Venus"
+                next_slice_reference = codex.get_id(
+                    f"{subject_map_value}_slice_subject_{id_generator.get_id()}"
+                )
+                # BIND(STRAFTER(STR(?Name_uri), 'http://example.com/Student/') as ?Name_uri_slice)
+                lines.append(f"BIND(STRAFTER(STR(?{current_slice_reference}), '{current_pre_string}') as ?{next_slice_reference})")
+                # STRBEFORE("10/Venus", "/") → "10"
+                target = current_reference if not already_bound else codex.get_id(
+                    f"{reference_identifier}_temp_{id_generator.get_id()}"
+                )
+                # BIND(STRBEFORE(STR(?Name_uri_slice), '/') AS ?ID)
+                lines.append(
+                    f"BIND(STRBEFORE(STR(?{next_slice_reference}), '{next_pre_string}') AS ?{target})"
+                )
+                current_slice_reference = next_slice_reference
+
             evaluated_template = current_post_string
-            current_slice_reference = next_slice_reference
-            
+
         return "\n".join(lines)
 
     def _generate_blank_node_template(self, codex: Codex, id_generator: IdGenerator):

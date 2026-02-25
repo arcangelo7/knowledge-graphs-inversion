@@ -103,10 +103,15 @@ class Codex:
     
     def _extract_base_from_url(self, url: str) -> str:
         """Extract meaningful base name from a URL or template."""
+        # http://example.com/Student/{ID}/{Name} → [..., 'Student', '{ID}', '{Name}']
         parts = url.rstrip('/').split('/')
         base = parts[-1] if parts[-1] else parts[-2] if len(parts) > 1 else 'resource'
-        # Remove fragment identifier and template brackets
-        return base.split('#')[-1].strip('{}')
+        # {"Name"} → Name
+        base = base.split('#')[-1].strip('{}"')
+        # Template URL: Name → Name_uri (preserves Name for the SELECT variable)
+        if '{' in url:
+            base = f"{base}_uri"
+        return base
     
     def _generate_descriptive_id(self, key: str) -> str:
         """Generate a descriptive variable name from a key.
