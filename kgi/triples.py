@@ -225,9 +225,16 @@ class SubjectTriple(QueryTriple):
     def generate(self, id_generator: IdGenerator,
                 codex: Codex, all_mapping_rules: pd.DataFrame) -> str | None:  # pyright: ignore[reportUnusedParameter]
         """Generate SPARQL pattern for subject extraction."""
+        all_already_bound = all(
+            (Identifier.generate_plain_identifier(self.rule, str(ref)) or str(ref)) in codex.codex
+            for ref in self.rule["subject_references"]
+        )
+        if all_already_bound:
+            return None
+
         subject_map_type = self.rule["subject_map_type"]
         subject_term_type = self.rule["subject_termtype"]
-        
+
         if subject_map_type == RML_TEMPLATE:
             if subject_term_type == RML_IRI:
                 return self._generate_iri_template(codex, id_generator)
