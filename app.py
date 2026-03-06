@@ -154,28 +154,10 @@ def check_null_in_subject_template(mapping_graph, source_df, table_name):
     return None, False
 
 
-def check_column_as_iri_subject(mapping_graph, table_name):
-    subject_map = find_subject_map_for_table(mapping_graph, table_name)
-    if subject_map is None:
-        return None, False
-    column = mapping_graph.value(subject_map, RR.column)
-    term_type = mapping_graph.value(subject_map, RR.termType)
-    if column is not None and term_type == RR.IRI:
-        return (
-            f"{table_name} (MAPPING ISSUE: Column '{str(column).strip(chr(34))}' used "
-            f"directly as IRI subject - values may be distorted during RDF round-trip)",
-            True
-        )
-    return None, False
-
-
 def detect_mapping_issue(mapping_graph, source_df, table_name):
     null_msg, is_null = check_null_in_subject_template(mapping_graph, source_df, table_name)
     if is_null:
         return null_msg, True
-    iri_msg, is_iri = check_column_as_iri_subject(mapping_graph, table_name)
-    if is_iri:
-        return iri_msg, True
     return None, False
 
 

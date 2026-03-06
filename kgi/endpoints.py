@@ -272,8 +272,8 @@ class LocalSparqlGraphStore(Endpoint):
             if line.endswith('.'):
                 line = line[:-1].strip()
 
-            # Regex pattern for N-Triples
-            pattern = r'(\S+)\s+(\S+)\s+(.*)'
+            # Regex pattern for N-Triples (angle-bracket aware to handle IRIs with spaces)
+            pattern = r'(<[^>]*>|_:\S+)\s+(<[^>]*>)\s+(.*)'
             match = re.match(pattern, line)
             if not match:
                 continue

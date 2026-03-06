@@ -214,12 +214,16 @@ class SubjectTriple(QueryTriple):
 
     @property
     def template_extracted_references(self) -> set[str]:
-        """Subject references are extracted from templates."""
+        """Subject references extracted from templates (not column references)."""
+        if self.rule["subject_map_type"] == RML_REFERENCE:
+            return set()
         return self.subject_references
-    
+
     @property
     def plain_references(self) -> set[str]:
-        """Subject triples have no plain references."""
+        """Column-reference subjects are plain references (no URL decoding)."""
+        if self.rule["subject_map_type"] == RML_REFERENCE:
+            return self.subject_references
         return set()
 
     def generate(self, id_generator: IdGenerator,
@@ -235,12 +239,17 @@ class SubjectTriple(QueryTriple):
         subject_map_type = self.rule["subject_map_type"]
         subject_term_type = self.rule["subject_termtype"]
 
+        if subject_map_type == RML_REFERENCE:
+            # Column-reference subjects: the subject variable already binds
+            # to the IRI which IS the column value. No extraction needed.
+            return None
+
         if subject_map_type == RML_TEMPLATE:
             if subject_term_type == RML_IRI:
                 return self._generate_iri_template(codex, id_generator)
             elif subject_term_type == RML_BLANK_NODE:
                 return self._generate_blank_node_template(codex, id_generator)
-        
+
         logging.getLogger("kgi").error(
             f"Unsupported subject map type: {subject_map_type} or subject term type: {subject_term_type}"
         )
