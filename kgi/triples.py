@@ -7,10 +7,62 @@ import pandas as pd
 
 from .base import Triple
 from .constants import (
-    RML_BLANK_NODE, RML_CONSTANT, RML_IRI, RML_LITERAL, 
+    RML_BLANK_NODE, RML_CONSTANT, RML_IRI, RML_LITERAL,
     RML_PARENT_TRIPLES_MAP, RML_REFERENCE, RML_TEMPLATE
 )
 from .utils import Codex, IdGenerator, Identifier
+
+
+def extract_from_iri_template(
+    template_value: str,
+    references_template: str,
+    references: list[str],
+    rule: pd.Series,
+    codex: Codex,
+    id_generator: IdGenerator,
+    slice_label: str,
+) -> str:
+    """Generate SPARQL FILTER + BIND patterns to extract column values from a template IRI.
+
+    Shared by SubjectTriple (subject templates) and graph map extraction.
+    """
+    source_var = codex.get_id(template_value)
+
+    lines = []
+    lines.append(f"FILTER(REGEX(STR(?{source_var}), '{references_template}'))")
+
+    evaluated_template = references_template
+    current_slice = source_var
+
+    for reference in references:
+        current_pre_string = evaluated_template.split("(", 1)[0]
+        current_post_string = evaluated_template.split(")", 1)[1]
+        ref_str = str(reference)
+        reference_identifier = Identifier.generate_plain_identifier(rule, ref_str) or ref_str
+        current_reference, already_bound = codex.get_id_and_is_bound(reference_identifier)
+
+        if current_post_string == "":
+            target = current_reference if not already_bound else codex.get_id(
+                f"{template_value}_slice_{slice_label}_{id_generator.get_id()}"
+            )
+            lines.append(f"BIND(STRAFTER(STR(?{current_slice}), '{current_pre_string}') as ?{target})")
+        else:
+            next_pre_string = current_post_string.split("(", 1)[0]
+            next_slice = codex.get_id(
+                f"{template_value}_slice_{slice_label}_{id_generator.get_id()}"
+            )
+            lines.append(f"BIND(STRAFTER(STR(?{current_slice}), '{current_pre_string}') as ?{next_slice})")
+            target = current_reference if not already_bound else codex.get_id(
+                f"{reference_identifier}_temp_{id_generator.get_id()}"
+            )
+            lines.append(
+                f"BIND(STRBEFORE(STR(?{next_slice}), '{next_pre_string}') AS ?{target})"
+            )
+            current_slice = next_slice
+
+        evaluated_template = current_post_string
+
+    return "\n".join(lines)
 
 
 class QueryTriple(Triple):
@@ -25,26 +77,34 @@ class QueryTriple(Triple):
         return set.union(
             self.subject_references,
             self.predicate_references,
-            self.object_references
+            self.object_references,
+            self.graph_references,
         )
 
     @property
     def template_extracted_references(self) -> set[str]:
-        """Get references extracted from URI templates (subject, predicate, object template)."""
+        """Get references extracted from URI templates (subject, predicate, object, graph template)."""
         refs = set.union(
             self.subject_references,
             self.predicate_references
         )
         if self.rule["object_map_type"] == RML_TEMPLATE:
             refs = refs.union(self.object_references)
+        graph_map_type = self.rule.get("graph_map_type")
+        if pd.notna(graph_map_type) and graph_map_type == RML_TEMPLATE:
+            refs = refs.union(self.graph_references)
         return refs
 
     @property
     def plain_references(self) -> set[str]:
         """Get references available directly from object literals."""
+        refs: set[str] = set()
         if self.rule["object_map_type"] in (RML_REFERENCE, RML_PARENT_TRIPLES_MAP):
-            return set(self.object_references)
-        return set()
+            refs = set(self.object_references)
+        graph_map_type = self.rule.get("graph_map_type")
+        if pd.notna(graph_map_type) and graph_map_type == RML_REFERENCE:
+            refs = refs.union(self.graph_references)
+        return refs
 
     @property
     def subject_references(self) -> set[str]:
@@ -67,6 +127,17 @@ class QueryTriple(Triple):
         """Get object references."""
         return {
             ident for value in self.rule["object_references"]
+            if (ident := Identifier.generate_plain_identifier(self.rule, str(value))) is not None
+        }
+
+    @property
+    def graph_references(self) -> set[str]:
+        """Get graph map references."""
+        graph_refs = self.rule.get("graph_references")
+        if graph_refs is None or (isinstance(graph_refs, float) and pd.isna(graph_refs)):
+            return set()
+        return {
+            ident for value in graph_refs
             if (ident := Identifier.generate_plain_identifier(self.rule, str(value))) is not None
         }
 
@@ -256,64 +327,16 @@ class SubjectTriple(QueryTriple):
         return None
     
     def _generate_iri_template(self, codex: Codex, id_generator: IdGenerator):
-        """Generate SPARQL for IRI template.
-
-        Example: template http://example.com/Student/{ID}/{Name}
-        with references_template http://example.com/Student/([^/]*)/([^/]*)
-        """
-        subject_map_value = str(self.rule["subject_map_value"])
-        subject_references_template = str(self.rule["subject_references_template"])
-        # Subject variable: ?Name_uri
-        subject_reference = codex.get_id(subject_map_value)
-
-        lines = []
-        # FILTER(REGEX(STR(?Name_uri), 'http://example.com/Student/([^/]*)/([^/]*)'))
-        lines.append(f"FILTER(REGEX(STR(?{subject_reference}), '{subject_references_template}'))")
-
-        # evaluated_template: http://example.com/Student/([^/]*)/([^/]*)
-        evaluated_template = subject_references_template
-        current_slice_reference = subject_reference
-
-        for reference in self.rule["subject_references"]:
-            # Iteration 1 (ID): pre=http://example.com/Student/ post=/([^/]*)
-            # Iteration 2 (Name): pre=/ post=""
-            current_pre_string = evaluated_template.split("(", 1)[0]
-            current_post_string = evaluated_template.split(")", 1)[1]
-            next_pre_string = current_post_string.split("(", 1)[0]
-            ref_str = str(reference)
-            reference_identifier = Identifier.generate_plain_identifier(self.rule, ref_str) or ref_str
-            current_reference, already_bound = codex.get_id_and_is_bound(reference_identifier)
-
-            if current_post_string == "":
-                # Last reference (Name): STRAFTER gives the final value directly
-                # ?Name_uri_slice → "10/Venus" ; STRAFTER("10/Venus", "/") → "Venus"
-                target = current_reference if not already_bound else codex.get_id(
-                    f"{subject_map_value}_slice_subject_{id_generator.get_id()}"
-                )
-                # BIND(STRAFTER(STR(?Name_uri_slice), '/') as ?Name)
-                lines.append(f"BIND(STRAFTER(STR(?{current_slice_reference}), '{current_pre_string}') as ?{target})")
-            else:
-                # Intermediate reference (ID): need slice for next iteration
-                # ?Name_uri → "http://example.com/Student/10/Venus"
-                # STRAFTER → "10/Venus"
-                next_slice_reference = codex.get_id(
-                    f"{subject_map_value}_slice_subject_{id_generator.get_id()}"
-                )
-                # BIND(STRAFTER(STR(?Name_uri), 'http://example.com/Student/') as ?Name_uri_slice)
-                lines.append(f"BIND(STRAFTER(STR(?{current_slice_reference}), '{current_pre_string}') as ?{next_slice_reference})")
-                # STRBEFORE("10/Venus", "/") → "10"
-                target = current_reference if not already_bound else codex.get_id(
-                    f"{reference_identifier}_temp_{id_generator.get_id()}"
-                )
-                # BIND(STRBEFORE(STR(?Name_uri_slice), '/') AS ?ID)
-                lines.append(
-                    f"BIND(STRBEFORE(STR(?{next_slice_reference}), '{next_pre_string}') AS ?{target})"
-                )
-                current_slice_reference = next_slice_reference
-
-            evaluated_template = current_post_string
-
-        return "\n".join(lines)
+        """Generate SPARQL for IRI template."""
+        return extract_from_iri_template(
+            template_value=str(self.rule["subject_map_value"]),
+            references_template=str(self.rule["subject_references_template"]),
+            references=self.rule["subject_references"],
+            rule=self.rule,
+            codex=codex,
+            id_generator=id_generator,
+            slice_label="subject",
+        )
 
     def _generate_blank_node_template(self, codex: Codex, id_generator: IdGenerator):
         """Generate SPARQL for blank node template."""

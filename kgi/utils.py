@@ -276,6 +276,9 @@ def insert_columns(df: pd.DataFrame, pure=False) -> pd.DataFrame:
     df.insert(_col_pos("object_map_value") + 1, "object_references", _empty_lists())
     df.insert(_col_pos("object_map_value") + 1, "object_references_template", nan_col)
     df.insert(_col_pos("object_references") + 1, "object_reference_count", 0)
+    df.insert(_col_pos("graph_map_value") + 1, "graph_references", _empty_lists())
+    df.insert(_col_pos("graph_map_value") + 1, "graph_references_template", nan_col)
+    df.insert(_col_pos("graph_references") + 1, "graph_reference_count", 0)
 
     # Process each mapping rule to extract references
     for index in df.index:
@@ -353,5 +356,27 @@ def insert_columns(df: pd.DataFrame, pure=False) -> pd.DataFrame:
                     )[0]["child_value"]
                 ]
                 df.at[index, "object_reference_count"] = 1
+
+        # Graph references
+        graph_map_type = df.at[index, "graph_map_type"]
+        if pd.notna(graph_map_type):
+            match graph_map_type:
+                case "http://w3id.org/rml/constant":
+                    df.at[index, "graph_references"] = []
+                    df.at[index, "graph_reference_count"] = 0
+                case "http://w3id.org/rml/reference":
+                    df.at[index, "graph_references"] = [df.at[index, "graph_map_value"]]
+                    df.at[index, "graph_reference_count"] = 1
+                case "http://w3id.org/rml/template":
+                    references_list = re.findall(
+                        REF_TEMPLATE_REGEX, df.at[index, "graph_map_value"]
+                    )
+                    df.at[index, "graph_references"] = references_list
+                    df.at[index, "graph_reference_count"] = len(references_list)
+                    df.at[index, "graph_references_template"] = (
+                        re.sub(
+                            REF_TEMPLATE_REGEX, r"([^/]*)", df.at[index, "graph_map_value"]
+                        )
+                    )
 
     return df

@@ -27,7 +27,7 @@ MORPH_CONFIG = """
     # OUTPUT
     output_file=output.nq
     output_dir=
-    output_format=N-TRIPLES
+    output_format=N-QUADS
     only_printable_characters=no
     safe_percent_encoding=
 

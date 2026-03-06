@@ -8,8 +8,8 @@ import pandas as pd
 
 from .base import Endpoint
 from .constants import RML_BLANK_NODE, RML_CONSTANT, RML_PARENT_TRIPLES_MAP, RML_REFERENCE, RML_TEMPLATE
-from .triples import QueryTriple, SubjectTriple
-from .utils import Codex, IdGenerator, sparql_to_python_type, url_decode
+from .triples import QueryTriple, SubjectTriple, extract_from_iri_template
+from .utils import Codex, IdGenerator, Identifier, sparql_to_python_type, url_decode
 
 
 class Query:
@@ -85,12 +85,76 @@ class Query:
                 if triple_string is not None:
                     triple_strings.append(triple_string)
 
+        graph_info = self._get_exclusive_graph_info()
+        graph_binds = ""
+        if graph_info:
+            graph_var = self.codex.get_id(graph_info["graph_map_value"])
+            graph_binds = self._generate_graph_binds(graph_info, graph_var)
+
         all_vars = [f'?{self.codex.get_id(ref)}' for ref in all_references]
         select_part = "SELECT " + " ".join(all_vars) + " WHERE {"
 
-        generated_query = select_part + "\n".join(triple_strings) + "}"
+        if graph_info:
+            body = f"GRAPH ?{graph_var} {{\n" + "\n".join(triple_strings) + "\n}\n" + graph_binds
+        else:
+            body = "\n".join(triple_strings)
+
+        generated_query = select_part + body + "}"
         self.generated_query = generated_query.replace("\\", "\\\\")
         return self.generated_query
+
+    def _get_exclusive_graph_info(self) -> dict[str, object] | None:
+        """Return graph map info if there are column references exclusive to the graph map."""
+        all_graph_refs: set[str] = set()
+        all_other_refs: set[str] = set()
+        graph_info: dict[str, object] | None = None
+
+        for triple in self.triples:
+            all_other_refs.update(triple.subject_references)
+            all_other_refs.update(triple.predicate_references)
+            all_other_refs.update(triple.object_references)
+
+            g_refs = triple.graph_references
+            if g_refs:
+                all_graph_refs.update(g_refs)
+                if graph_info is None:
+                    graph_info = {
+                        "graph_map_type": triple.rule.get("graph_map_type"),
+                        "graph_map_value": triple.rule.get("graph_map_value"),
+                        "graph_references": triple.rule.get("graph_references", []),
+                        "graph_references_template": triple.rule.get("graph_references_template"),
+                    }
+
+        exclusive = all_graph_refs - all_other_refs
+        if not exclusive or graph_info is None:
+            return None
+
+        graph_info["exclusive_references"] = exclusive
+        return graph_info
+
+    def _generate_graph_binds(self, graph_info: dict[str, object], graph_var: str) -> str:
+        """Generate SPARQL BINDs for extracting column values from graph IRIs."""
+        graph_map_type = str(graph_info["graph_map_type"])
+        rule = self.triples[0].rule
+
+        if graph_map_type == RML_REFERENCE:
+            ref = list(graph_info["exclusive_references"])  # type: ignore[arg-type]
+            ref_id = Identifier.generate_plain_identifier(rule, str(ref[0])) or str(ref[0])
+            ref_var = self.codex.get_id(ref_id)
+            return f"BIND(STR(?{graph_var}) AS ?{ref_var})\n"
+
+        if graph_map_type == RML_TEMPLATE:
+            return extract_from_iri_template(
+                template_value=str(graph_info["graph_map_value"]),
+                references_template=str(graph_info["graph_references_template"]),
+                references=list(graph_info["graph_references"]),  # type: ignore[arg-type]
+                rule=rule,
+                codex=self.codex,
+                id_generator=self.id_generator,
+                slice_label="graph",
+            ) + "\n"
+
+        return ""
 
     def decode_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
         """Decode query results DataFrame."""

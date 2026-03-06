@@ -256,29 +256,29 @@ class LocalSparqlGraphStore(Endpoint):
         
         self._graph: Dataset | None = Dataset(default_union=True)
         try:
-            self._parse_ntriples_preserve_bnode_ids(data)
+            self._parse_nquads_preserve_bnode_ids(data)
         except Exception as e:
             logging.getLogger("kgi").error(f"Invalid RDF data: {e}")
             raise
 
-    def _parse_ntriples_preserve_bnode_ids(self, data: str):
-        """Parse N-Triples data while preserving blank node IDs."""
+    def _parse_nquads_preserve_bnode_ids(self, data: str):
+        """Parse N-Triples/N-Quads data while preserving blank node IDs."""
         for line in data.strip().splitlines():
             line = line.strip()
             if not line or line.startswith('#'):
                 continue
-                
+
             # Remove the final dot
             if line.endswith('.'):
                 line = line[:-1].strip()
 
-            # Regex pattern for N-Triples (angle-bracket aware to handle IRIs with spaces)
+            # Regex pattern for N-Triples/N-Quads (angle-bracket aware to handle IRIs with spaces)
             pattern = r'(<[^>]*>|_:\S+)\s+(<[^>]*>)\s+(.*)'
             match = re.match(pattern, line)
             if not match:
                 continue
 
-            s_str, p_str, o_str = match.groups()
+            s_str, p_str, rest = match.groups()
 
             # Parse subject
             if s_str.startswith('<') and s_str.endswith('>'):
@@ -293,6 +293,9 @@ class LocalSparqlGraphStore(Endpoint):
                 p_node = URIRef(p_str[1:-1])
             else:
                 continue
+
+            # Split object and optional graph (N-Quads 4th component)
+            o_str, g_str = self._split_object_and_graph(rest)
 
             # Parse object
             if o_str.startswith('<') and o_str.endswith('>'):
@@ -316,7 +319,38 @@ class LocalSparqlGraphStore(Endpoint):
                 continue
 
             assert self._graph is not None
-            self._graph.add((s_node, p_node, o_node))
+            if g_str:
+                g_node = URIRef(g_str[1:-1])
+                self._graph.add((s_node, p_node, o_node, g_node))
+            else:
+                self._graph.add((s_node, p_node, o_node))
+
+    @staticmethod
+    def _split_object_and_graph(rest: str) -> tuple[str, str | None]:
+        """Split N-Quads rest into object string and optional graph IRI."""
+        rest = rest.strip()
+        if rest.startswith('<'):
+            end = rest.index('>') + 1
+            obj = rest[:end]
+            remaining = rest[end:].strip()
+        elif rest.startswith('_:'):
+            parts = rest.split(None, 1)
+            obj = parts[0]
+            remaining = parts[1].strip() if len(parts) > 1 else ''
+        elif rest.startswith('"'):
+            lit_pattern = r'^("(?:[^"\\]|\\.)*"(?:@[a-z]+(?:-[a-z0-9]+)*)?(?:\^\^<[^>]*>)?)\s*(.*)'
+            lit_match = re.match(lit_pattern, rest)
+            if lit_match:
+                obj = lit_match.group(1)
+                remaining = lit_match.group(2).strip()
+            else:
+                return rest, None
+        else:
+            return rest, None
+
+        if remaining.startswith('<') and remaining.endswith('>'):
+            return obj, remaining
+        return obj, None
 
     def query(self, query: str):
         """Execute a SPARQL query on the local graph."""
