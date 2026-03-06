@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 class Endpoint(ABC):
     """Abstract base class for SPARQL endpoints."""
-    
+
     @abstractmethod
     def query(self, query: str):
         """Execute a SPARQL query and return results."""
@@ -22,10 +22,11 @@ class Endpoint(ABC):
 
 class Triple(ABC):
     """Abstract base class for RDF triples."""
-    
+
     @abstractmethod
-    def generate(self, id_generator: IdGenerator,
-                codex: Codex, all_mapping_rules: pd.DataFrame) -> str | None:
+    def generate(
+        self, id_generator: IdGenerator, codex: Codex, all_mapping_rules: pd.DataFrame
+    ) -> str | None:
         """Generate the string representation of the triple."""
         raise NotImplementedError
 
@@ -53,12 +54,12 @@ class Node(ABC):
     @abstractmethod
     def parent_path(self, value: str) -> None:
         raise NotImplementedError
-        
+
     @abstractmethod
     def to_template(self) -> str:
         """Convert node to template string."""
         raise NotImplementedError
-    
+
     @abstractmethod
     def fill(self, data: pd.DataFrame) -> str:
         """Fill the node with actual data."""
@@ -67,12 +68,12 @@ class Node(ABC):
 
 class Template(ABC):
     """Abstract base class for data templates."""
-    
+
     @abstractmethod
     def create_template(self) -> str:
         """Create a template structure."""
         raise NotImplementedError
-    
+
     @abstractmethod
     def fill_data(self, data: pd.DataFrame, source_name: str) -> str:
         """Fill template with data."""

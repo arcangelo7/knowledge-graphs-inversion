@@ -25,14 +25,6 @@ dependencies = [
     "matplotlib>=3.10.7",
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=7.0.0",
-    "black>=22.0.0",
-    "isort>=5.0.0",
-    "flake8>=5.0.0"
-]
-
 [tool.semantic_release]
 version_toml = ["pyproject.toml:project.version"]
 branch = "master"
@@ -72,4 +64,6 @@ keep_trailing_newline = true
 [dependency-groups]
 dev = [
     "pyright>=1.1.408",
+    "pytest>=9.0.2",
+    "ruff>=0.15.5",
 ]
