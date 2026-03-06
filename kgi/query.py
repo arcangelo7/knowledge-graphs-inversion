@@ -87,14 +87,15 @@ class Query:
 
         graph_info = self._get_exclusive_graph_info()
         graph_binds = ""
+        graph_var: str | None = None
         if graph_info:
-            graph_var = self.codex.get_id(graph_info["graph_map_value"])
+            graph_var = self.codex.get_id(str(graph_info["graph_map_value"]))
             graph_binds = self._generate_graph_binds(graph_info, graph_var)
 
         all_vars = [f'?{self.codex.get_id(ref)}' for ref in all_references]
         select_part = "SELECT " + " ".join(all_vars) + " WHERE {"
 
-        if graph_info:
+        if graph_var is not None:
             body = f"GRAPH ?{graph_var} {{\n" + "\n".join(triple_strings) + "\n}\n" + graph_binds
         else:
             body = "\n".join(triple_strings)

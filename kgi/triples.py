@@ -91,7 +91,7 @@ class QueryTriple(Triple):
         if self.rule["object_map_type"] == RML_TEMPLATE:
             refs = refs.union(self.object_references)
         graph_map_type = self.rule.get("graph_map_type")
-        if pd.notna(graph_map_type) and graph_map_type == RML_TEMPLATE:
+        if isinstance(graph_map_type, str) and graph_map_type == RML_TEMPLATE:
             refs = refs.union(self.graph_references)
         return refs
 
@@ -102,7 +102,7 @@ class QueryTriple(Triple):
         if self.rule["object_map_type"] in (RML_REFERENCE, RML_PARENT_TRIPLES_MAP):
             refs = set(self.object_references)
         graph_map_type = self.rule.get("graph_map_type")
-        if pd.notna(graph_map_type) and graph_map_type == RML_REFERENCE:
+        if isinstance(graph_map_type, str) and graph_map_type == RML_REFERENCE:
             refs = refs.union(self.graph_references)
         return refs
 
@@ -134,7 +134,7 @@ class QueryTriple(Triple):
     def graph_references(self) -> set[str]:
         """Get graph map references."""
         graph_refs = self.rule.get("graph_references")
-        if graph_refs is None or (isinstance(graph_refs, float) and pd.isna(graph_refs)):
+        if not isinstance(graph_refs, list):
             return set()
         return {
             ident for value in graph_refs
@@ -331,7 +331,7 @@ class SubjectTriple(QueryTriple):
         return extract_from_iri_template(
             template_value=str(self.rule["subject_map_value"]),
             references_template=str(self.rule["subject_references_template"]),
-            references=self.rule["subject_references"],
+            references=list(self.rule["subject_references"]),
             rule=self.rule,
             codex=codex,
             id_generator=id_generator,

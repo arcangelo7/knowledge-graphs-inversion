@@ -68,3 +68,8 @@ exclude_commit_patterns = []
 
 [tool.semantic_release.changelog.environment]
 keep_trailing_newline = true
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.408",
+]

@@ -321,7 +321,7 @@ class LocalSparqlGraphStore(Endpoint):
             assert self._graph is not None
             if g_str:
                 g_node = URIRef(g_str[1:-1])
-                self._graph.add((s_node, p_node, o_node, g_node))
+                self._graph.graph(g_node).add((s_node, p_node, o_node))
             else:
                 self._graph.add((s_node, p_node, o_node))
 
