@@ -253,7 +253,7 @@ def inversion(
             "Constant-only mappings detected - cannot retrieve original data from constants."
         )
         return {
-            "__status__": "mapping_issue",
+            "__status__": "non_invertible",
             "__reason__": "Mappings contain only constants (no column references) - original data cannot be recovered",
         }
 

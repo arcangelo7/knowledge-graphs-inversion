@@ -67,14 +67,14 @@ def extract_columns_from_mapping(mapping_content: str) -> set[str]:
 
 def check_mapping_column_coverage(mapping_content: str, source_content: dict[str, dict[str, list[str]]]) -> list[str]:
     mapped_columns = extract_columns_from_mapping(mapping_content)
-    mapping_issues = []
+    invertibility_issues = []
     for table_name, table_data in source_content.items():
         table_columns = set(table_data['columns'])
         missing_columns = table_columns - mapped_columns
         if missing_columns:
             missing_str = ", ".join(sorted(missing_columns))
-            mapping_issues.append(f"Table '{table_name}' has unmapped columns: {missing_str}")
-    return mapping_issues
+            invertibility_issues.append(f"Table '{table_name}' has unmapped columns: {missing_str}")
+    return invertibility_issues
 
 
 TEMPLATE_COLUMN_REGEX = re.compile(r'\{\\?"?\'?([^"\'{}\\]+)\\?"?\'?\}')
@@ -121,14 +121,14 @@ def check_null_in_subject_template(mapping_graph: Graph, source_df: pd.DataFrame
         if col in source_df.columns and bool(source_df[col].isna().any()):
             null_count = int(source_df[col].isna().sum())
             return (
-                f"{table_name} (MAPPING ISSUE: NULL values in subject template column "
+                f"{table_name} (NON-INVERTIBLE: NULL values in subject template column "
                 f"'{col}' cause {null_count} row(s) to be excluded from RDF)",
                 True
             )
     return None, False
 
 
-def detect_mapping_issue(mapping_graph: Graph, source_df: pd.DataFrame, table_name: str):
+def detect_non_invertible(mapping_graph: Graph, source_df: pd.DataFrame, table_name: str):
     null_msg, is_null = check_null_in_subject_template(mapping_graph, source_df, table_name)
     if is_null:
         return null_msg, True
@@ -296,11 +296,11 @@ def run_single_test(test_id: str, database_system: str, suite: TestSuite) -> dic
             source_content = None
             dest_content = None
             comparison_status = None
-        elif inversion_status == 'mapping_issue':
+        elif inversion_status == 'non_invertible':
             databases_equal, _, source_content, dest_content, _ = compare_databases(db_connection, database_system, DEST_DB_SYSTEM, mapping_content)
             databases_equal = None
-            comparison_message = f"Bad mapping detected: {inversion_reason}"
-            comparison_status = 'mapping_issue'
+            comparison_message = f"Non-invertible mapping detected: {inversion_reason}"
+            comparison_status = 'non_invertible'
         elif inversion_status == 'mapping_error':
             databases_equal, _, source_content, dest_content, _ = compare_databases(db_connection, database_system, DEST_DB_SYSTEM, mapping_content)
             databases_equal = None
@@ -385,7 +385,7 @@ def process_results(
             'sparql_query': formatted_sparql_queries,
             'inversion_query': formatted_inversion_result,
             'inversion_success': ('not_supported' if inversion_status == 'not_supported' else
-                                'mapping_issue' if comparison_status == 'mapping_issue' else
+                                'non_invertible' if comparison_status == 'non_invertible' else
                                 'mapping_error' if comparison_status == 'mapping_error' else databases_equal),
             'tables_equal': databases_equal,
             'comparison_message': comparison_message,
@@ -431,7 +431,7 @@ def analyze_duplicate_loss(
         if duplicate_rows:
             duplicate_info = "; ".join([f"Row {row} appears {src_cnt} times in source but {dst_cnt} times in destination"
                                        for src_cnt, dst_cnt, row in duplicate_rows])
-            message = (f"{table_name} (MAPPING ISSUE: Duplicate rows lost during inversion - {duplicate_info}. "
+            message = (f"{table_name} (NON-INVERTIBLE: Duplicate rows lost during inversion - {duplicate_info}. "
                        "Consider adding unique identifiers to your mapping template to preserve row distinctness)")
             return message, True
 
@@ -453,7 +453,7 @@ def generate_test_report(
         passed_tests = 0
         failed_tests = 0
         not_supported_tests = 0
-        mapping_issue_tests = 0
+        non_invertible_tests = 0
         mapping_error_tests = 0
         error_tests = 0
 
@@ -476,9 +476,9 @@ def generate_test_report(
                 if inversion_success == 'not_supported':
                     not_supported_tests += 1
                     status = 'not_supported'
-                elif inversion_success == 'mapping_issue':
-                    mapping_issue_tests += 1
-                    status = 'mapping_issue'
+                elif inversion_success == 'non_invertible':
+                    non_invertible_tests += 1
+                    status = 'non_invertible'
                 elif inversion_success == 'mapping_error':
                     mapping_error_tests += 1
                     status = 'mapping_error'
@@ -515,14 +515,14 @@ def generate_test_report(
                 'passed': passed_tests,
                 'failed': failed_tests,
                 'not_supported': not_supported_tests,
-                'mapping_issues': mapping_issue_tests,
+                'non_invertible': non_invertible_tests,
                 'mapping_errors': mapping_error_tests,
                 'errors': error_tests,
                 'percentages': {
                     'passed': pct(passed_tests),
                     'failed': pct(failed_tests),
                     'not_supported': pct(not_supported_tests),
-                    'mapping_issues': pct(mapping_issue_tests),
+                    'non_invertible': pct(non_invertible_tests),
                     'mapping_errors': pct(mapping_error_tests),
                     'errors': pct(error_tests),
                 }
@@ -549,13 +549,13 @@ def generate_test_report(
             f.write(f"| Passed | {passed_tests} | {pct(passed_tests)}% |\n")
             f.write(f"| Failed | {failed_tests} | {pct(failed_tests)}% |\n")
             f.write(f"| Not supported | {not_supported_tests} | {pct(not_supported_tests)}% |\n")
-            f.write(f"| Mapping issues | {mapping_issue_tests} | {pct(mapping_issue_tests)}% |\n")
+            f.write(f"| Non-invertible | {non_invertible_tests} | {pct(non_invertible_tests)}% |\n")
             f.write(f"| Mapping errors | {mapping_error_tests} | {pct(mapping_error_tests)}% |\n")
             f.write(f"| Execution errors | {error_tests} | {pct(error_tests)}% |\n")
 
             f.write("\n## Test details\n\n")
 
-            for status in ['passed', 'failed', 'not_supported', 'mapping_issue', 'mapping_error', 'error']:
+            for status in ['passed', 'failed', 'not_supported', 'non_invertible', 'mapping_error', 'error']:
                 status_tests = [t for t in test_details if t['status'] == status]
                 if status_tests:
                     status_label = status.replace('_', ' ').title()
@@ -565,7 +565,7 @@ def generate_test_report(
                         if test.get('purpose'):
                             purpose_text = test['purpose']
                             f.write(f": {purpose_text[:100]}..." if len(purpose_text) > 100 else f": {purpose_text}")
-                        if test.get('comparison_message') and status in ['failed', 'mapping_issue', 'mapping_error']:
+                        if test.get('comparison_message') and status in ['failed', 'non_invertible', 'mapping_error']:
                             comp_msg = test['comparison_message']
                             f.write(f"\n  - {comp_msg[:200]}..." if len(comp_msg) > 200 else f"\n  - {comp_msg}")
                         f.write("\n")
@@ -597,7 +597,7 @@ def compare_databases(
         missing_from_dest = source_tables - dest_tables
 
         mismatched_tables = []
-        has_mapping_issues = False
+        has_invertibility_issues = False
 
         if missing_from_dest:
             if mapping_graph:
@@ -605,8 +605,8 @@ def compare_databases(
                 unmapped_tables = {t for t in missing_from_dest if t not in mapped_tables}
                 if unmapped_tables == missing_from_dest:
                     unmapped_str = ", ".join(sorted(unmapped_tables))
-                    mismatched_tables.append(f"MAPPING ISSUE: Unmapped tables: {unmapped_str}")
-                    has_mapping_issues = True
+                    mismatched_tables.append(f"NON-INVERTIBLE: Unmapped tables: {unmapped_str}")
+                    has_invertibility_issues = True
                 else:
                     return False, "Tables in source and destination databases do not match", source_content, dest_content, None
             else:
@@ -643,14 +643,14 @@ def compare_databases(
                     if duplicate_analysis:
                         mismatched_tables.append(duplicate_analysis)
                         if is_dup_issue:
-                            has_mapping_issues = True
+                            has_invertibility_issues = True
                         resolved = True
 
                 if not resolved and mapping_graph:
-                    issue_msg, is_issue = detect_mapping_issue(mapping_graph, source_df, table_name)
+                    issue_msg, is_issue = detect_non_invertible(mapping_graph, source_df, table_name)
                     if is_issue:
                         mismatched_tables.append(issue_msg)
-                        has_mapping_issues = True
+                        has_invertibility_issues = True
                         resolved = True
 
                 if not resolved:
@@ -659,15 +659,15 @@ def compare_databases(
         if mismatched_tables:
             message = f"Mismatched tables: {', '.join(mismatched_tables)}"
 
-            if mapping_content and not has_mapping_issues:
-                mapping_issues = check_mapping_column_coverage(mapping_content, source_content)
-                if mapping_issues:
-                    mapping_issue_message = "; ".join(mapping_issues)
-                    message += f" (MAPPING ISSUE: {mapping_issue_message})"
-                    has_mapping_issues = True
+            if mapping_content and not has_invertibility_issues:
+                invertibility_issues = check_mapping_column_coverage(mapping_content, source_content)
+                if invertibility_issues:
+                    invertibility_message = "; ".join(invertibility_issues)
+                    message += f" (NON-INVERTIBLE: {invertibility_message})"
+                    has_invertibility_issues = True
 
-            if has_mapping_issues:
-                return False, message, source_content, dest_content, "mapping_issue"
+            if has_invertibility_issues:
+                return False, message, source_content, dest_content, "non_invertible"
             else:
                 return False, message, source_content, dest_content, None
         else:

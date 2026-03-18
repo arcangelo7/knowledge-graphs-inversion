@@ -157,7 +157,7 @@
         .stat-passed { color: #28a745; }
         .stat-failed { color: #dc3545; }
         .stat-not-supported { color: #ffc107; }
-        .stat-mapping-issue { color: #fd7e14; }
+        .stat-non-invertible { color: #fd7e14; }
         .stat-mapping-error { color: #dc3545; }
         .suite-badge {
             font-size: 0.7em;
@@ -222,8 +222,8 @@
                         <div class="stat-label">Not supported (<span id="stat-not-supported-percent">0</span>%)</div>
                     </div>
                     <div class="stat-item">
-                        <div class="stat-value stat-mapping-issue" id="stat-mapping-issue">0</div>
-                        <div class="stat-label">Mapping issues (<span id="stat-mapping-issue-percent">0</span>%)</div>
+                        <div class="stat-value stat-non-invertible" id="stat-non-invertible">0</div>
+                        <div class="stat-label">Non-invertible (<span id="stat-non-invertible-percent">0</span>%)</div>
                     </div>
                     <div class="stat-item">
                         <div class="stat-value stat-mapping-error" id="stat-mapping-error">0</div>
@@ -323,14 +323,14 @@
             $('#stat-passed').text(testStats.passed);
             $('#stat-failed').text(testStats.failed);
             $('#stat-not-supported').text(testStats.notSupported);
-            $('#stat-mapping-issue').text(testStats.mappingIssue);
+            $('#stat-non-invertible').text(testStats.nonInvertible);
             $('#stat-mapping-error').text(testStats.mappingError);
 
             if (total > 0) {
                 $('#stat-passed-percent').text(Math.round((testStats.passed / total) * 100));
                 $('#stat-failed-percent').text(Math.round((testStats.failed / total) * 100));
                 $('#stat-not-supported-percent').text(Math.round((testStats.notSupported / total) * 100));
-                $('#stat-mapping-issue-percent').text(Math.round((testStats.mappingIssue / total) * 100));
+                $('#stat-non-invertible-percent').text(Math.round((testStats.nonInvertible / total) * 100));
                 $('#stat-mapping-error-percent').text(Math.round((testStats.mappingError / total) * 100));
             }
         }
@@ -341,7 +341,7 @@
                 passed: 0,
                 failed: 0,
                 notSupported: 0,
-                mappingIssue: 0,
+                nonInvertible: 0,
                 mappingError: 0
             };
             updateStats();
@@ -438,8 +438,8 @@
 
                     if (row.inversion_success === 'not_supported') {
                         testStats.notSupported++;
-                    } else if (row.inversion_success === 'mapping_issue') {
-                        testStats.mappingIssue++;
+                    } else if (row.inversion_success === 'non_invertible') {
+                        testStats.nonInvertible++;
                     } else if (row.inversion_success === 'mapping_error') {
                         testStats.mappingError++;
                     } else if (row.inversion_success === true) {
@@ -552,10 +552,10 @@
                 inversionStatusText = 'Not Supported';
                 const tooltipMessage = (row.comparison_message || 'SQL query as logical table is not supported').replace(/'/g, '&apos;');
                 tooltipHtml = ` <i class="bi bi-info-circle info-icon" data-bs-toggle="tooltip" data-bs-placement="top" title="${tooltipMessage}"></i>`;
-            } else if (row.inversion_success === 'mapping_issue') {
+            } else if (row.inversion_success === 'non_invertible') {
                 inversionStatusClass = 'warning';
-                inversionStatusText = 'Mapping Issue';
-                const tooltipMessage = (row.comparison_message || 'Mapping issue detected').replace(/'/g, '&apos;');
+                inversionStatusText = 'Non-invertible';
+                const tooltipMessage = (row.comparison_message || 'Non-invertible mapping detected').replace(/'/g, '&apos;');
                 tooltipHtml = ` <i class="bi bi-info-circle info-icon" data-bs-toggle="tooltip" data-bs-placement="top" title="${tooltipMessage}"></i>`;
             } else if (row.inversion_success === 'mapping_error') {
                 inversionStatusClass = 'warning';
