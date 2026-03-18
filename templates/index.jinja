@@ -168,10 +168,42 @@
         }
         .suite-r2rml { background-color: #e3f2fd; color: #1565c0; }
         .suite-rml { background-color: #f3e5f5; color: #7b1fa2; }
+        .suite-panels {
+            display: flex;
+            gap: 1.5rem;
+        }
+        .suite-panel {
+            flex: 1;
+            min-width: 0;
+        }
+        .suite-panel h3 {
+            font-size: 1.15rem;
+            margin-bottom: 0.5rem;
+        }
+        .suite-panel-stats {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+            padding: 0.5rem 0.75rem;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 0.25rem;
+            margin-bottom: 0.75rem;
+        }
+        .suite-panel-table {
+            max-height: 70vh;
+            overflow-y: auto;
+            overflow-x: auto;
+        }
+        @media (max-width: 991px) {
+            .suite-panels {
+                flex-direction: column;
+            }
+        }
     </style>
 </head>
 <body>
-    <div class="container mt-5">
+    <div class="container-fluid mt-5 px-4">
         <h1 class="mb-4">RML inversion test interface</h1>
         <div class="row">
             <div class="col-md-3">
@@ -291,6 +323,8 @@
             mappingIssue: 0,
             mappingError: 0
         };
+        let suiteStats = {};
+        const compactHeaders = ['Test ID', 'Result', 'Expected', 'Actual', 'Mapping', 'SPARQL', 'Inversion Query', 'Inversion Success', 'Comparison'];
 
         function getSelectedSuiteId() {
             return $('#suiteSelect').val();
@@ -399,15 +433,28 @@
             const suiteId = getSelectedSuiteId();
             const suiteParam = suiteId === 'all' ? Object.keys(allTests).join(',') : suiteId;
             const resultsDiv = $('#results');
+            const isDualPanel = suiteId === 'all' && Object.keys(allTests).length > 1;
 
             resultsDiv.children().not('#stats-box').remove();
             $('#stats-box').hide();
 
             const spinnerElement = $('<div id="spinner" class="spinner-container"><div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div></div>');
-            const resultsTable = $('<table id="results-table" class="table table-striped" style="display: none;"><thead><tr id="results-header"></tr></thead><tbody id="results-body"></tbody></table>');
-
             resultsDiv.append(spinnerElement);
-            resultsDiv.append(resultsTable);
+
+            if (isDualPanel) {
+                resetAllSuiteStats();
+                let wrapperHtml = '<div id="dual-panel-wrapper" style="display:none;">';
+                wrapperHtml += '<h2>Test results (All suites)</h2>';
+                wrapperHtml += '<div class="suite-panels">';
+                Object.keys(allTests).forEach(sid => {
+                    wrapperHtml += createSuitePanelHtml(sid);
+                });
+                wrapperHtml += '</div></div>';
+                resultsDiv.append(wrapperHtml);
+            } else {
+                const resultsTable = $('<table id="results-table" class="table table-striped" style="display: none;"><thead><tr id="results-header"></tr></thead><tbody id="results-body"></tbody></table>');
+                resultsDiv.append(resultsTable);
+            }
 
             disableButtons();
 
@@ -419,49 +466,65 @@
 
                 if (spinnerElement.is(":visible")) {
                     spinnerElement.hide();
-                    resetStats();
-                    resultsDiv.children('h2').remove();
-                    const titleSuffix = suiteId === 'all' ? 'All suites' : suiteId.toUpperCase();
-                    resultsDiv.prepend(`<h2>Test results (${titleSuffix}):</h2>`);
-                    $('#stats-box').show();
-                    resultsTable.show();
-                    const resultsHeader = $('#results-header');
-                    if (resultsHeader.is(":empty")) {
-                        updateHeaderRow();
+                    if (isDualPanel) {
+                        $('#dual-panel-wrapper').show();
+                        Object.keys(allTests).forEach(sid => {
+                            const cols = compactHeaders.length;
+                            $(`#panel-body-${sid}`).append(`<tr class="loading-row"><td colspan="${cols}">Loading<span class="loading-dots"></span></td></tr>`);
+                        });
+                    } else {
+                        resetStats();
+                        resultsDiv.children('h2').remove();
+                        const titleSuffix = suiteId === 'all' ? 'All suites' : suiteId.toUpperCase();
+                        resultsDiv.prepend(`<h2>Test results (${titleSuffix}):</h2>`);
+                        $('#stats-box').show();
+                        $('#results-table').show();
+                        if ($('#results-header').is(":empty")) {
+                            updateHeaderRow();
+                        }
+                        addLoadingRow();
                     }
-                    addLoadingRow();
                 }
 
                 if (testResult.results && testResult.results.data && testResult.results.data[0]) {
                     const row = testResult.results.data[0];
-                    testStats.total++;
+                    const sid = testResult.suite_id || Object.keys(allTests)[0];
 
-                    if (row.inversion_success === 'not_supported') {
-                        testStats.notSupported++;
-                    } else if (row.inversion_success === 'non_invertible') {
-                        testStats.nonInvertible++;
-                    } else if (row.inversion_success === 'mapping_error') {
-                        testStats.mappingError++;
-                    } else if (row.inversion_success === true) {
-                        testStats.passed++;
+                    if (isDualPanel) {
+                        trackSuiteStat(sid, row);
+                        updateSuiteStatsDisplay(sid);
+                        const rowHtml = generateCompactRow(testResult);
+                        const newRow = $(rowHtml);
+                        const loadingRow = $(`#panel-body-${sid} .loading-row`);
+                        if (loadingRow.length) loadingRow.before(newRow);
+                        else $(`#panel-body-${sid}`).append(newRow);
+                        initializeTooltips(newRow[0]);
+                        if (suiteStats[sid].total >= allTests[sid].length) {
+                            $(`#panel-body-${sid} .loading-row`).remove();
+                        }
                     } else {
-                        testStats.failed++;
+                        testStats.total++;
+                        const status = classifyInversionStatus(row.inversion_success);
+                        testStats[status.category]++;
+                        updateStats();
+
+                        const rowHtml = generateResultRow(testResult);
+                        const newRow = $(rowHtml);
+                        $('#results-body .loading-row').before(newRow);
+                        initializeTooltips(newRow[0]);
                     }
-
-                    updateStats();
                 }
-
-                const rowHtml = generateResultRow(testResult);
-                const newRow = $(rowHtml);
-                $('#results-body .loading-row').before(newRow);
-                initializeTooltips(newRow[0]);
             };
 
             eventSource.onerror = function(event) {
                 console.error('EventSource failed:', event);
                 eventSource.close();
                 resultsDiv.append('<p class="text-danger">Error: Failed to receive all test results</p>');
-                removeLoadingRow();
+                if (isDualPanel) {
+                    Object.keys(allTests).forEach(sid => $(`#panel-body-${sid} .loading-row`).remove());
+                } else {
+                    removeLoadingRow();
+                }
             };
 
             eventSource.onopen = function(event) {
@@ -472,7 +535,11 @@
                 console.log('All tests completed');
                 eventSource.close();
                 enableButtons();
-                removeLoadingRow();
+                if (isDualPanel) {
+                    Object.keys(allTests).forEach(sid => $(`#panel-body-${sid} .loading-row`).remove());
+                } else {
+                    removeLoadingRow();
+                }
             }, false);
         }
 
@@ -544,29 +611,9 @@
             rowHtml += `<td><button onclick="showMapping('${row.testid}')">View</button></td>`;
             rowHtml += `<td><button onclick="showSparqlQuery('${row.testid}')">View</button></td>`;
             rowHtml += `<td><button onclick="showInversionQuery('${row.testid}')">View</button></td>`;
-            let inversionStatusClass = 'failed';
-            let inversionStatusText = 'Failure';
-            let tooltipHtml = '';
-            if (row.inversion_success === 'not_supported') {
-                inversionStatusClass = 'warning';
-                inversionStatusText = 'Not Supported';
-                const tooltipMessage = (row.comparison_message || 'SQL query as logical table is not supported').replace(/'/g, '&apos;');
-                tooltipHtml = ` <i class="bi bi-info-circle info-icon" data-bs-toggle="tooltip" data-bs-placement="top" title="${tooltipMessage}"></i>`;
-            } else if (row.inversion_success === 'non_invertible') {
-                inversionStatusClass = 'warning';
-                inversionStatusText = 'Non-invertible';
-                const tooltipMessage = (row.comparison_message || 'Non-invertible mapping detected').replace(/'/g, '&apos;');
-                tooltipHtml = ` <i class="bi bi-info-circle info-icon" data-bs-toggle="tooltip" data-bs-placement="top" title="${tooltipMessage}"></i>`;
-            } else if (row.inversion_success === 'mapping_error') {
-                inversionStatusClass = 'warning';
-                inversionStatusText = 'Mapping Error';
-                const tooltipMessage = (row.comparison_message || 'Mapping error detected').replace(/'/g, '&apos;');
-                tooltipHtml = ` <i class="bi bi-info-circle info-icon" data-bs-toggle="tooltip" data-bs-placement="top" title="${tooltipMessage}"></i>`;
-            } else if (row.inversion_success === true) {
-                inversionStatusClass = 'passed';
-                inversionStatusText = 'Success';
-            }
-            rowHtml += `<td class="result-${inversionStatusClass}">${inversionStatusText}${tooltipHtml}</td>`;
+            const invStatus = classifyInversionStatus(row.inversion_success, row.comparison_message);
+            const tooltipHtml = invStatus.tooltip ? ` <i class="bi bi-info-circle info-icon" data-bs-toggle="tooltip" data-bs-placement="top" title="${invStatus.tooltip}"></i>` : '';
+            rowHtml += `<td class="result-${invStatus.cls}">${invStatus.text}${tooltipHtml}</td>`;
             rowHtml += `<td><button onclick="showTableComparison('${row.testid}')">View</button></td>`;
             rowHtml += '</tr>';
             return rowHtml;
@@ -620,6 +667,84 @@
                 .map(header => `<th>${header}</th>`)
                 .join('');
             $('#results-header').html(headerHtml);
+        }
+
+        function classifyInversionStatus(inversionSuccess, comparisonMessage) {
+            if (inversionSuccess === 'not_supported') return { cls: 'warning', text: 'Not Supported', category: 'notSupported', tooltip: (comparisonMessage || 'Not supported').replace(/'/g, '&apos;') };
+            if (inversionSuccess === 'non_invertible') return { cls: 'warning', text: 'Non-invertible', category: 'nonInvertible', tooltip: (comparisonMessage || 'Non-invertible').replace(/'/g, '&apos;') };
+            if (inversionSuccess === 'mapping_error') return { cls: 'warning', text: 'Mapping Error', category: 'mappingError', tooltip: (comparisonMessage || 'Mapping error').replace(/'/g, '&apos;') };
+            if (inversionSuccess === true) return { cls: 'passed', text: 'Success', category: 'passed', tooltip: '' };
+            return { cls: 'failed', text: 'Failure', category: 'failed', tooltip: '' };
+        }
+
+        function resetAllSuiteStats() {
+            suiteStats = {};
+            Object.keys(allTests).forEach(sid => {
+                suiteStats[sid] = { total: 0, passed: 0, failed: 0, notSupported: 0, nonInvertible: 0, mappingError: 0 };
+            });
+        }
+
+        function trackSuiteStat(sid, row) {
+            if (!suiteStats[sid]) return;
+            suiteStats[sid].total++;
+            const status = classifyInversionStatus(row.inversion_success);
+            suiteStats[sid][status.category]++;
+        }
+
+        function updateSuiteStatsDisplay(sid) {
+            const s = suiteStats[sid];
+            if (!s) return;
+            $(`#ps-total-${sid}`).text(s.total);
+            $(`#ps-passed-${sid}`).text(s.passed);
+            $(`#ps-failed-${sid}`).text(s.failed);
+            $(`#ps-ns-${sid}`).text(s.notSupported);
+            $(`#ps-ni-${sid}`).text(s.nonInvertible);
+            $(`#ps-me-${sid}`).text(s.mappingError);
+        }
+
+        function createSuitePanelHtml(sid) {
+            const name = sid.toUpperCase();
+            const headerRow = compactHeaders.map(h => `<th>${h}</th>`).join('');
+            return `
+            <div class="suite-panel">
+                <h3><span class="suite-badge suite-${sid}">${name}</span> test cases</h3>
+                <div class="suite-panel-stats" id="panel-stats-${sid}">
+                    <span>Total: <strong id="ps-total-${sid}">0</strong></span>
+                    <span class="stat-passed">Passed: <strong id="ps-passed-${sid}">0</strong></span>
+                    <span class="stat-failed">Failed: <strong id="ps-failed-${sid}">0</strong></span>
+                    <span class="stat-not-supported">Not supported: <strong id="ps-ns-${sid}">0</strong></span>
+                    <span class="stat-non-invertible">Non-invertible: <strong id="ps-ni-${sid}">0</strong></span>
+                    <span class="stat-mapping-error">Mapping errors: <strong id="ps-me-${sid}">0</strong></span>
+                </div>
+                <div class="suite-panel-table">
+                    <table class="table table-striped table-sm">
+                        <thead><tr>${headerRow}</tr></thead>
+                        <tbody id="panel-body-${sid}"></tbody>
+                    </table>
+                </div>
+            </div>`;
+        }
+
+        function generateCompactRow(response) {
+            if (!response || !response.results || !Array.isArray(response.results.data) || response.results.data.length === 0) {
+                return `<tr><td colspan="${compactHeaders.length}">Error: Invalid test result</td></tr>`;
+            }
+            const row = response.results.data[0];
+            const tid = row.testid || 'N/A';
+            let html = '<tr>';
+            html += `<td>${tid}</td>`;
+            html += `<td class="result-${(row.result || '').toLowerCase()}">${row.result || 'N/A'}</td>`;
+            html += `<td><a href="#" onclick="showFileContent('${tid}', 'expected'); return false;" class="compact-link">View</a></td>`;
+            html += `<td><a href="#" onclick="showFileContent('${tid}', 'actual'); return false;" class="compact-link">View</a></td>`;
+            html += `<td><a href="#" onclick="showMapping('${tid}'); return false;" class="compact-link">View</a></td>`;
+            html += `<td><a href="#" onclick="showSparqlQuery('${tid}'); return false;" class="compact-link">View</a></td>`;
+            html += `<td><a href="#" onclick="showInversionQuery('${tid}'); return false;" class="compact-link">View</a></td>`;
+            const status = classifyInversionStatus(row.inversion_success, row.comparison_message);
+            const tooltipHtml = status.tooltip ? ` <i class="bi bi-info-circle info-icon" data-bs-toggle="tooltip" data-bs-placement="top" title="${status.tooltip}"></i>` : '';
+            html += `<td class="result-${status.cls}">${status.text}${tooltipHtml}</td>`;
+            html += `<td><a href="#" onclick="showTableComparison('${tid}'); return false;" class="compact-link">View</a></td>`;
+            html += '</tr>';
+            return html;
         }
 
         function showMapping(testId) {
