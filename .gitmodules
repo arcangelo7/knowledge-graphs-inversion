@@ -1,0 +1,3 @@
+[submodule "rml_test_cases_repo"]
+	path = rml_test_cases_repo
+	url = https://github.com/kg-construct/rml-test-cases.git

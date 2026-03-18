@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>R2RML Test Interface</title>
+    <title>RML inversion test interface</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
@@ -12,7 +12,7 @@
 
     <!-- Prism.js CSS -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/themes/prism-okaidia.min.css" rel="stylesheet" />
-    
+
     <!-- Prism.js Core and SQL language support -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/prism.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/components/prism-sql.min.js"></script>
@@ -125,17 +125,6 @@
             color: #f8f8f2;
             text-shadow: 0 1px rgba(0, 0, 0, 0.3);
             font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
-            {# font-size: 1em;
-            text-align: left;
-            white-space: pre;
-            word-spacing: normal;
-            word-break: normal;
-            word-wrap: normal;
-            line-height: 1.5;
-            padding: 1em;
-            margin: .5em 0;
-            overflow: auto;
-            border-radius: 0.3em; #}
         }
         .stats-box {
             background-color: #f8f9fa;
@@ -170,29 +159,45 @@
         .stat-not-supported { color: #ffc107; }
         .stat-mapping-issue { color: #fd7e14; }
         .stat-mapping-error { color: #dc3545; }
+        .suite-badge {
+            font-size: 0.7em;
+            padding: 2px 6px;
+            border-radius: 3px;
+            margin-left: 6px;
+            vertical-align: middle;
+        }
+        .suite-r2rml { background-color: #e3f2fd; color: #1565c0; }
+        .suite-rml { background-color: #f3e5f5; color: #7b1fa2; }
     </style>
 </head>
 <body>
     <div class="container mt-5">
-        <h1 class="mb-4">R2RML Test Interface</h1>
+        <h1 class="mb-4">RML inversion test interface</h1>
         <div class="row">
-            <div class="col-md-6">
+            <div class="col-md-3">
+                <label for="suiteSelect" class="form-label">Test suite</label>
+                <select id="suiteSelect" class="form-select mb-3">
+                    {% for suite_id, suite in suites.items() %}
+                    <option value="{{ suite_id }}">{{ suite.name }}</option>
+                    {% endfor %}
+                    <option value="all">All suites</option>
+                </select>
+            </div>
+            <div class="col-md-5">
+                <label for="testSelect" class="form-label">Test case</label>
                 <select id="testSelect" class="form-select mb-3">
                     <option value="">Select a test</option>
-                    {% for test in tests %}
-                    <option value="{{ test }}">{{ test }}</option>
-                    {% endfor %}
                 </select>
             </div>
         </div>
         <div class="row mb-3">
             <div class="col">
-                <button id="runTestBtn" onclick="runTest()" class="btn btn-primary">Run Test</button>
-                <button id="runAllTestsBtn" onclick="runAllTests()" class="btn btn-success">Run All Tests</button>
+                <button id="runTestBtn" onclick="runTest()" class="btn btn-primary" disabled>Run test</button>
+                <button id="runAllTestsBtn" onclick="runAllTests()" class="btn btn-success">Run all tests</button>
             </div>
         </div>
         <div id="mappingContent" class="mb-4" style="display: none;">
-            <h2>R2RML Mapping</h2>
+            <h2>Mapping</h2>
             <pre><code id="mappingCode"></code></pre>
         </div>
         <div id="results">
@@ -202,11 +207,11 @@
                 </div>
             </div>
             <div id="stats-box" class="stats-box">
-                <h5 class="mb-3">Test Execution Summary</h5>
+                <h5 class="mb-3">Test execution summary</h5>
                 <div class="stats-row">
                     <div class="stat-item">
                         <div class="stat-value" id="stat-total">0</div>
-                        <div class="stat-label">Total Tests</div>
+                        <div class="stat-label">Total tests</div>
                     </div>
                     <div class="stat-item">
                         <div class="stat-value stat-passed" id="stat-passed">0</div>
@@ -214,15 +219,15 @@
                     </div>
                     <div class="stat-item">
                         <div class="stat-value stat-not-supported" id="stat-not-supported">0</div>
-                        <div class="stat-label">Not Supported (<span id="stat-not-supported-percent">0</span>%)</div>
+                        <div class="stat-label">Not supported (<span id="stat-not-supported-percent">0</span>%)</div>
                     </div>
                     <div class="stat-item">
                         <div class="stat-value stat-mapping-issue" id="stat-mapping-issue">0</div>
-                        <div class="stat-label">Mapping Issues (<span id="stat-mapping-issue-percent">0</span>%)</div>
+                        <div class="stat-label">Mapping issues (<span id="stat-mapping-issue-percent">0</span>%)</div>
                     </div>
                     <div class="stat-item">
                         <div class="stat-value stat-mapping-error" id="stat-mapping-error">0</div>
-                        <div class="stat-label">Mapping Errors (<span id="stat-mapping-error-percent">0</span>%)</div>
+                        <div class="stat-label">Mapping errors (<span id="stat-mapping-error-percent">0</span>%)</div>
                     </div>
                     <div class="stat-item">
                         <div class="stat-value stat-failed" id="stat-failed">0</div>
@@ -251,7 +256,7 @@
         <div class="container">
             <div class="row">
                 <div class="col-lg-6 col-md-12 mb-4 mb-md-0">
-                    <h5 class="text-uppercase">Related Projects</h5>
+                    <h5 class="text-uppercase">Related projects</h5>
                     <ul class="list-unstyled mb-0">
                         <li>
                             <a href="https://github.com/arcangelo7/knowledge-graphs-inversion" target="_blank" rel="noopener noreferrer">
@@ -260,7 +265,7 @@
                         </li>
                         <li>
                             <a href="https://github.com/kg-construct/r2rml-implementation-report" target="_blank" rel="noopener noreferrer">
-                                <i class="fab fa-github"></i> R2RML Implementation Report
+                                <i class="fab fa-github"></i> R2RML implementation report
                             </a>
                         </li>
                     </ul>
@@ -276,6 +281,7 @@
     </footer>
 
     <script>
+        const allTests = {{ all_tests | tojson }};
         const testResults = {};
         let testStats = {
             total: 0,
@@ -286,6 +292,31 @@
             mappingError: 0
         };
 
+        function getSelectedSuiteId() {
+            return $('#suiteSelect').val();
+        }
+
+        function updateTestSelect() {
+            const suiteId = getSelectedSuiteId();
+            const testSelect = $('#testSelect');
+            testSelect.empty();
+            testSelect.append('<option value="">Select a test</option>');
+
+            if (suiteId === 'all') {
+                for (const [sid, tests] of Object.entries(allTests)) {
+                    const suiteName = sid.toUpperCase();
+                    tests.forEach(test => {
+                        testSelect.append(`<option value="${test}" data-suite="${sid}">${test} [${suiteName}]</option>`);
+                    });
+                }
+            } else if (allTests[suiteId]) {
+                allTests[suiteId].forEach(test => {
+                    testSelect.append(`<option value="${test}" data-suite="${suiteId}">${test}</option>`);
+                });
+            }
+            $('#runTestBtn').prop('disabled', true);
+        }
+
         function updateStats() {
             const total = testStats.total;
             $('#stat-total').text(total);
@@ -294,7 +325,7 @@
             $('#stat-not-supported').text(testStats.notSupported);
             $('#stat-mapping-issue').text(testStats.mappingIssue);
             $('#stat-mapping-error').text(testStats.mappingError);
-            
+
             if (total > 0) {
                 $('#stat-passed-percent').text(Math.round((testStats.passed / total) * 100));
                 $('#stat-failed-percent').text(Math.round((testStats.failed / total) * 100));
@@ -321,27 +352,36 @@
         }
 
         function enableButtons() {
-            $('#runTestBtn, #runAllTestsBtn').prop('disabled', false);
+            $('#runAllTestsBtn').prop('disabled', false);
+            if ($('#testSelect').val()) {
+                $('#runTestBtn').prop('disabled', false);
+            }
+        }
+
+        function getSuiteForTest() {
+            const selected = $('#testSelect option:selected');
+            return selected.data('suite') || getSelectedSuiteId();
         }
 
         function runTest() {
             const testId = $('#testSelect').val();
-            // const dbSystem = $('#dbSelect').val();
-            dbSystem = 'postgresql';
+            const suiteId = getSuiteForTest();
+            const dbSystem = 'postgresql';
             const resultsDiv = $('#results');
-            
-            // Clear previous results but preserve stats-box (hidden)
+
             resultsDiv.children().not('#stats-box').remove();
             $('#stats-box').hide();
             resultsDiv.append('<div id="spinner" class="spinner-container"><div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div></div>');
-            
+
             disableButtons();
 
             $.post('/run_test', {
                 test_id: testId,
-                database_system: dbSystem
+                database_system: dbSystem,
+                suite_id: suiteId
             })
             .done(function(response) {
+                response.suite_id = suiteId;
                 testResults[response.test_id] = response;
                 displayTestResults(response);
             })
@@ -355,50 +395,47 @@
         }
 
         function runAllTests() {
-            // const dbSystem = $('#dbSelect').val();
             const dbSystem = 'postgresql';
+            const suiteId = getSelectedSuiteId();
+            const suiteParam = suiteId === 'all' ? Object.keys(allTests).join(',') : suiteId;
             const resultsDiv = $('#results');
-            
-            // Clear results but preserve the stats box structure
+
             resultsDiv.children().not('#stats-box').remove();
             $('#stats-box').hide();
-            
+
             const spinnerElement = $('<div id="spinner" class="spinner-container"><div class="spinner-border text-primary" role="status"><span class="visually-hidden">Loading...</span></div></div>');
             const resultsTable = $('<table id="results-table" class="table table-striped" style="display: none;"><thead><tr id="results-header"></tr></thead><tbody id="results-body"></tbody></table>');
-            
+
             resultsDiv.append(spinnerElement);
             resultsDiv.append(resultsTable);
 
             disableButtons();
 
-            const eventSource = new EventSource(`/run_all_tests?database_system=${dbSystem}`);
+            const eventSource = new EventSource(`/run_all_tests?database_system=${dbSystem}&suite_id=${suiteParam}`);
 
             eventSource.onmessage = function(event) {
                 const testResult = JSON.parse(event.data);
                 testResults[testResult.test_id] = testResult;
-                
+
                 if (spinnerElement.is(":visible")) {
                     spinnerElement.hide();
                     resetStats();
-                    // Remove any existing h2 title to avoid duplicates
                     resultsDiv.children('h2').remove();
-                    resultsDiv.prepend('<h2>All Test Results:</h2>');
-                    $('#stats-box').show();  // Make sure stats-box is shown
+                    const titleSuffix = suiteId === 'all' ? 'All suites' : suiteId.toUpperCase();
+                    resultsDiv.prepend(`<h2>Test results (${titleSuffix}):</h2>`);
+                    $('#stats-box').show();
                     resultsTable.show();
-                    // Set the header if it's empty
                     const resultsHeader = $('#results-header');
                     if (resultsHeader.is(":empty")) {
                         updateHeaderRow();
                     }
-                    // Add the loading row
                     addLoadingRow();
                 }
 
-                // Update statistics
                 if (testResult.results && testResult.results.data && testResult.results.data[0]) {
                     const row = testResult.results.data[0];
                     testStats.total++;
-                    
+
                     if (row.inversion_success === 'not_supported') {
                         testStats.notSupported++;
                     } else if (row.inversion_success === 'mapping_issue') {
@@ -410,14 +447,13 @@
                     } else {
                         testStats.failed++;
                     }
-                    
+
                     updateStats();
                 }
 
                 const rowHtml = generateResultRow(testResult);
                 const newRow = $(rowHtml);
                 $('#results-body .loading-row').before(newRow);
-                // Initialize Bootstrap tooltips only for the newly added row
                 initializeTooltips(newRow[0]);
             };
 
@@ -452,13 +488,12 @@
 
         function displayTestResults(response) {
             const resultsDiv = $('#results');
-            // Hide stats-box and remove other content except stats-box
             $('#stats-box').hide();
             resultsDiv.children().not('#stats-box').remove();
-            
+
             if (response.status === 'success') {
-                let resultsHtml = `<h2>Test Results for ${response.test_id}:</h2>`;
-                resultsHtml += generateResultTable(response.results);
+                let resultsHtml = `<h2>Test results for ${response.test_id}:</h2>`;
+                resultsHtml += generateResultTable(response);
                 resultsDiv.append(resultsHtml);
             } else {
                 let errorHtml = `<h2 class="text-danger">Error in ${response.test_id}:</h2>`;
@@ -471,28 +506,36 @@
             }
         }
 
-        function generateResultTable(results) {
+        function generateResultTable(response) {
             let tableHtml = '<table class="table table-striped">';
             tableHtml += '<thead><tr>';
-            ['Test ID', 'Purpose', 'Result', 'Expected Result', 'Actual Result', 'Mapping', 'SPARQL Query', 'Inversion Query', 'Inversion Success', 'Table Comparison'].forEach(header => {
+            ['Suite', 'Test ID', 'Purpose', 'Result', 'Expected Result', 'Actual Result', 'Mapping', 'SPARQL Query', 'Inversion Query', 'Inversion Success', 'Table Comparison'].forEach(header => {
                 tableHtml += `<th>${header}</th>`;
             });
             tableHtml += '</tr></thead><tbody>';
-            results.data.forEach(row => {
-                tableHtml += generateResultRow({results: {data: [row]}});
+            response.results.data.forEach(row => {
+                tableHtml += generateResultRow(response);
             });
             tableHtml += '</tbody></table>';
             return tableHtml;
         }
 
+        function getSuiteBadge(suiteId) {
+            if (!suiteId) return '';
+            const name = suiteId.toUpperCase();
+            return `<span class="suite-badge suite-${suiteId}">${name}</span>`;
+        }
+
         function generateResultRow(response) {
             if (!response || !response.results || !Array.isArray(response.results.data) || response.results.data.length === 0) {
                 console.error('Invalid response structure:', response);
-                return `<tr><td colspan="9">Error: Invalid test result structure</td></tr>`;
+                return `<tr><td colspan="11">Error: Invalid test result structure</td></tr>`;
             }
 
             const row = response.results.data[0];
+            const suiteId = response.suite_id || 'r2rml';
             let rowHtml = '<tr>';
+            rowHtml += `<td>${getSuiteBadge(suiteId)}</td>`;
             rowHtml += `<td>${row.testid || 'N/A'}</td>`;
             rowHtml += `<td>${row.purpose || 'N/A'}</td>`;
             rowHtml += `<td class="result-${(row.result || '').toLowerCase()}">${row.result || 'N/A'}</td>`;
@@ -507,20 +550,17 @@
             if (row.inversion_success === 'not_supported') {
                 inversionStatusClass = 'warning';
                 inversionStatusText = 'Not Supported';
-                // Add info icon with Bootstrap tooltip
                 const tooltipMessage = (row.comparison_message || 'SQL query as logical table is not supported').replace(/'/g, '&apos;');
                 tooltipHtml = ` <i class="bi bi-info-circle info-icon" data-bs-toggle="tooltip" data-bs-placement="top" title="${tooltipMessage}"></i>`;
             } else if (row.inversion_success === 'mapping_issue') {
                 inversionStatusClass = 'warning';
                 inversionStatusText = 'Mapping Issue';
-                // Add info icon with Bootstrap tooltip showing the comparison message
-                const tooltipMessage = (row.comparison_message || 'Mapping issue detected - check table comparison for details').replace(/'/g, '&apos;');
+                const tooltipMessage = (row.comparison_message || 'Mapping issue detected').replace(/'/g, '&apos;');
                 tooltipHtml = ` <i class="bi bi-info-circle info-icon" data-bs-toggle="tooltip" data-bs-placement="top" title="${tooltipMessage}"></i>`;
             } else if (row.inversion_success === 'mapping_error') {
                 inversionStatusClass = 'warning';
                 inversionStatusText = 'Mapping Error';
-                // Add info icon with Bootstrap tooltip showing the comparison message
-                const tooltipMessage = (row.comparison_message || 'Mapping error detected - check table comparison for details').replace(/'/g, '&apos;');
+                const tooltipMessage = (row.comparison_message || 'Mapping error detected').replace(/'/g, '&apos;');
                 tooltipHtml = ` <i class="bi bi-info-circle info-icon" data-bs-toggle="tooltip" data-bs-placement="top" title="${tooltipMessage}"></i>`;
             } else if (row.inversion_success === true) {
                 inversionStatusClass = 'passed';
@@ -548,7 +588,7 @@
             const response = testResults[testId];
             if (response && response.results && response.results.data && response.results.data[0]) {
                 const content = fileType === 'expected' ? response.results.data[0].expected_result : response.results.data[0].actual_result;
-                showModal(`${fileType.charAt(0).toUpperCase() + fileType.slice(1)} Output for ${testId}`, `<pre style="white-space: pre-wrap; word-wrap: break-word;">${escapeHtml(content)}</pre>`);
+                showModal(`${fileType.charAt(0).toUpperCase() + fileType.slice(1)} output for ${testId}`, `<pre style="white-space: pre-wrap; word-wrap: break-word;">${escapeHtml(content)}</pre>`);
             } else {
                 showModal('Error', `Unable to display ${fileType} content. Invalid data structure.`);
             }
@@ -559,7 +599,7 @@
             if (response && response.results && response.results.data && response.results.data[0]) {
                 const inversionQuery = response.results.data[0].inversion_query;
                 const content = `<pre><code class="language-sql">${escapeHtml(inversionQuery)}</code></pre>`;
-                showModal('Inversion Query', content);
+                showModal('Inversion query', content);
                 Prism.highlightAll();
             } else {
                 showModal('Error', 'Unable to display inversion query. Invalid data structure.');
@@ -576,16 +616,16 @@
         }
 
         function updateHeaderRow() {
-            const headerHtml = ['Test ID', 'Purpose', 'Result', 'Expected Result', 'Actual Result', 'Mapping', 'SPARQL Query', 'Inversion Query', 'Inversion Success', 'Table Comparison']
+            const headerHtml = ['Suite', 'Test ID', 'Purpose', 'Result', 'Expected Result', 'Actual Result', 'Mapping', 'SPARQL Query', 'Inversion Query', 'Inversion Success', 'Table Comparison']
                 .map(header => `<th>${header}</th>`)
                 .join('');
             $('#results-header').html(headerHtml);
         }
-        
+
         function showMapping(testId) {
             const response = testResults[testId];
             if (response && response.results && response.results.data && response.results.data[0]) {
-                showModal('R2RML Mapping', `<pre>${escapeHtml(response.results.data[0].mapping)}</pre>`);
+                showModal('Mapping', `<pre>${escapeHtml(response.results.data[0].mapping)}</pre>`);
             } else {
                 showModal('Error', 'Unable to display mapping. Invalid data structure.');
             }
@@ -595,14 +635,13 @@
             const modal = document.getElementById('infoModal');
             const modalTitle = document.getElementById('modalTitle');
             const modalContent = document.getElementById('modalContent');
-            
+
             modalTitle.textContent = title;
             modalContent.innerHTML = content;
-            
-            // Adjust style for larger content
+
             modalContent.style.maxHeight = '70vh';
             modalContent.style.overflow = 'auto';
-            
+
             modal.style.display = 'block';
 
             const span = document.getElementsByClassName('close')[0];
@@ -623,49 +662,46 @@
                 const originalTables = response.results.data[0].original_tables;
                 const invertedTables = response.results.data[0].inverted_tables;
                 const comparisonMessage = response.results.data[0].comparison_message;
-                
+
                 let content = '';
 
                 if (comparisonMessage) {
-                    content += `<h3>Comparison Message:</h3><p>${escapeHtml(comparisonMessage)}</p>`;
+                    content += `<h3>Comparison message:</h3><p>${escapeHtml(comparisonMessage)}</p>`;
                 }
 
                 if (originalTables && typeof originalTables === 'object' && Object.keys(originalTables).length > 0) {
-                    content += '<h3>Original Tables:</h3>';
+                    content += '<h3>Original tables:</h3>';
                     for (const [tableName, tableData] of Object.entries(originalTables)) {
                         content += `<h4>${tableName}</h4>`;
                         content += `<pre>${escapeHtml(JSON.stringify(tableData, null, 2))}</pre>`;
                     }
                 } else {
-                    content += '<h3>Original Tables:</h3><p>No original table data available.</p>';
+                    content += '<h3>Original tables:</h3><p>No original table data available.</p>';
                 }
-                
+
                 if (invertedTables && typeof invertedTables === 'object' && Object.keys(invertedTables).length > 0) {
-                    content += '<h3>Inverted Tables:</h3>';
+                    content += '<h3>Inverted tables:</h3>';
                     for (const [tableName, tableData] of Object.entries(invertedTables)) {
                         content += `<h4>${tableName}</h4>`;
                         content += `<pre>${escapeHtml(JSON.stringify(tableData, null, 2))}</pre>`;
                     }
                 } else {
-                    content += '<h3>Inverted Tables:</h3><p>No inverted table data available. The inversion process might have failed or been skipped.</p>';
+                    content += '<h3>Inverted tables:</h3><p>No inverted table data available.</p>';
                 }
-                
+
                 if (content === '') {
                     content = '<p>No table comparison data available.</p>';
                 }
-                                
-                showModal('Table Comparison', content);
+
+                showModal('Table comparison', content);
             } else {
-                showModal('Error', 'Unable to display table comparison. Invalid or missing data structure.');
+                showModal('Error', 'Unable to display table comparison.');
             }
         }
 
-        // Function to initialize Bootstrap tooltips for new elements only
         function initializeTooltips(scope = document) {
-            // Find only tooltips that haven't been initialized yet
             var tooltipTriggerList = [].slice.call(scope.querySelectorAll('[data-bs-toggle="tooltip"]:not(.tooltip-initialized)'));
             var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
-                // Mark this tooltip as initialized
                 tooltipTriggerEl.classList.add('tooltip-initialized');
                 return new bootstrap.Tooltip(tooltipTriggerEl, {
                     trigger: 'hover',
@@ -674,32 +710,28 @@
             });
         }
 
-        // Initialize the page
         $(document).ready(function() {
+            updateTestSelect();
             updateHeaderRow();
             initializeTooltips();
-            
-            // Event listener for test selection
-            $('#testSelect').change(function() {
-                const selectedTest = $(this).val();
-                if (selectedTest) {
-                    $('#runTestBtn').prop('disabled', false);
-                } else {
-                    $('#runTestBtn').prop('disabled', true);
-                }
+
+            $('#suiteSelect').change(function() {
+                updateTestSelect();
             });
 
-            // Initialize button states
+            $('#testSelect').change(function() {
+                const selectedTest = $(this).val();
+                $('#runTestBtn').prop('disabled', !selectedTest);
+            });
+
             $('#runTestBtn').prop('disabled', true);
             $('#runAllTestsBtn').prop('disabled', false);
         });
 
-        // Helper function to format the result class
         function getResultClass(result) {
             return result.toLowerCase() === 'passed' ? 'result-passed' : 'result-failed';
         }
 
-        // Helper function to truncate long text
         function truncateText(text, maxLength = 50) {
             return text.length > maxLength ? text.substring(0, maxLength) + '...' : text;
         }

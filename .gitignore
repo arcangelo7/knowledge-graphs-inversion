@@ -15,6 +15,13 @@ r2rml_test_cases/metadata.csv
 r2rml_test_cases/results.csv
 r2rml_test_cases/r2rml.ttl
 r2rml_inversion_test_results
+test_results
+
+# RML test case engine outputs
+rml_test_cases_repo/test-cases/**/*.nt
+rml_test_cases_repo/test-cases/**/*.ttl
+rml_test_cases_repo/test-cases/**/*.log
+rml_test_cases_repo/test-cases/output.*
 inversion.log
 
 # Virtuoso data directory
