@@ -6,6 +6,7 @@ benchmarks/*/results/
 benchmarks/*/*.csv
 benchmarks/*/*.rdf
 benchmarks/*/*.nt
+data-generator/Custom/
 
 r2rml_test_cases/**/*.nt
 r2rml_test_cases/results-postgresql.ttl
