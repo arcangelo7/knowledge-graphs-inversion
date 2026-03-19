@@ -9,7 +9,7 @@ There are two repositories to consider:
 
 ## Comparison with R2RML test cases
 
-Our project currently uses 62 R2RML test cases (R2RMLTC0000 through R2RMLTC0020). The archived RML repo covers the same range (RMLTC0000 through RMLTC0020).
+Our project currently uses 62 R2RML test cases (R2RMLTC0000 through R2RMLTC0020), matching the kg-construct/r2rml-test-cases-support repository. The W3C spec (https://www.w3.org/2001/sw/rdb2rdf/test-cases/) defines 63 test cases, but R2RMLTC0003a ("undefined SQL Version identifier", an error test case) was never implemented in the support repository. The archived RML repo covers the same range (RMLTC0000 through RMLTC0020) with 60 PostgreSQL test cases.
 
 ### Direct equivalents
 
@@ -20,7 +20,7 @@ Most RML-PostgreSQL archived test cases map directly to R2RML test cases and tes
 | Empty table                     | R2RMLTC0000    | RMLTC0000                     |
 | One column mapping              | R2RMLTC0001a-b | RMLTC0001a-b                  |
 | Two column variants             | R2RMLTC0002a-j | RMLTC0002a-j                  |
-| Three column mapping            | R2RMLTC0003b-c | RMLTC0003a-c (RML adds 0003a) |
+| Three column mapping            | R2RMLTC0003b-c (0003a missing from our set) | RMLTC0003a-c |
 | Multiple triples from one row   | R2RMLTC0004a-b | RMLTC0004a-b                  |
 | Resource typing                 | R2RMLTC0005a-b | RMLTC0005a-b                  |
 | Constants                       | R2RMLTC0006a   | RMLTC0006a                    |
@@ -40,6 +40,8 @@ Most RML-PostgreSQL archived test cases map directly to R2RML test cases and tes
 The coverage is nearly complete. The legacy RML repo adapted R2RML features to RML vocabulary: for instance, RMLTC0009c-d use `rml:query` instead of R2RML's `rr:sqlQuery` for SQL queries as logical sources (verified in https://github.com/kg-construct/rml-test-cases/blob/master/test-cases/RMLTC0009c-PostgreSQL/mapping.ttl). Similarly, RMLTC0002f-j exist as PostgreSQL variants and test the same SQL identifier scenarios as their R2RML counterparts.
 
 The only R2RML test cases with no equivalent in either the legacy or new RML repos are **R2RMLTC0014a-c**, which test `rr:inverseExpression`, a construct that exists only in R2RML.
+
+Conversely, **RMLTC0003a** exists in the RML legacy repo and corresponds to R2RMLTC0003a, which is defined in the W3C spec but was never added to the r2rml-test-cases-support repository. It tests the presence of an undefined SQL Version identifier and expects an error. The RML legacy repo therefore has 60 PostgreSQL test cases: 62 - 3 (no 0014a-c) + 1 (adds 0003a) = 60.
 
 ### Test cases dropped from the new rml-core repo
 

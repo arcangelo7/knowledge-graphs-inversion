@@ -209,10 +209,10 @@
             <div class="col-md-3">
                 <label for="suiteSelect" class="form-label">Test suite</label>
                 <select id="suiteSelect" class="form-select mb-3">
+                    <option value="all">All suites</option>
                     {% for suite_id, suite in suites.items() %}
                     <option value="{{ suite_id }}">{{ suite.name }}</option>
                     {% endfor %}
-                    <option value="all">All suites</option>
                 </select>
             </div>
             <div class="col-md-5">
@@ -486,14 +486,19 @@
                     }
                 }
 
-                if (testResult.results && testResult.results.data && testResult.results.data[0]) {
-                    const row = testResult.results.data[0];
-                    const sid = testResult.suite_id || Object.keys(allTests)[0];
+                const sid = testResult.suite_id || Object.keys(allTests)[0];
+                const hasData = testResult.results && testResult.results.data && testResult.results.data[0];
+                const isError = testResult.status === 'error';
 
+                if (hasData || isError) {
                     if (isDualPanel) {
-                        trackSuiteStat(sid, row);
+                        if (hasData) {
+                            trackSuiteStat(sid, testResult.results.data[0]);
+                        } else {
+                            trackSuiteStat(sid, { inversion_success: 'error' });
+                        }
                         updateSuiteStatsDisplay(sid);
-                        const rowHtml = generateCompactRow(testResult);
+                        const rowHtml = isError && !hasData ? generateErrorRow(testResult) : generateCompactRow(testResult);
                         const newRow = $(rowHtml);
                         const loadingRow = $(`#panel-body-${sid} .loading-row`);
                         if (loadingRow.length) loadingRow.before(newRow);
@@ -504,11 +509,15 @@
                         }
                     } else {
                         testStats.total++;
-                        const status = classifyInversionStatus(row.inversion_success);
-                        testStats[status.category]++;
+                        if (hasData) {
+                            const status = classifyInversionStatus(testResult.results.data[0].inversion_success);
+                            testStats[status.category]++;
+                        } else {
+                            testStats.failed++;
+                        }
                         updateStats();
 
-                        const rowHtml = generateResultRow(testResult);
+                        const rowHtml = isError && !hasData ? generateErrorRow(testResult) : generateResultRow(testResult);
                         const newRow = $(rowHtml);
                         $('#results-body .loading-row').before(newRow);
                         initializeTooltips(newRow[0]);
@@ -673,6 +682,7 @@
             if (inversionSuccess === 'not_supported') return { cls: 'warning', text: 'Not Supported', category: 'notSupported', tooltip: (comparisonMessage || 'Not supported').replace(/'/g, '&apos;') };
             if (inversionSuccess === 'non_invertible') return { cls: 'warning', text: 'Non-invertible', category: 'nonInvertible', tooltip: (comparisonMessage || 'Non-invertible').replace(/'/g, '&apos;') };
             if (inversionSuccess === 'mapping_error') return { cls: 'warning', text: 'Mapping Error', category: 'mappingError', tooltip: (comparisonMessage || 'Mapping error').replace(/'/g, '&apos;') };
+            if (inversionSuccess === 'error') return { cls: 'failed', text: 'Error', category: 'failed', tooltip: (comparisonMessage || 'Error').replace(/'/g, '&apos;') };
             if (inversionSuccess === true) return { cls: 'passed', text: 'Success', category: 'passed', tooltip: '' };
             return { cls: 'failed', text: 'Failure', category: 'failed', tooltip: '' };
         }
@@ -743,6 +753,35 @@
             const tooltipHtml = status.tooltip ? ` <i class="bi bi-info-circle info-icon" data-bs-toggle="tooltip" data-bs-placement="top" title="${status.tooltip}"></i>` : '';
             html += `<td class="result-${status.cls}">${status.text}${tooltipHtml}</td>`;
             html += `<td><a href="#" onclick="showTableComparison('${tid}'); return false;" class="compact-link">View</a></td>`;
+            html += '</tr>';
+            return html;
+        }
+
+        function generateErrorRow(response) {
+            const tid = response.test_id || 'N/A';
+            const msg = response.message || 'Unknown error';
+            const isDual = $('#dual-panel-wrapper').length > 0;
+            if (isDual) {
+                const tooltipMsg = escapeHtml(msg).replace(/'/g, '&apos;');
+                let html = '<tr>';
+                html += `<td>${escapeHtml(tid)}</td>`;
+                html += '<td class="result-failed">failed</td>';
+                html += `<td colspan="${compactHeaders.length - 4}"></td>`;
+                html += `<td class="result-failed">Error <i class="bi bi-info-circle info-icon" data-bs-toggle="tooltip" data-bs-placement="top" title="${tooltipMsg}"></i></td>`;
+                html += '<td></td>';
+                html += '</tr>';
+                return html;
+            }
+            const tooltipMsg = escapeHtml(msg).replace(/'/g, '&apos;');
+            let html = '<tr>';
+            const suiteId = response.suite_id || '';
+            html += `<td>${getSuiteBadge(suiteId)}</td>`;
+            html += `<td>${escapeHtml(tid)}</td>`;
+            html += '<td></td>';
+            html += '<td class="result-failed">failed</td>';
+            html += '<td></td><td></td><td></td><td></td><td></td>';
+            html += `<td class="result-failed">Error <i class="bi bi-info-circle info-icon" data-bs-toggle="tooltip" data-bs-placement="top" title="${tooltipMsg}"></i></td>`;
+            html += '<td></td>';
             html += '</tr>';
             return html;
         }
