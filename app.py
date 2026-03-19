@@ -17,7 +17,7 @@ from rdflib import Graph, Namespace
 
 from database_connection import DatabaseConnection
 from kgi.core import inversion
-from r2rml_test_cases.test import database_load, test_one
+from test_runner import database_load, test_one
 from test_suites import TestSuite, register_suites, get_suite, SUITES
 
 logging.getLogger('morph_kgc').setLevel(logging.ERROR)

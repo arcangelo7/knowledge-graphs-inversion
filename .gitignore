@@ -8,12 +8,6 @@ benchmarks/*/*.rdf
 benchmarks/*/*.nt
 data-generator/Custom/
 
-r2rml_test_cases/**/*.nt
-r2rml_test_cases/results-postgresql.ttl
-r2rml_test_cases/results-postgresql.csv
-r2rml_test_cases/metadata.csv
-r2rml_test_cases/results.csv
-r2rml_test_cases/r2rml.ttl
 r2rml_inversion_test_results
 test_results
 

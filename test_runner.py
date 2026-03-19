@@ -8,10 +8,8 @@ from rdflib import ConjunctiveGraph, compare
 
 from test_suites import TestSuite, register_suites, get_suite
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-
-failed = "failed"
-passed = "passed"
+FAILED = "failed"
+PASSED = "passed"
 
 
 def database_load(sql_script_path: str, host: str) -> None:
@@ -63,7 +61,7 @@ def test_one(test_id: str, database_system: str, config: ConfigParser, suite: Te
                     [config["tester"]["tester_name"], config["engine"]["engine_name"],
                      "PostgreSQL", test_id, "error"]]
 
-        return run_test(test_id, metadata, database_system, config, suite)
+        return _run_test(test_id, metadata, database_system, config, suite)
     except Exception as e:
         print(f"Error in test_one: {str(e)}")
         return [["tester", "platform", "rdbms", "testid", "result"],
@@ -71,7 +69,7 @@ def test_one(test_id: str, database_system: str, config: ConfigParser, suite: Te
                  "PostgreSQL", test_id, "error"]]
 
 
-def run_test(
+def _run_test(
     t_identifier: str,
     metadata: dict[str, str | bool],
     database_system: str,
@@ -110,28 +108,28 @@ def run_test(
                 output_graph.parse(output_file, format=output_format)
                 iso_output = compare.to_isomorphic(output_graph)
                 if iso_expected == iso_output:
-                    result = passed
+                    result = PASSED
                 else:
                     print("Output RDF does not match with the expected RDF")
-                    result = failed
+                    result = FAILED
             except Exception:
                 print("Output RDF is invalid")
-                result = failed
+                result = FAILED
         elif exit_code != 0:
             print("The processor returned a non-zero error code signalling a mistake")
-            result = passed
+            result = PASSED
         else:
             print("Output RDF found but none was expected")
-            result = failed
+            result = FAILED
     else:
         if expected_output:
             if len(expected_output_graph) == 0:
-                result = passed
+                result = PASSED
             else:
                 print("No RDF output found while output was expected")
-                result = failed
+                result = FAILED
         else:
-            result = passed
+            result = PASSED
 
     results.append([
         config["tester"]["tester_name"], config["engine"]["engine_name"],
@@ -140,21 +138,8 @@ def run_test(
     return results
 
 
-def database_up() -> None:
-    database_path = os.path.join(current_dir, 'databases')
-    os.system(f"docker compose -f {database_path}/docker-compose-postgresql.yml stop")
-    os.system(f"docker compose -f {database_path}/docker-compose-postgresql.yml rm --force")
-    os.system(f"docker compose -f {database_path}/docker-compose-postgresql.yml up -d && sleep 30")
-
-
-def database_down() -> None:
-    database_path = os.path.join(current_dir, 'databases')
-    os.system(f"docker compose -f {database_path}/docker-compose-postgresql.yml stop")
-    os.system(f"docker compose -f {database_path}/docker-compose-postgresql.yml rm --force")
-
-
-def generate_results(config: ConfigParser, results: list[list[str]]) -> None:
-    with open(os.path.join(current_dir, 'results.csv'), 'w', newline='', encoding='utf8') as file:
+def _generate_results(config: ConfigParser, results: list[list[str]], base_dir: str) -> None:
+    with open(os.path.join(base_dir, 'results.csv'), 'w', newline='', encoding='utf8') as file:
         writer = csv.writer(file)
         writer.writerows(results)
 
@@ -166,18 +151,31 @@ def generate_results(config: ConfigParser, results: list[list[str]]) -> None:
          config["engine"]["engine_version"], config["engine"]["engine_name"], config["engine"]["engine_created"],
          config["engine"]["engine_url"], "https://www.postgresql.org/", "PostgreSQL"]]
 
-    with open(os.path.join(current_dir, 'metadata.csv'), 'w', newline='', encoding='utf8') as file:
+    with open(os.path.join(base_dir, 'metadata.csv'), 'w', newline='', encoding='utf8') as file:
         writer = csv.writer(file)
         writer.writerows(metadata)
 
     print("Generating the RDF results using EARL vocabulary")
-    os.system(f"java -jar {os.path.join(current_dir, 'rmlmapper.jar')} -m {os.path.join(current_dir, 'mapping.rml.ttl')} -o {os.path.join(current_dir, 'results-postgresql.ttl')} -d")
-    os.system(f"rm {os.path.join(current_dir, 'metadata.csv')} && mv {os.path.join(current_dir, 'results.csv')} {os.path.join(current_dir, 'results-postgresql.csv')}")
+    os.system(f"java -jar {os.path.join(base_dir, 'rmlmapper.jar')} -m {os.path.join(base_dir, 'mapping.rml.ttl')} -o {os.path.join(base_dir, 'results-postgresql.ttl')} -d")
+    os.system(f"rm {os.path.join(base_dir, 'metadata.csv')} && mv {os.path.join(base_dir, 'results.csv')} {os.path.join(base_dir, 'results-postgresql.csv')}")
+
+
+def _database_up(base_dir: str) -> None:
+    database_path = os.path.join(base_dir, 'databases')
+    os.system(f"docker compose -f {database_path}/docker-compose-postgresql.yml stop")
+    os.system(f"docker compose -f {database_path}/docker-compose-postgresql.yml rm --force")
+    os.system(f"docker compose -f {database_path}/docker-compose-postgresql.yml up -d && sleep 30")
+
+
+def _database_down(base_dir: str) -> None:
+    database_path = os.path.join(base_dir, 'databases')
+    os.system(f"docker compose -f {database_path}/docker-compose-postgresql.yml stop")
+    os.system(f"docker compose -f {database_path}/docker-compose-postgresql.yml rm --force")
 
 
 if __name__ == "__main__":  # pragma: no cover
     if len(sys.argv) != 2:
-        print("Configuration file is missing: python3 test.py <config file>")
+        print("Configuration file is missing: python3 test_runner.py <config file>")
         sys.exit(1)
 
     config_file = str(sys.argv[1])
@@ -189,11 +187,13 @@ if __name__ == "__main__":  # pragma: no cover
     config = ConfigParser(interpolation=ExtendedInterpolation())
     config.read(config_file)
 
-    project_root = os.path.dirname(current_dir)
+    project_root = os.path.dirname(os.path.abspath(__file__))
     register_suites(project_root)
 
+    base_dir = os.path.join(project_root, 'r2rml_test_cases')
+
     print("Deployment docker container for postgresql...")
-    database_up()
+    _database_up(base_dir)
 
     suite = get_suite('r2rml')
     if config["properties"]["tests"] == "all":
@@ -201,9 +201,9 @@ if __name__ == "__main__":  # pragma: no cover
         for test_id in suite.list_test_ids():
             result = test_one(test_id, "postgresql", config, suite)
             all_results.extend(result[1:])
-        generate_results(config, all_results)
+        _generate_results(config, all_results, base_dir)
     else:
         results = test_one(config["properties"]["tests"], "postgresql", config, suite)
-        generate_results(config, results)
+        _generate_results(config, results, base_dir)
 
-    database_down()
+    _database_down(base_dir)

@@ -5,3 +5,7 @@
 [submodule "KROWN"]
 	path = KROWN
 	url = https://github.com/kg-construct/KROWN.git
+[submodule "r2rml_test_cases"]
+	path = r2rml_test_cases
+	url = https://github.com/kg-construct/r2rml-test-cases-support.git
+	ignore = dirty
