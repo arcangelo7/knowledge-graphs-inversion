@@ -2,7 +2,6 @@
 
 import json
 import logging
-from io import StringIO
 
 import pandas as pd
 
@@ -211,9 +210,26 @@ class Query:
         """Execute query on a SPARQL endpoint."""
         self.generated_query = self.generate(all_mapping_rules)
         assert self.generated_query is not None
-        csv_result = endpoint.query(self.generated_query)
-        df = pd.read_csv(StringIO(csv_result))
+        json_result = endpoint.query(self.generated_query)
+        df = _json_sparql_to_dataframe(json_result)
         return self.decode_dataframe(df)
+
+
+def _json_sparql_to_dataframe(json_result: str) -> pd.DataFrame:
+    result_data = json.loads(json_result)
+    columns = result_data["head"]["vars"]
+    data = []
+    for binding in result_data["results"]["bindings"]:
+        row = {}
+        for col in columns:
+            if col in binding:
+                value = binding[col]["value"]
+                datatype = binding[col].get("datatype")
+                row[col] = sparql_to_python_type(value, datatype)
+            else:
+                row[col] = None
+        data.append(row)
+    return pd.DataFrame(data, columns=columns)
 
 
 def retrieve_data(
@@ -245,26 +261,7 @@ def retrieve_data(
         if not result.strip():
             return pd.DataFrame(), generated_query
 
-        if hasattr(endpoint, "_graph"):
-            result_data = json.loads(result)
-            columns = result_data["head"]["vars"]
-
-            data = []
-            bindings = result_data["results"]["bindings"]
-
-            for binding in bindings:
-                row = {}
-                for col in columns:
-                    if col in binding:
-                        value = binding[col]["value"]
-                        datatype = binding[col].get("datatype")
-                        row[col] = sparql_to_python_type(value, datatype)
-                    else:
-                        row[col] = None
-                data.append(row)
-            df = pd.DataFrame(data, columns=columns)
-        else:
-            df = pd.read_csv(StringIO(result))
+        df = _json_sparql_to_dataframe(result)
 
         if decode_columns:
             df = query.decode_dataframe(df)

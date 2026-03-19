@@ -1,6 +1,7 @@
 """SPARQL endpoint implementations."""
 
 import gzip
+import json
 import logging
 import os
 import re
@@ -9,7 +10,7 @@ import subprocess
 import tempfile
 
 from rdflib import BNode, Dataset, Literal, URIRef
-from SPARQLWrapper import CSV, SPARQLWrapper, POST
+from sparqlite import SPARQLClient
 
 from .base import Endpoint
 from .utils import Validator
@@ -19,8 +20,7 @@ class RemoteEndpoint(Endpoint):
     """Remote SPARQL endpoint implementation."""
 
     def __init__(self, url: str, rdf_file_to_load: str | None = None):
-        self._sparql = SPARQLWrapper(url)
-        self._sparql.setReturnFormat(CSV)
+        self._client = SPARQLClient(url)
         self.endpoint_url = url
         self.rdf_file_path = rdf_file_to_load
         self._graph_uri = None
@@ -32,10 +32,7 @@ class RemoteEndpoint(Endpoint):
     def _load_data(self):
         """Load RDF data into the SPARQL endpoint using INSERT DATA."""
         assert self.rdf_file_path is not None
-        clear_query = f"CLEAR GRAPH <{self._graph_uri}>"
-        self._sparql.setQuery(clear_query)
-        self._sparql.setMethod(POST)
-        self._sparql.query()
+        self._client.update(f"CLEAR GRAPH <{self._graph_uri}>")
 
         with open(self.rdf_file_path, "r", encoding="utf-8") as f:
             chunk_size = 1000
@@ -62,12 +59,10 @@ class RemoteEndpoint(Endpoint):
             insert_query += f"    {triple} .\n"
         insert_query += "  }\n}"
 
-        self._sparql.setQuery(insert_query)
-        self._sparql.setMethod(POST)
-        self._sparql.query()
+        self._client.update(insert_query)
 
     def query(self, query: str):
-        """Execute a SPARQL query."""
+        """Execute a SPARQL query and return JSON string."""
         if self._graph_uri:
             modified_query = query.replace(
                 "WHERE {", f"WHERE {{ GRAPH <{self._graph_uri}> {{"
@@ -77,27 +72,24 @@ class RemoteEndpoint(Endpoint):
                 modified_query += "}" * bracket_count
             query = modified_query
 
-        self._sparql.setQuery(query)
-        self._sparql.setMethod(POST)
-        result = self._sparql.query().convert()
-
-        if isinstance(result, bytes):
-            return result.decode("utf-8")
-        return result
+        result = self._client.query(query, method="POST")
+        return json.dumps(result)
 
     def __repr__(self):
         return f"RemoteEndpoint({self.endpoint_url})"
+
+    def close(self):
+        self._client.close()
 
     def __del__(self):
         """Clean up by removing the graph from the endpoint."""
         if hasattr(self, "_graph_uri") and self._graph_uri:
             try:
-                clear_query = f"CLEAR GRAPH <{self._graph_uri}>"
-                self._sparql.setQuery(clear_query)
-                self._sparql.setMethod(POST)
-                self._sparql.query()
+                self._client.update(f"CLEAR GRAPH <{self._graph_uri}>")
             except Exception:
                 pass
+        if hasattr(self, "_client"):
+            self._client.close()
 
 
 class VirtuosoEndpoint(RemoteEndpoint):
@@ -112,9 +104,7 @@ class VirtuosoEndpoint(RemoteEndpoint):
         self.container_name = container_name
         self.host_bulk_load_dir = os.environ["VIRTUOSO_BULK_DIR"]
 
-        # Don't auto-load data in parent constructor
-        self._sparql = SPARQLWrapper(url)
-        self._sparql.setReturnFormat(CSV)
+        self._client = SPARQLClient(url)
         self.endpoint_url = url
         self.rdf_file_path = rdf_file_to_load
         self._graph_uri = None
@@ -128,11 +118,7 @@ class VirtuosoEndpoint(RemoteEndpoint):
         """Load RDF data using Virtuoso bulk loading instead of INSERT queries."""
         assert self.rdf_file_path is not None
 
-        # Clear existing graph first
-        clear_query = f"CLEAR GRAPH <{self._graph_uri}>"
-        self._sparql.setQuery(clear_query)
-        self._sparql.setMethod(POST)
-        self._sparql.query()
+        self._client.update(f"CLEAR GRAPH <{self._graph_uri}>")
 
         # Convert N-Triples to N-Quads with target graph
         temp_nq_file = None
@@ -196,23 +182,10 @@ class VirtuosoEndpoint(RemoteEndpoint):
             count_query = (
                 f"SELECT COUNT(*) WHERE {{ GRAPH <{self._graph_uri}> {{ ?s ?p ?o }} }}"
             )
-            self._sparql.setQuery(count_query)
-            self._sparql.setMethod(POST)
             try:
-                raw_results = self._sparql.query().convert()
-                results_str = (
-                    raw_results.decode("utf-8")
-                    if isinstance(raw_results, bytes)
-                    else str(raw_results)
-                )
-                triple_count_in_graph = 0
-                for line in results_str.split("\n"):
-                    if line and not line.startswith('"'):
-                        try:
-                            triple_count_in_graph = int(line)
-                            break
-                        except ValueError:
-                            pass
+                result = self._client.query(count_query, method="POST")
+                bindings = result["results"]["bindings"]
+                triple_count_in_graph = int(bindings[0][list(bindings[0].keys())[0]]["value"]) if bindings else 0
                 if triple_count_in_graph == 0:
                     logging.getLogger("kgi").error(
                         "WARNING: No triples were loaded into the graph!"
