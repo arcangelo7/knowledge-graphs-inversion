@@ -14,8 +14,8 @@ failed = "failed"
 passed = "passed"
 
 
-def database_load(sql_script_path: str) -> None:
-    print(f"Loading in postgresql the file: {sql_script_path}")
+def database_load(sql_script_path: str, host: str) -> None:
+    print(f"Loading in {host} the file: {sql_script_path}")
     if not os.path.exists(sql_script_path):
         raise FileNotFoundError(f"SQL script file not found: {sql_script_path}")
 
@@ -23,7 +23,7 @@ def database_load(sql_script_path: str) -> None:
         sql_script = f.read()
         statements = sql_script.split(';')
 
-    cnx = psycopg2.connect("dbname='r2rml' user='r2rml' host='postgresql' password='r2rml'")
+    cnx = psycopg2.connect(f"dbname='r2rml' user='r2rml' host='{host}' password='r2rml'")
     cursor = cnx.cursor()
     try:
         for statement in statements:
@@ -39,7 +39,7 @@ def database_load(sql_script_path: str) -> None:
     finally:
         cursor.close()
         cnx.close()
-    print(f"Successfully loaded {sql_script_path} into postgresql")
+    print(f"Successfully loaded {sql_script_path} into {host}")
 
 
 def test_one(test_id: str, database_system: str, config: ConfigParser, suite: TestSuite) -> list[list[str]]:
@@ -56,7 +56,7 @@ def test_one(test_id: str, database_system: str, config: ConfigParser, suite: Te
 
         sql_path = suite.get_sql_script_path(test_id, database_system)
         try:
-            database_load(sql_path)
+            database_load(sql_path, host=suite.source_db_host)
         except Exception as e:
             print(f"Error loading database: {str(e)}")
             return [["tester", "platform", "rdbms", "testid", "result"],
@@ -82,8 +82,7 @@ def run_test(
     expected_output = metadata['expected_output']
     output_format = config['properties'].get('output_format', 'ntriples')
 
-    morph_config_path = os.path.join(os.path.dirname(current_dir), 'morph_kgc_config.ini')
-    suite.write_morph_kgc_config(morph_config_path, t_identifier, database_system, output_format)
+    suite.write_morph_kgc_config(t_identifier, database_system, output_format)
 
     output_file = suite.get_output_file_path(output_format)
     engine_output_path = suite.get_engine_output_path(t_identifier, database_system, output_format)
@@ -98,7 +97,8 @@ def run_test(
         if os.path.isfile(expected_output_file):
             expected_output_graph.parse(expected_output_file, format="nquads")
 
-    exit_code = os.system(f"{config['properties']['engine_command']} > {engine_log_path}")
+    engine_cmd = config['properties']['engine_command'].format(config_path=suite.morph_kgc_config_path)
+    exit_code = os.system(f"{engine_cmd} > {engine_log_path}")
 
     if os.path.isfile(output_file):
         os.system(f"cp {output_file} {engine_output_path}")

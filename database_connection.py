@@ -9,12 +9,16 @@ class DatabaseConnection:
     def __init__(self):
         # Always use Docker service names since Docker is the standard setup
         self.hosts = {
-            'postgresql': 'postgresql',
-            'dest_postgresql': 'dest_postgresql'
+            'postgresql_r2rml': 'postgresql_r2rml',
+            'dest_postgresql_r2rml': 'dest_postgresql_r2rml',
+            'postgresql_rml': 'postgresql_rml',
+            'dest_postgresql_rml': 'dest_postgresql_rml',
         }
         self.ports = {
-            'postgresql': 5432,
-            'dest_postgresql': 5432
+            'postgresql_r2rml': 5432,
+            'dest_postgresql_r2rml': 5432,
+            'postgresql_rml': 5432,
+            'dest_postgresql_rml': 5432,
         }
     
     def create_engine(self, connection_string):
@@ -23,7 +27,7 @@ class DatabaseConnection:
     def get_connection_string(self, database_system):
         host = self.hosts[database_system]
         port = self.ports[database_system]
-        if database_system in ['postgresql', 'dest_postgresql']:
+        if database_system in ['postgresql_r2rml', 'dest_postgresql_r2rml', 'postgresql_rml', 'dest_postgresql_rml']:
             return f"postgresql://r2rml:r2rml@{host}:{port}/r2rml"
         else:
             raise ValueError(f"Unsupported database system: {database_system}")

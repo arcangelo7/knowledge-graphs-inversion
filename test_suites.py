@@ -15,6 +15,9 @@ class TestSuite:
     name: str
     base_dir: str
     test_id_prefix: str
+    source_db_host: str
+    dest_db_system: str
+    morph_kgc_config_path: str
 
     def list_test_ids(self) -> list[str]:
         raise NotImplementedError
@@ -40,7 +43,7 @@ class TestSuite:
     def get_output_file_path(self, output_format: str) -> str:
         raise NotImplementedError
 
-    def write_morph_kgc_config(self, config_path: str, test_id: str, database_system: str, output_format: str) -> None:
+    def write_morph_kgc_config(self, test_id: str, database_system: str, output_format: str) -> None:
         output_path = self.get_output_file_path(output_format)
         mapping_path = self.get_mapping_path(test_id)
 
@@ -52,18 +55,21 @@ class TestSuite:
         }
         config['DataSource1'] = {
             'mappings': mapping_path,
-            'db_url': 'postgresql+psycopg2://r2rml:r2rml@postgresql:5432/r2rml',
+            'db_url': f'postgresql+psycopg2://r2rml:r2rml@{self.source_db_host}:5432/r2rml',
         }
-        with open(config_path, 'w') as f:
+        with open(self.morph_kgc_config_path, 'w') as f:
             config.write(f)
 
 
 class R2RMLTestSuite(TestSuite):
-    def __init__(self, base_dir: str):
+    def __init__(self, base_dir: str, project_root: str):
         self.suite_id = 'r2rml'
         self.name = 'R2RML'
         self.base_dir = base_dir
         self.test_id_prefix = 'R2RMLTC'
+        self.source_db_host = 'postgresql_r2rml'
+        self.dest_db_system = 'dest_postgresql_r2rml'
+        self.morph_kgc_config_path = os.path.join(project_root, 'morph_kgc_config_r2rml.ini')
         self.databases_dir = os.path.join(base_dir, 'databases')
         self.manifest_graph = Dataset()
         self.manifest_graph.parse(os.path.join(base_dir, "manifest.ttl"), format='turtle')
@@ -135,11 +141,14 @@ class R2RMLTestSuite(TestSuite):
 
 
 class RMLTestSuite(TestSuite):
-    def __init__(self, base_dir: str):
+    def __init__(self, base_dir: str, project_root: str):
         self.suite_id = 'rml'
         self.name = 'RML'
         self.base_dir = base_dir
         self.test_id_prefix = 'RMLTC'
+        self.source_db_host = 'postgresql_rml'
+        self.dest_db_system = 'dest_postgresql_rml'
+        self.morph_kgc_config_path = os.path.join(project_root, 'morph_kgc_config_rml.ini')
         self.test_cases_dir = os.path.join(base_dir, 'test-cases')
         self._metadata = self._load_metadata()
 
@@ -200,8 +209,8 @@ SUITES: dict[str, TestSuite] = {}
 
 
 def register_suites(project_root: str) -> None:
-    SUITES['r2rml'] = R2RMLTestSuite(os.path.join(project_root, 'r2rml_test_cases'))
-    SUITES['rml'] = RMLTestSuite(os.path.join(project_root, 'rml_test_cases_repo'))
+    SUITES['r2rml'] = R2RMLTestSuite(os.path.join(project_root, 'r2rml_test_cases'), project_root)
+    SUITES['rml'] = RMLTestSuite(os.path.join(project_root, 'rml_test_cases_repo'), project_root)
 
 
 def get_suite(suite_id: str) -> TestSuite:

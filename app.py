@@ -2,8 +2,10 @@ import json
 import logging
 import math
 import os
+import multiprocessing
 import re
 import traceback
+from queue import Empty
 from configparser import ConfigParser
 from datetime import datetime
 
@@ -35,12 +37,9 @@ config = ConfigParser()
 config.read('config.ini')
 
 PROJECT_ROOT = os.path.dirname(__file__)
-MORPH_KCG_CONFIG_FILEPATH = os.path.join(PROJECT_ROOT, 'morph_kgc_config.ini')
 
 RR = Namespace("http://www.w3.org/ns/r2rml#")
 RML_OLD = Namespace("http://semweb.mmlab.be/ns/rml#")
-
-DEST_DB_SYSTEM = 'dest_postgresql'
 
 register_suites(PROJECT_ROOT)
 
@@ -178,43 +177,89 @@ def run_test():
         }), 500
 
 
+_SUITE_DONE = '__suite_done__'
+
+
+def _serialize_result(result: dict[str, object], suite_id: str, suite_name: str) -> dict[str, object]:
+    sanitized_raw = sanitize_data(result)
+    sanitized: dict[str, object] = sanitized_raw if isinstance(sanitized_raw, dict) else {'_raw': sanitized_raw}
+    sanitized['suite_id'] = suite_id
+    sanitized['suite_name'] = suite_name
+    return sanitized
+
+
+def _run_suite_tests(sid: str, database_system: str, result_queue: multiprocessing.Queue) -> None:
+    global db_connection, config
+    config = ConfigParser()
+    config.read('config.ini')
+    db_connection = DatabaseConnection()
+    register_suites(PROJECT_ROOT)
+    suite = get_suite(sid)
+    for test_id in suite.list_test_ids():
+        result = run_single_test(test_id, database_system, suite)
+        try:
+            result_queue.put(_serialize_result(result, sid, suite.name))
+        except Exception as e:
+            result_queue.put({
+                'status': 'error', 'test_id': test_id, 'message': str(e),
+                'suite_id': sid, 'suite_name': suite.name,
+            })
+    result_queue.put(_SUITE_DONE)
+
+
 @app.route('/run_all_tests', methods=['GET'])
 def run_all_tests():
     database_system = request.args.get('database_system', 'postgresql')
     suite_ids = request.args.get('suite_id', 'r2rml').split(',')
-
-    tests_by_suite: list[tuple[str, str]] = []
-    for sid in suite_ids:
-        suite = get_suite(sid)
-        for test_id in suite.list_test_ids():
-            tests_by_suite.append((sid, test_id))
+    use_parallel = len(suite_ids) > 1
 
     all_results: list[dict[str, object]] = []
 
     def generate():
-        for suite_id, test_id in tests_by_suite:
-            suite = get_suite(suite_id)
-            result = run_single_test(test_id, database_system, suite)
-            try:
-                sanitized_raw = sanitize_data(result)
-                sanitized: dict[str, object] = sanitized_raw if isinstance(sanitized_raw, dict) else {'_raw': sanitized_raw}
-                sanitized['suite_id'] = suite_id
-                sanitized['suite_name'] = suite.name
-                all_results.append(sanitized)
-                json_result = json.dumps(sanitized)
-                yield f"data: {json_result}\n\n"
-            except Exception as e:
-                error_msg = f"Error serializing result for test {test_id}: {str(e)}"
-                error_result: dict[str, object] = {
-                    'status': 'error', 'test_id': test_id, 'message': error_msg,
-                    'suite_id': suite_id, 'suite_name': suite.name,
-                }
-                all_results.append(error_result)
-                yield f"data: {json.dumps(error_result)}\n\n"
+        if use_parallel:
+            result_queue = multiprocessing.Queue()
+            processes = [
+                multiprocessing.Process(target=_run_suite_tests, args=(sid, database_system, result_queue))
+                for sid in suite_ids
+            ]
+            for p in processes:
+                p.start()
 
-        for suite_id in suite_ids:
-            suite = get_suite(suite_id)
-            suite_results = [r for r in all_results if r.get('suite_id') == suite_id]
+            suites_done = 0
+            while suites_done < len(suite_ids):
+                try:
+                    item = result_queue.get(timeout=0.5)
+                except Empty:
+                    continue
+                if item == _SUITE_DONE:
+                    suites_done += 1
+                    continue
+                result_item: dict[str, object] = item  # type: ignore[assignment]
+                all_results.append(result_item)
+                yield f"data: {json.dumps(result_item)}\n\n"
+
+            for p in processes:
+                p.join()
+        else:
+            for sid in suite_ids:
+                suite = get_suite(sid)
+                for test_id in suite.list_test_ids():
+                    result = run_single_test(test_id, database_system, suite)
+                    try:
+                        sanitized = _serialize_result(result, sid, suite.name)
+                        all_results.append(sanitized)
+                        yield f"data: {json.dumps(sanitized)}\n\n"
+                    except Exception as e:
+                        error: dict[str, object] = {
+                            'status': 'error', 'test_id': test_id, 'message': str(e),
+                            'suite_id': sid, 'suite_name': suite.name,
+                        }
+                        all_results.append(error)
+                        yield f"data: {json.dumps(error)}\n\n"
+
+        for sid in suite_ids:
+            suite = get_suite(sid)
+            suite_results = [r for r in all_results if r.get('suite_id') == sid]
             generate_test_report(suite_results, database_system, suite)
 
         yield "event: complete\ndata: All tests completed\n\n"
@@ -259,13 +304,15 @@ def drop_tables(db_connection: DatabaseConnection, database_system: str) -> None
 
 
 def run_single_test(test_id: str, database_system: str, suite: TestSuite) -> dict[str, object]:
-    original_dir = os.getcwd()
+    source_db = suite.source_db_host
+    dest_db = suite.dest_db_system
+
     try:
-        drop_tables(db_connection, database_system)
-        drop_tables(db_connection, DEST_DB_SYSTEM)
+        drop_tables(db_connection, source_db)
+        drop_tables(db_connection, dest_db)
 
         sql_path = suite.get_sql_script_path(test_id, database_system)
-        database_load(sql_path)
+        database_load(sql_path, host=suite.source_db_host)
 
         mapping_file = suite.get_mapping_path(test_id)
         with open(mapping_file, 'r', encoding='utf-8') as f:
@@ -276,8 +323,8 @@ def run_single_test(test_id: str, database_system: str, suite: TestSuite) -> dic
 
         raw_results = test_one(test_id, database_system, config, suite)
 
-        dest_db_url = db_connection.get_connection_string(DEST_DB_SYSTEM)
-        inversion_result = inversion(MORPH_KCG_CONFIG_FILEPATH, test_id, dest_db_url)
+        dest_db_url = db_connection.get_connection_string(dest_db)
+        inversion_result = inversion(suite.morph_kgc_config_path, test_id, dest_db_url)
 
         inversion_status: str | None = None
         if isinstance(inversion_result, dict) and '__status__' in inversion_result:
@@ -289,7 +336,7 @@ def run_single_test(test_id: str, database_system: str, suite: TestSuite) -> dic
             inversion_reason = ''
 
         if inversion_success:
-            databases_equal, comparison_message, source_content, dest_content, comparison_status = compare_databases(db_connection, database_system, DEST_DB_SYSTEM, mapping_content)
+            databases_equal, comparison_message, source_content, dest_content, comparison_status = compare_databases(db_connection, source_db, dest_db, mapping_content)
         elif inversion_status == 'not_supported':
             databases_equal = None
             comparison_message = f"Inversion not supported: {inversion_reason}"
@@ -297,23 +344,23 @@ def run_single_test(test_id: str, database_system: str, suite: TestSuite) -> dic
             dest_content = None
             comparison_status = None
         elif inversion_status == 'non_invertible':
-            databases_equal, _, source_content, dest_content, _ = compare_databases(db_connection, database_system, DEST_DB_SYSTEM, mapping_content)
+            databases_equal, _, source_content, dest_content, _ = compare_databases(db_connection, source_db, dest_db, mapping_content)
             databases_equal = None
             comparison_message = f"Non-invertible mapping detected: {inversion_reason}"
             comparison_status = 'non_invertible'
         elif inversion_status == 'mapping_error':
-            databases_equal, _, source_content, dest_content, _ = compare_databases(db_connection, database_system, DEST_DB_SYSTEM, mapping_content)
+            databases_equal, _, source_content, dest_content, _ = compare_databases(db_connection, source_db, dest_db, mapping_content)
             databases_equal = None
             comparison_message = f"Invalid mapping: {inversion_reason}"
             comparison_status = 'mapping_error'
         elif inversion_status in ['no_input_file', 'no_data_generated']:
-            databases_equal, comparison_message, source_content, dest_content, comparison_status = compare_databases(db_connection, database_system, DEST_DB_SYSTEM, mapping_content)
+            databases_equal, comparison_message, source_content, dest_content, comparison_status = compare_databases(db_connection, source_db, dest_db, mapping_content)
             if not databases_equal and not dest_content:
                 databases_equal = True
                 comparison_message = "Inversion correctly not performed due to mapping errors - destination database appropriately empty"
                 comparison_status = None
         else:
-            databases_equal, comparison_message, source_content, dest_content, comparison_status = compare_databases(db_connection, database_system, DEST_DB_SYSTEM, mapping_content)
+            databases_equal, comparison_message, source_content, dest_content, comparison_status = compare_databases(db_connection, source_db, dest_db, mapping_content)
 
         processed_results = process_results(
             raw_results, mapping_content, test_id, database_system,
@@ -321,7 +368,6 @@ def run_single_test(test_id: str, database_system: str, suite: TestSuite) -> dic
             source_content, dest_content, suite, inversion_status, comparison_status
         )
 
-        os.chdir(original_dir)
         return {
             'status': 'success',
             'test_id': test_id,
@@ -329,7 +375,6 @@ def run_single_test(test_id: str, database_system: str, suite: TestSuite) -> dic
         }
     except Exception as e:
         error_traceback = traceback.format_exc()
-        os.chdir(original_dir)
         return {
             'status': 'error',
             'test_id': test_id,

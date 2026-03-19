@@ -128,6 +128,10 @@ def test_logging_setup(test_id: str):
         os.remove(log_file)
 
     logger = get_logger()
+    for handler in logger.handlers[:]:
+        if isinstance(handler, logging.FileHandler):
+            handler.close()
+            logger.removeHandler(handler)
     logger.setLevel(logging.DEBUG)
     formatter = logging.Formatter("%(name)s - %(levelname)s - %(message)s")
     file_handler = logging.FileHandler(log_file)

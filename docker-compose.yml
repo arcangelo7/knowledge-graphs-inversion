@@ -15,23 +15,27 @@ services:
       - FLASK_DEBUG=1
       - EMBEDDED_VIRTUOSO=true
     depends_on:
-      postgresql:
+      postgresql_r2rml:
         condition: service_healthy
-      dest_postgresql:
+      dest_postgresql_r2rml:
+        condition: service_healthy
+      postgresql_rml:
+        condition: service_healthy
+      dest_postgresql_rml:
         condition: service_healthy
     restart: unless-stopped
 
-  postgresql:
+  postgresql_r2rml:
     image: postgres:13
-    container_name: kgi-postgresql
+    container_name: kgi-postgresql-r2rml
     environment:
       POSTGRES_PASSWORD: r2rml
       POSTGRES_USER: r2rml
       POSTGRES_DB: r2rml
     ports:
-      - "5432:5432"
+      - "5440:5432"
     volumes:
-      - ./postgresql_data:/var/lib/postgresql/data
+      - ./postgresql_r2rml_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U r2rml -d r2rml"]
       interval: 10s
@@ -39,17 +43,53 @@ services:
       retries: 5
     restart: unless-stopped
 
-  dest_postgresql:
+  dest_postgresql_r2rml:
     image: postgres:13
-    container_name: kgi-dest-postgresql
+    container_name: kgi-dest-postgresql-r2rml
     environment:
       POSTGRES_PASSWORD: r2rml
       POSTGRES_USER: r2rml
       POSTGRES_DB: r2rml
     ports:
-      - "5433:5432"
+      - "5441:5432"
     volumes:
-      - ./dest_postgresql_data:/var/lib/postgresql/data
+      - ./dest_postgresql_r2rml_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U r2rml -d r2rml"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  postgresql_rml:
+    image: postgres:13
+    container_name: kgi-postgresql-rml
+    environment:
+      POSTGRES_PASSWORD: r2rml
+      POSTGRES_USER: r2rml
+      POSTGRES_DB: r2rml
+    ports:
+      - "5442:5432"
+    volumes:
+      - ./postgresql_rml_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U r2rml -d r2rml"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  dest_postgresql_rml:
+    image: postgres:13
+    container_name: kgi-dest-postgresql-rml
+    environment:
+      POSTGRES_PASSWORD: r2rml
+      POSTGRES_USER: r2rml
+      POSTGRES_DB: r2rml
+    ports:
+      - "5443:5432"
+    volumes:
+      - ./dest_postgresql_rml_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U r2rml -d r2rml"]
       interval: 10s

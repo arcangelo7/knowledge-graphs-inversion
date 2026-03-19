@@ -23,13 +23,16 @@ rml_test_cases_repo/test-cases/**/*.ttl
 rml_test_cases_repo/test-cases/**/*.log
 rml_test_cases_repo/test-cases/output.*
 inversion.log
+morph_kgc_config_*.ini
 
 # Virtuoso data directory
 virtuoso-data/
 
 # PostgreSQL data directories
-postgresql_data/
-dest_postgresql_data/
+postgresql_r2rml_data/
+dest_postgresql_r2rml_data/
+postgresql_rml_data/
+dest_postgresql_rml_data/
 benchmark_postgresql_data/
 benchmark_virtuoso_data/
 
