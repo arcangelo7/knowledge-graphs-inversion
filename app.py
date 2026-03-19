@@ -10,14 +10,12 @@ from configparser import ConfigParser
 from datetime import datetime
 
 import pandas as pd
-import sqlalchemy
 from flask import (Flask, Response, jsonify, render_template, request,
                    stream_with_context)
-from rdflib import Graph, Namespace
+from rdflib import ConjunctiveGraph, Graph, Namespace, compare
 
 from database_connection import DatabaseConnection
 from kgi.core import inversion
-from test_runner import database_load, test_one
 from test_suites import TestSuite, register_suites, get_suite, SUITES
 
 logging.getLogger('morph_kgc').setLevel(logging.ERROR)
@@ -291,16 +289,97 @@ def get_file_content():
         return jsonify({'error': 'File not found'}), 404
 
 
-def drop_tables(db_connection: DatabaseConnection, database_system: str) -> None:
-    connection_string = db_connection.get_connection_string(database_system)
-    engine = db_connection.create_engine(connection_string)
+FAILED = "failed"
+PASSED = "passed"
+
+
+def test_one(test_id: str, database_system: str, config: ConfigParser, suite: TestSuite) -> list[list[str]]:
     try:
-        with engine.begin():
-            metadata = sqlalchemy.MetaData()
-            metadata.reflect(bind=engine)
-            metadata.drop_all(engine)
-    finally:
-        engine.dispose()
+        metadata = suite.get_test_metadata(test_id)
+        if metadata is None:
+            print(f"Test {test_id} not found in {suite.name} suite")
+            return [["tester", "platform", "rdbms", "testid", "result"],
+                    [config["tester"]["tester_name"], config["engine"]["engine_name"],
+                     "PostgreSQL", test_id, "error"]]
+
+        print(f"Testing {suite.name} test-case: {test_id} ({metadata['title']})")
+        print(f"Purpose of this test is: {metadata['purpose']}")
+
+        return _run_test(test_id, metadata, database_system, config, suite)
+    except Exception as e:
+        print(f"Error in test_one: {str(e)}")
+        return [["tester", "platform", "rdbms", "testid", "result"],
+                [config["tester"]["tester_name"], config["engine"]["engine_name"],
+                 "PostgreSQL", test_id, "error"]]
+
+
+def _run_test(
+    t_identifier: str,
+    metadata: dict[str, str | bool],
+    database_system: str,
+    config: ConfigParser,
+    suite: TestSuite,
+) -> list[list[str]]:
+    results: list[list[str]] = [["tester", "platform", "rdbms", "testid", "result"]]
+    expected_output = metadata['expected_output']
+    output_format = config['properties'].get('output_format', 'ntriples')
+
+    suite.write_morph_kgc_config(t_identifier, database_system, output_format)
+
+    output_file = suite.get_output_file_path(output_format)
+    engine_output_path = suite.get_engine_output_path(t_identifier, database_system, output_format)
+    engine_log_path = suite.get_engine_log_path(t_identifier, database_system)
+
+    expected_output_graph = ConjunctiveGraph()
+    if os.path.isfile(output_file):
+        os.system(f"rm {output_file}")
+
+    if expected_output:
+        expected_output_file = suite.get_expected_output_path(t_identifier)
+        if os.path.isfile(expected_output_file):
+            expected_output_graph.parse(expected_output_file, format="nquads")
+
+    engine_cmd = config['properties']['engine_command'].format(config_path=suite.morph_kgc_config_path)
+    exit_code = os.system(f"{engine_cmd} > {engine_log_path}")
+
+    if os.path.isfile(output_file):
+        os.system(f"cp {output_file} {engine_output_path}")
+
+        if expected_output:
+            output_graph = ConjunctiveGraph()
+            iso_expected = compare.to_isomorphic(expected_output_graph)
+            try:
+                output_graph.parse(output_file, format=output_format)
+                iso_output = compare.to_isomorphic(output_graph)
+                if iso_expected == iso_output:
+                    result = PASSED
+                else:
+                    print("Output RDF does not match with the expected RDF")
+                    result = FAILED
+            except Exception:
+                print("Output RDF is invalid")
+                result = FAILED
+        elif exit_code != 0:
+            print("The processor returned a non-zero error code signalling a mistake")
+            result = PASSED
+        else:
+            print("Output RDF found but none was expected")
+            result = FAILED
+    else:
+        if expected_output:
+            if len(expected_output_graph) == 0:
+                result = PASSED
+            else:
+                print("No RDF output found while output was expected")
+                result = FAILED
+        else:
+            result = PASSED
+
+    results.append([
+        config["tester"]["tester_name"], config["engine"]["engine_name"],
+        "PostgreSQL", t_identifier, result
+    ])
+    return results
 
 
 def run_single_test(test_id: str, database_system: str, suite: TestSuite) -> dict[str, object]:
@@ -308,11 +387,11 @@ def run_single_test(test_id: str, database_system: str, suite: TestSuite) -> dic
     dest_db = suite.dest_db_system
 
     try:
-        drop_tables(db_connection, source_db)
-        drop_tables(db_connection, dest_db)
+        db_connection.drop_all_tables(source_db)
+        db_connection.drop_all_tables(dest_db)
 
         sql_path = suite.get_sql_script_path(test_id, database_system)
-        database_load(sql_path, host=suite.source_db_host)
+        db_connection.load_sql_script(source_db, sql_path)
 
         mapping_file = suite.get_mapping_path(test_id)
         with open(mapping_file, 'r', encoding='utf-8') as f:
@@ -666,8 +745,8 @@ def compare_databases(
                 mismatched_tables.append(f"{table_name} (columns mismatch)")
                 continue
 
-            source_df = pd.DataFrame(source_table['data'], columns=source_table['columns'])
-            dest_df = pd.DataFrame(dest_table['data'], columns=dest_table['columns'])
+            source_df = pd.DataFrame(source_table['data'], columns=pd.Index(source_table['columns']))
+            dest_df = pd.DataFrame(dest_table['data'], columns=pd.Index(dest_table['columns']))
 
             if source_df.empty and dest_df.empty:
                 continue
