@@ -1,78 +1,27 @@
 # RML Inversion
 
-A tool for **RML inversion**: converting RDF knowledge graphs back to their original data formats (CSV, SQL) by reversing the RML mapping process.
+Given an RDF graph and the [R2RML](https://www.w3.org/TR/r2rml/)/[RML](https://kg-construct.github.io/rml-core/spec/docs/) mapping that produced it, this tool reconstructs the original relational data. It parses the mapping document, generates SPARQL queries that reverse each mapping rule, and writes the results back as SQL statements to reconstruct the original database tables.
 
-## Overview
+Full documentation at [arcangelo7.github.io/knowledge-graphs-inversion](https://arcangelo7.github.io/knowledge-graphs-inversion/).
 
-This project implements the inverse process of RML (RDF Mapping Language):
-- **Forward RML**: CSV/SQL → RDF using morph-kgc
-- **Inverse RML**: RDF → CSV/SQL (this project)
+## Quick start
 
-Currently supports:
-- **CSV files** 
-- **SQL databases**
-
-## Requirements
-
-- Python 3.12
-- Docker
-
-## Quick Start
+Requires Python 3.12 and [uv](https://docs.astral.sh/uv/):
 
 ```bash
-# Clone the repository
 git clone https://github.com/arcangelo7/knowledge-graphs-inversion.git
-cd knowledge-graphs-inversion
-
-docker compose up
-
-# Access the web interface at http://localhost:5000
 ```
 
-## Benchmarking
-
-This project integrates the [KROWN benchmark framework](https://github.com/kg-construct/KROWN) for evaluating the performance of the knowledge graphs inversion system with PostgreSQL focus.
-
-### Setup Benchmark Environment
-
-**Initialize KROWN submodule:**
 ```bash
-git submodule update --init --recursive
+cd knowledge-graphs-inversion && uv sync
 ```
 
-### Running KROWN Benchmark
+```python
+from kgi.core import inversion
 
-**Run with Docker:**
-```bash
-# Start all services and run benchmark
-docker compose -f docker-compose.benchmark.yml up
-
-# Run with multiple iterations for statistical analysis (plots auto-generated)
-docker compose -f docker-compose.benchmark.yml run benchmark benchmark --iterations 10
-
-# Run without Virtuoso (in-memory RDF)
-docker compose -f docker-compose.benchmark.yml run benchmark benchmark --no-virtuoso
-
-# Stop all services
-docker compose -f docker-compose.benchmark.yml down
+result = inversion(config_file="morph_kgc_config.ini")
 ```
-
-### Benchmark Results
-
-Results are stored in `benchmarks/krown/results/` with:
-- Execution times for each scenario
-- Statistical metrics when using `--iterations > 1`:
-  - Mean, median, standard deviation, 95% confidence intervals
-  - Outlier detection and percentiles
-  - Box plots automatically generated (PNG files)
-- Data and mapping file sizes
-- Triple Maps and Predicate Object Maps counts
-- JSON format for analysis
 
 ## License
 
-ISC License
-
-## Author
-
-**arcangelo7** - arcangelo.massari@unibo.it
+ISC

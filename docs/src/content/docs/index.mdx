@@ -1,0 +1,21 @@
+---
+title: RML Inversion
+description: Convert RDF knowledge graphs back to relational data using R2RML mappings.
+template: splash
+hero:
+  title: RML Inversion
+  tagline: Reverse the RML mapping process to reconstruct relational data from RDF knowledge graphs.
+  actions:
+    - text: Get started
+      link: /knowledge-graphs-inversion/getting-started/installation/
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/arcangelo7/knowledge-graphs-inversion
+      variant: minimal
+---
+
+## What does it do?
+
+[RML](https://kg-construct.github.io/rml-core/spec/docs/) (RDF Mapping Language) and [R2RML](https://www.w3.org/TR/r2rml/) transform relational databases into RDF graphs. This tool does the opposite: given an RDF graph and the mapping that produced it, it reconstructs the original relational data.
+
+The tool reads an R2RML or RML mapping document, generates SPARQL queries that reverse each mapping rule, and executes them against the RDF graph (N-Triples or N-Quads). The query results are then written back as SQL statements that reconstruct the original database tables.
