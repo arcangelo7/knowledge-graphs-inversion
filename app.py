@@ -393,7 +393,7 @@ def _run_test(
         if expected_output:
             output_store = Store()
             try:
-                rdf_format = RdfFormat.TURTLE if output_format == "turtle" else RdfFormat.N_TRIPLES
+                rdf_format = RdfFormat.TURTLE if output_format == "turtle" else RdfFormat.N_QUADS if output_format == "nquads" else RdfFormat.N_TRIPLES
                 output_store.load(path=output_file, format=rdf_format)
                 if _graphs_isomorphic(expected_output_store, output_store):
                     result = PASSED

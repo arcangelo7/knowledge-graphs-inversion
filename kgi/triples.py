@@ -9,6 +9,7 @@ from .base import Triple
 from .constants import (
     RML_BLANK_NODE,
     RML_CONSTANT,
+    RML_DEFAULT_GRAPH,
     RML_IRI,
     RML_LITERAL,
     RML_PARENT_TRIPLES_MAP,
@@ -167,10 +168,34 @@ class QueryTriple(Triple):
             is not None
         }
 
+    def _wrap_in_graph(self, pattern: str) -> str:
+        graph_iri = self._graph_iri()
+        if graph_iri is not None:
+            return f"GRAPH <{graph_iri}> {{\n{pattern}\n}}"
+        return pattern
+
+    def _graph_iri(self) -> str | None:
+        graph_map_type = self.rule.get("graph_map_type")
+        if isinstance(graph_map_type, str) and graph_map_type == RML_CONSTANT:
+            graph_iri = str(self.rule["graph_map_value"])
+            if graph_iri != RML_DEFAULT_GRAPH:
+                return graph_iri
+        return None
+
     def generate(
         self, id_generator: IdGenerator, codex: Codex, all_mapping_rules: pd.DataFrame
     ) -> str | None:
-        """Generate SPARQL triple pattern."""
+        """Generate SPARQL triple pattern, wrapped in GRAPH block if needed."""
+        pattern = self._generate_pattern(id_generator, codex, all_mapping_rules)
+        if pattern is None:
+            return None
+        if str(self.rule["object_map_type"]) == RML_PARENT_TRIPLES_MAP:
+            return pattern
+        return self._wrap_in_graph(pattern)
+
+    def _generate_pattern(
+        self, id_generator: IdGenerator, codex: Codex, all_mapping_rules: pd.DataFrame
+    ) -> str | None:
         subject_reference = codex.get_id(str(self.rule["subject_map_value"]))
         predicate = f"<{self.rule['predicate_map_value']}>"
         object_map_value = str(self.rule["object_map_value"])
@@ -276,9 +301,15 @@ class QueryTriple(Triple):
             object_reference = codex.get_id(object_map_value)
             predicate = f"<{self.rule['predicate_map_value']}>"
 
-            lines = [
-                f"OPTIONAL {{ ?{subject_reference} {predicate} ?{object_reference} ."
-            ]
+            graph_iri = self._graph_iri()
+            if graph_iri is not None:
+                lines = [
+                    f"OPTIONAL {{ GRAPH <{graph_iri}> {{ ?{subject_reference} {predicate} ?{object_reference} ."
+                ]
+            else:
+                lines = [
+                    f"OPTIONAL {{ ?{subject_reference} {predicate} ?{object_reference} ."
+                ]
 
             join_conditions = json.loads(
                 str(self.rule["object_join_conditions"]).replace("'", '"')
@@ -329,7 +360,10 @@ class QueryTriple(Triple):
                     evaluated_template = post_string
                     current_slice = next_slice
 
-            lines.append("}")
+            if graph_iri is not None:
+                lines.append("} }")
+            else:
+                lines.append("}")
             return "\n".join(lines)
 
         else:

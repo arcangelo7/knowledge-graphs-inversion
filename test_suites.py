@@ -54,9 +54,11 @@ class TestSuite:
         output_path = self.get_output_file_path(output_format)
         mapping_path = self.get_mapping_path(test_id)
 
+        morph_format = 'N-QUADS' if output_format == 'nquads' else 'TURTLE' if output_format == 'turtle' else 'N-TRIPLES'
         config = ConfigParser()
         config['CONFIGURATION'] = {
             'output_file': output_path,
+            'output_format': morph_format,
             'infer_sql_datatypes': 'yes',
             'logging_level': 'ERROR',
         }
@@ -161,7 +163,7 @@ class R2RMLTestSuite(TestSuite):
         return os.path.join(self.base_dir, test_id, f'engine_output-{database_system}.log')
 
     def get_output_file_path(self, output_format: str) -> str:
-        ext = 'ttl' if output_format == 'turtle' else 'nt'
+        ext = 'ttl' if output_format == 'turtle' else 'nq' if output_format == 'nquads' else 'nt'
         return os.path.join(self.base_dir, f'output.{ext}')
 
 
@@ -226,7 +228,7 @@ class RMLTestSuite(TestSuite):
         return os.path.join(self.test_cases_dir, test_id, f'engine_output-{database_system}.log')
 
     def get_output_file_path(self, output_format: str) -> str:
-        ext = 'ttl' if output_format == 'turtle' else 'nt'
+        ext = 'ttl' if output_format == 'turtle' else 'nq' if output_format == 'nquads' else 'nt'
         return os.path.join(self.test_cases_dir, f'output.{ext}')
 
 

@@ -208,7 +208,7 @@ class KrownBenchmarkRunner:
         config.add_section('CONFIGURATION')
         config.set('CONFIGURATION', 'na_values', ',#N/A,N/A,#N/A N/A,n/a,NA,<NA>,#NA,NULL,null,NaN,nan,None')
         config.set('CONFIGURATION', 'output_file', str(shared_dir / mapping_step["parameters"]["output_file"]))
-        config.set('CONFIGURATION', 'output_format', 'N-TRIPLES')
+        config.set('CONFIGURATION', 'output_format', 'N-QUADS')
         config.set('CONFIGURATION', 'only_printable_characters', 'no')
         config.set('CONFIGURATION', 'safe_percent_encoding', '')
         config.set('CONFIGURATION', 'mapping_partitioning', 'PARTIAL-AGGREGATIONS')
@@ -281,7 +281,7 @@ class KrownBenchmarkRunner:
 
         config.add_section('CONFIGURATION')
         config.set('CONFIGURATION', 'output_file', str(shared_dir / inversion_step["parameters"]["rdf_file"]))
-        config.set('CONFIGURATION', 'output_format', 'N-TRIPLES')
+        config.set('CONFIGURATION', 'output_format', 'N-QUADS')
 
         config.add_section('DataSource1')
         config.set('DataSource1', 'mappings', str(shared_dir / inversion_step["parameters"]["mapping_file"]))

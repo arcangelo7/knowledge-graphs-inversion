@@ -11,6 +11,7 @@ RML_IRI = "http://w3id.org/rml/IRI"
 RML_LITERAL = "http://w3id.org/rml/Literal"
 RML_PARENT_TRIPLES_MAP = "http://w3id.org/rml/parentTriplesMap"
 RML_REFERENCE = "http://w3id.org/rml/reference"
+RML_DEFAULT_GRAPH = "http://w3id.org/rml/defaultGraph"
 RML_TEMPLATE = "http://w3id.org/rml/template"
 
 # R2RML namespace constants (pyoxigraph NamedNodes)
