@@ -5,6 +5,11 @@ on:
     branches: [master]
     paths:
       - 'docs/**'
+  workflow_run:
+    workflows: ["Run tests"]
+    types:
+      - completed
+    branches: [master]
   workflow_dispatch:
 
 permissions:
@@ -21,6 +26,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
+      - name: Find latest successful test run
+        id: find-run
+        run: |
+          RUN_ID=$(gh run list --workflow "Run tests" --branch master --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          echo "run-id=$RUN_ID" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Download coverage artifact
+        if: steps.find-run.outputs.run-id != ''
+        uses: actions/download-artifact@v8
+        with:
+          name: coverage-report
+          path: docs/public/coverage
+          run-id: ${{ steps.find-run.outputs.run-id }}
+          github-token: ${{ github.token }}
+        continue-on-error: true
+
       - uses: withastro/action@v6
         with:
           path: ./docs
