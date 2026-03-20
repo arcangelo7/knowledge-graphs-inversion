@@ -15,15 +15,37 @@ git submodule update --init --recursive
 
 ## Running the test suite
 
-The entire test suite runs through Docker Compose, which manages the required external services (PostgreSQL databases for source and destination data):
+There are two ways to run the conformance tests: from the terminal via pytest, or through a web dashboard that provides richer feedback for debugging.
+
+### Terminal
+
+Pytest manages the PostgreSQL containers automatically, so no manual Docker setup is needed beyond having Docker running:
+
+```bash
+uv run pytest -v
+```
+
+To run a single test case:
+
+```bash
+uv run pytest tests/test_conformance.py::test_r2rml_conformance[R2RMLTC0001a] -v
+```
+
+To generate an HTML coverage report:
+
+```bash
+uv run pytest --cov --cov-report=html -v
+```
+
+### Web dashboard
+
+The dashboard runs through Docker Compose and lets you run individual test cases or the full suite. For each test case it shows the generated SPARQL queries, the reconstructed SQL, and a side-by-side comparison of the original and inverted database content, which is useful when diagnosing why a particular inversion fails.
 
 ```bash
 docker compose up
 ```
 
-The web interface at `http://localhost:5000` lets you run individual test cases or the full suite. Each run compares the original database content against the reconstructed output and reports whether the inversion matches.
-
-Results are saved to the `test_results/` directory as JSON and Markdown reports.
+The interface is available at `http://localhost:5000`. Results are saved to `test_results/` as JSON and Markdown reports.
 
 ## W3C R2RML test suite
 

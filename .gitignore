@@ -1,4 +1,6 @@
 __pycache__
+.coverage
+htmlcov/
 individual-logs/
 
 # Benchmark results and generated data

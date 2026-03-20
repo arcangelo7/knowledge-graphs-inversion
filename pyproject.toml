@@ -18,6 +18,7 @@ dependencies = [
     "sparqlite>=1.2.1",
     "pyoxigraph>=0.5.6",
     "rich>=14.3.3",
+    "falcon>=4",  # morph-kgc depends on falcon 3.x which fails to build on Python 3.13+
 ]
 
 [tool.uv]
