@@ -2,12 +2,19 @@ import csv
 import os
 from configparser import ConfigParser
 
-from rdflib import Dataset, Literal, Namespace
+from pyoxigraph import BlankNode, Literal, NamedNode, RdfFormat, Store, Triple
 
-RDB2RDFTEST = Namespace("http://purl.org/NET/rdb2rdf-test#")
-TESTDEC = Namespace("http://www.w3.org/2006/03/test-description#")
-DCELEMENTS = Namespace("http://purl.org/dc/terms/")
-RR = Namespace("http://www.w3.org/ns/r2rml#")
+type RdfSubject = NamedNode | BlankNode | Triple
+type RdfTerm = NamedNode | BlankNode | Literal | Triple
+
+RDB2RDFTEST_DATABASE = NamedNode("http://purl.org/NET/rdb2rdf-test#database")
+RDB2RDFTEST_SQL_SCRIPT = NamedNode("http://purl.org/NET/rdb2rdf-test#sqlScriptFile")
+RDB2RDFTEST_HAS_EXPECTED_OUTPUT = NamedNode("http://purl.org/NET/rdb2rdf-test#hasExpectedOutput")
+RDB2RDFTEST_MAPPING_DOC = NamedNode("http://purl.org/NET/rdb2rdf-test#mappingDocument")
+RDB2RDFTEST_OUTPUT = NamedNode("http://purl.org/NET/rdb2rdf-test#output")
+DCELEMENTS_IDENTIFIER = NamedNode("http://purl.org/dc/terms/identifier")
+DCELEMENTS_TITLE = NamedNode("http://purl.org/dc/terms/title")
+TESTDEC_PURPOSE = NamedNode("http://www.w3.org/2006/03/test-description#purpose")
 
 
 class TestSuite:
@@ -71,8 +78,8 @@ class R2RMLTestSuite(TestSuite):
         self.dest_db_system = 'dest_postgresql_r2rml'
         self.morph_kgc_config_path = os.path.join(project_root, 'morph_kgc_config_r2rml.ini')
         self.databases_dir = os.path.join(base_dir, 'databases')
-        self.manifest_graph = Dataset()
-        self.manifest_graph.parse(os.path.join(base_dir, "manifest.ttl"), format='turtle')
+        self.manifest_store = Store()
+        self.manifest_store.load(path=os.path.join(base_dir, "manifest.ttl"), format=RdfFormat.TURTLE)
 
     def list_test_ids(self) -> list[str]:
         return sorted([
@@ -87,16 +94,26 @@ class R2RMLTestSuite(TestSuite):
     def get_mapping_path(self, test_id: str) -> str:
         return os.path.join(self.base_dir, test_id, self._get_mapping_filename(test_id))
 
+    def _find_subject(self, predicate: NamedNode, obj: RdfTerm) -> RdfSubject | None:
+        for quad in self.manifest_store.quads_for_pattern(None, predicate, obj):
+            return quad.subject
+        return None
+
+    def _find_object(self, subject: RdfSubject | None, predicate: NamedNode) -> RdfTerm | None:
+        for quad in self.manifest_store.quads_for_pattern(subject, predicate, None):
+            return quad.object
+        return None
+
+    def _find_object_value(self, subject: RdfSubject | None, predicate: NamedNode) -> str:
+        term = self._find_object(subject, predicate)
+        assert isinstance(term, (NamedNode, BlankNode, Literal))
+        return term.value
+
     def get_sql_script_path(self, test_id: str, database_system: str) -> str:
-        test_uri = self.manifest_graph.value(
-            subject=None, predicate=DCELEMENTS.identifier, object=Literal(test_id)
-        )
-        database_uri = self.manifest_graph.value(
-            subject=test_uri, predicate=RDB2RDFTEST.database, object=None
-        )
-        database_script = str(self.manifest_graph.value(
-            subject=database_uri, predicate=RDB2RDFTEST.sqlScriptFile, object=None
-        ))
+        test_uri = self._find_subject(DCELEMENTS_IDENTIFIER, Literal(test_id))
+        database_uri = self._find_object(test_uri, RDB2RDFTEST_DATABASE)
+        assert isinstance(database_uri, (NamedNode, BlankNode))
+        database_script = self._find_object_value(database_uri, RDB2RDFTEST_SQL_SCRIPT)
         base_name, ext = os.path.splitext(database_script)
         system_specific = f"{base_name}-{database_system}{ext}"
         if os.path.exists(os.path.join(self.databases_dir, system_specific)):
@@ -109,23 +126,31 @@ class R2RMLTestSuite(TestSuite):
         return os.path.join(self.base_dir, test_id, f'mapped{suffix}.nq')
 
     def get_test_metadata(self, test_id: str) -> dict[str, str | bool] | None:
-        test_uri = self.manifest_graph.value(
-            subject=None, predicate=DCELEMENTS.identifier, object=Literal(test_id)
-        )
+        test_uri = self._find_subject(DCELEMENTS_IDENTIFIER, Literal(test_id))
         if test_uri is None:
             return None
-        title = self.manifest_graph.value(subject=test_uri, predicate=DCELEMENTS.title)
-        purpose = self.manifest_graph.value(subject=test_uri, predicate=TESTDEC.purpose)
-        expected_output = self.manifest_graph.value(subject=test_uri, predicate=RDB2RDFTEST.hasExpectedOutput)
-        mapping_doc = self.manifest_graph.value(subject=test_uri, predicate=RDB2RDFTEST.mappingDocument)
-        output_file = self.manifest_graph.value(subject=test_uri, predicate=RDB2RDFTEST.output)
-        has_expected = bool(expected_output) and isinstance(expected_output, Literal) and expected_output.toPython() is True
+        title = self._find_object(test_uri, DCELEMENTS_TITLE)
+        purpose = self._find_object(test_uri, TESTDEC_PURPOSE)
+        expected_output = self._find_object(test_uri, RDB2RDFTEST_HAS_EXPECTED_OUTPUT)
+        mapping_doc = self._find_object(test_uri, RDB2RDFTEST_MAPPING_DOC)
+        output_file = self._find_object(test_uri, RDB2RDFTEST_OUTPUT)
+        has_expected = (
+            isinstance(expected_output, Literal)
+            and expected_output.value == "true"
+            and expected_output.datatype.value == "http://www.w3.org/2001/XMLSchema#boolean"
+        )
+        def _val(term: RdfTerm | None) -> str:
+            if term is None:
+                return ''
+            assert isinstance(term, (NamedNode, BlankNode, Literal))
+            return term.value
+
         return {
-            'title': str(title) if title else '',
-            'purpose': str(purpose) if purpose else 'Purpose not specified',
+            'title': _val(title),
+            'purpose': _val(purpose) or 'Purpose not specified',
             'expected_output': has_expected,
-            'mapping_document': str(mapping_doc) if mapping_doc else '',
-            'output_file': str(output_file) if output_file else '',
+            'mapping_document': _val(mapping_doc),
+            'output_file': _val(output_file),
         }
 
     def get_engine_output_path(self, test_id: str, database_system: str, output_format: str) -> str:

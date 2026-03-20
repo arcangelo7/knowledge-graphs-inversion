@@ -8,13 +8,14 @@ import morph_kgc.config
 import pandas as pd
 from morph_kgc.args_parser import load_config_from_argument
 from morph_kgc.mapping.mapping_parser import retrieve_mappings
-from rdflib import RDF, Graph, Namespace
+from pyoxigraph import NamedNode, RdfFormat, Store
 
 from .constants import (
     RML_BLANK_NODE,
     RML_PARENT_TRIPLES_MAP,
     RML_REFERENCE,
     RML_TEMPLATE,
+    RR_SUBJECT_MAP,
     TEST_LOG_FOLDER,
 )
 from .endpoints import EndpointFactory, RemoteEndpoint, VirtuosoEndpoint
@@ -23,7 +24,9 @@ from .schema import DatabaseSchemaRetriever, apply_schema_ordering, apply_schema
 from .templates import CSVTemplate, JSONTemplate, RDBTemplate
 from .utils import insert_columns
 
-RR = Namespace("http://www.w3.org/ns/r2rml#")
+RR_SQL_QUERY = NamedNode("http://www.w3.org/ns/r2rml#sqlQuery")
+RR_TRIPLES_MAP = NamedNode("http://www.w3.org/ns/r2rml#TriplesMap")
+RDF_TYPE = NamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")
 
 
 def get_logger() -> logging.Logger:
@@ -31,18 +34,20 @@ def get_logger() -> logging.Logger:
     return logging.getLogger("kgi")
 
 
+def _parse_mapping_store(mapping_file: str) -> Store:
+    store = Store()
+    store.load(path=mapping_file, format=RdfFormat.TURTLE)
+    return store
+
+
 def check_for_sql_queries(config: morph_kgc.config.Config) -> bool:
     """Check if mapping contains rr:sqlQuery (not supported)."""
     try:
-        data_source_sections = config.get_data_sources_sections()
-        for section in data_source_sections:
-            mapping_files = config.get_mappings_files(section)
-            for mapping_file in mapping_files:
+        for section in config.get_data_sources_sections():
+            for mapping_file in config.get_mappings_files(section):
                 if os.path.exists(mapping_file):
-                    graph = Graph()
-                    graph.parse(mapping_file)
-                    sqlquery_triples = list(graph.triples((None, RR.sqlQuery, None)))
-                    if len(sqlquery_triples) > 0:
+                    store = _parse_mapping_store(mapping_file)
+                    if any(store.quads_for_pattern(None, RR_SQL_QUERY, None)):
                         return True
         return False
     except Exception as e:
@@ -55,15 +60,13 @@ def check_for_sql_queries(config: morph_kgc.config.Config) -> bool:
 def check_for_multiple_subject_maps(config: morph_kgc.config.Config) -> bool:
     """Check if any TriplesMap has more than one rr:subjectMap (invalid R2RML)."""
     try:
-        data_source_sections = config.get_data_sources_sections()
-        for section in data_source_sections:
-            mapping_files = config.get_mappings_files(section)
-            for mapping_file in mapping_files:
+        for section in config.get_data_sources_sections():
+            for mapping_file in config.get_mappings_files(section):
                 if os.path.exists(mapping_file):
-                    graph = Graph()
-                    graph.parse(mapping_file)
-                    for triples_map in graph.subjects(RDF.type, RR.TriplesMap):
-                        subject_maps = list(graph.objects(triples_map, RR.subjectMap))
+                    store = _parse_mapping_store(mapping_file)
+                    for quad in store.quads_for_pattern(None, RDF_TYPE, RR_TRIPLES_MAP):
+                        triples_map = quad.subject
+                        subject_maps = list(store.quads_for_pattern(triples_map, RR_SUBJECT_MAP, None))
                         if len(subject_maps) > 1:
                             return True
         return False
@@ -228,7 +231,7 @@ def inversion(
         }
 
     try:
-        mappings, _ = retrieve_mappings(config)
+        mappings, _, _ = retrieve_mappings(config)
     except ValueError as e:
         get_logger().error(f"Error retrieving mappings: {e}")
         return {
@@ -276,11 +279,17 @@ def inversion(
         else:
             output_file = config.get_output_file()
             endpoint = EndpointFactory.create_from_url(output_file)
-    except FileNotFoundError:
+    except (FileNotFoundError, OSError):
         get_logger().warning("Output file not found. Skipping inversion.")
         return {
             "__status__": "no_input_file",
             "__reason__": "No RDF input file found for inversion, likely due to mapping errors",
+        }
+    except ValueError as e:
+        get_logger().warning(f"Invalid RDF data in output file: {e}")
+        return {
+            "__status__": "non_invertible",
+            "__reason__": f"Output RDF contains invalid data: {e}",
         }
 
     insert_columns(mappings)

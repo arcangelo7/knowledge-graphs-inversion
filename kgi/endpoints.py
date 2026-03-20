@@ -9,7 +9,9 @@ import shutil
 import subprocess
 import tempfile
 
-from rdflib import BNode, Dataset, Literal, URIRef
+from io import BytesIO
+
+from pyoxigraph import BlankNode, DefaultGraph, Literal, NamedNode, Quad, QueryResultsFormat, QuerySolutions, Store
 from sparqlite import SPARQLClient
 
 from .base import Endpoint
@@ -235,125 +237,74 @@ class VirtuosoEndpoint(RemoteEndpoint):
             raise RuntimeError(f"Failed to execute SQL command: {e}")
 
 
+_NT_LINE = re.compile(
+    r'(<[^>]*>|_:\S+)\s+(<[^>]*>)\s+'
+    r'(<[^>]*>|_:\S+|"(?:[^"\\]|\\.)*"(?:@[a-z]+(?:-[a-z0-9]+)*)?(?:\^\^<[^>]*>)?)'
+    r'(?:\s+(<[^>]*>))?\s*\.'
+)
+
+
+_BNODE_IRI_PREFIX = "urn:bnode:"
+
+
+def _parse_term_subject(raw: str) -> NamedNode | BlankNode:
+    if raw.startswith("<"):
+        return NamedNode(raw[1:-1])
+    return NamedNode(f"{_BNODE_IRI_PREFIX}{raw[2:]}")
+
+
+def _parse_term_object(raw: str) -> NamedNode | BlankNode | Literal:
+    if raw.startswith("<"):
+        return NamedNode(raw[1:-1])
+    if raw.startswith("_:"):
+        return NamedNode(f"{_BNODE_IRI_PREFIX}{raw[2:]}")
+    match = re.match(r'^"((?:[^"\\]|\\.)*)"(@([a-z]+(?:-[a-z0-9]+)*))?(\^\^<([^>]*)>)?$', raw)
+    if not match:
+        return Literal(raw)
+    value, _, lang, _, datatype = match.groups()
+    if datatype:
+        return Literal(value, datatype=NamedNode(datatype))
+    if lang:
+        return Literal(value, language=lang)
+    return Literal(value)
+
+
+def _parse_ntriples_preserve_bnodes(store: Store, data: str) -> None:
+    for line in data.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = _NT_LINE.match(line)
+        if not m:
+            continue
+        s = _parse_term_subject(m.group(1))
+        p = NamedNode(m.group(2)[1:-1])
+        o = _parse_term_object(m.group(3))
+        g = NamedNode(m.group(4)[1:-1]) if m.group(4) else DefaultGraph()
+        store.add(Quad(s, p, o, g))
+
+
 class LocalSparqlGraphStore(Endpoint):
-    """Local RDFLib-based SPARQL endpoint."""
+    """Local pyoxigraph-based SPARQL endpoint."""
 
     def __init__(self, url: str, delete_after_use: bool = False):
         self.delete_after_use = delete_after_use
+        self._store: Store | None = Store()
+
         with open(url, "r", encoding="utf-8") as f:
             data = f.read()
 
-        self._graph: Dataset | None = Dataset(default_union=True)
-        try:
-            self._parse_nquads_preserve_bnode_ids(data)
-        except Exception as e:
-            logging.getLogger("kgi").error(f"Invalid RDF data: {e}")
-            raise
-
-    def _parse_nquads_preserve_bnode_ids(self, data: str):
-        """Parse N-Triples/N-Quads data while preserving blank node IDs."""
-        for line in data.strip().splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-
-            # Remove the final dot
-            if line.endswith("."):
-                line = line[:-1].strip()
-
-            # Regex pattern for N-Triples/N-Quads (angle-bracket aware to handle IRIs with spaces)
-            pattern = r"(<[^>]*>|_:\S+)\s+(<[^>]*>)\s+(.*)"
-            match = re.match(pattern, line)
-            if not match:
-                continue
-
-            s_str, p_str, rest = match.groups()
-
-            # Parse subject
-            if s_str.startswith("<") and s_str.endswith(">"):
-                s_node = URIRef(s_str[1:-1])
-            elif s_str.startswith("_:"):
-                s_node = BNode(s_str[2:])
-            else:
-                continue
-
-            # Parse predicate
-            if p_str.startswith("<") and p_str.endswith(">"):
-                p_node = URIRef(p_str[1:-1])
-            else:
-                continue
-
-            # Split object and optional graph (N-Quads 4th component)
-            o_str, g_str = self._split_object_and_graph(rest)
-
-            # Parse object
-            if o_str.startswith("<") and o_str.endswith(">"):
-                o_node = URIRef(o_str[1:-1])
-            elif o_str.startswith("_:"):
-                o_node = BNode(o_str[2:])
-            elif o_str.startswith('"'):
-                # Literal
-                literal_pattern = r'^"([^"]*)"(@[a-z]+(-[a-z0-9]+)*)?(\^\^<([^>]*)>)?$'
-                lit_match = re.match(literal_pattern, o_str)
-                if not lit_match:
-                    continue
-                lit_value, lang, _, _, datatype = lit_match.groups()
-                if datatype:
-                    o_node = Literal(lit_value, datatype=URIRef(datatype))
-                elif lang:
-                    o_node = Literal(lit_value, lang=lang[1:])
-                else:
-                    o_node = Literal(lit_value)
-            else:
-                continue
-
-            assert self._graph is not None
-            if g_str:
-                g_node = URIRef(g_str[1:-1])
-                self._graph.graph(g_node).add((s_node, p_node, o_node))
-            else:
-                self._graph.add((s_node, p_node, o_node))
-
-    @staticmethod
-    def _split_object_and_graph(rest: str) -> tuple[str, str | None]:
-        """Split N-Quads rest into object string and optional graph IRI."""
-        rest = rest.strip()
-        if rest.startswith("<"):
-            end = rest.index(">") + 1
-            obj = rest[:end]
-            remaining = rest[end:].strip()
-        elif rest.startswith("_:"):
-            parts = rest.split(None, 1)
-            obj = parts[0]
-            remaining = parts[1].strip() if len(parts) > 1 else ""
-        elif rest.startswith('"'):
-            lit_pattern = r'^("(?:[^"\\]|\\.)*"(?:@[a-z]+(?:-[a-z0-9]+)*)?(?:\^\^<[^>]*>)?)\s*(.*)'
-            lit_match = re.match(lit_pattern, rest)
-            if lit_match:
-                obj = lit_match.group(1)
-                remaining = lit_match.group(2).strip()
-            else:
-                return rest, None
-        else:
-            return rest, None
-
-        if remaining.startswith("<") and remaining.endswith(">"):
-            return obj, remaining
-        return obj, None
+        _parse_ntriples_preserve_bnodes(self._store, data)
 
     def query(self, query: str):
-        """Execute a SPARQL query on the local graph."""
-        assert self._graph is not None
+        """Execute a SPARQL query on the local store and return SPARQL JSON."""
+        assert self._store is not None
         try:
-            results = self._graph.query(query)
-            if results.type == "SELECT":
-                return results.serialize(format="json")
-            elif results.type == "CONSTRUCT" or results.type == "DESCRIBE":
-                return results.serialize(format="nt")
-            elif results.type == "ASK":
-                return str(results.boolean)
-            else:
-                return ""
+            results = self._store.query(query, use_default_graph_as_union=True)
+            assert isinstance(results, QuerySolutions)
+            buf = BytesIO()
+            results.serialize(buf, QueryResultsFormat.JSON)
+            return buf.getvalue().decode()
         except Exception as e:
             logging.getLogger("kgi").error(f"Query execution error: {e}")
             logging.getLogger("kgi").error(f"Failed query: {query}")
@@ -362,7 +313,7 @@ class LocalSparqlGraphStore(Endpoint):
     def __del__(self):
         """Clean up resources."""
         if self.delete_after_use:
-            self._graph = None
+            self._store = None
 
 
 class EndpointFactory:

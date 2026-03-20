@@ -1,3 +1,4 @@
+import io
 import json
 import logging
 import math
@@ -12,18 +13,19 @@ from datetime import datetime
 import pandas as pd
 from flask import (Flask, Response, jsonify, render_template, request,
                    stream_with_context)
-from rdflib import ConjunctiveGraph, Graph, Namespace, compare
+from pyoxigraph import BlankNode, Literal, NamedNode, Quad, RdfFormat, Store
 
 from database_connection import DatabaseConnection
+from kgi.constants import RR_SUBJECT_MAP
 from kgi.core import inversion
-from test_suites import TestSuite, register_suites, get_suite, SUITES
+from test_suites import RdfSubject, RdfTerm, TestSuite, register_suites, get_suite, SUITES
 
 logging.getLogger('morph_kgc').setLevel(logging.ERROR)
 logging.getLogger('morph_kgc.config').setLevel(logging.ERROR)
 logging.getLogger('morph_kgc.mapping').setLevel(logging.ERROR)
 logging.getLogger('morph_kgc.engine').setLevel(logging.ERROR)
 logging.getLogger('morph_kgc.args_parser').setLevel(logging.ERROR)
-logging.getLogger('rdflib').setLevel(logging.ERROR)
+logging.getLogger('pyoxigraph').setLevel(logging.ERROR)
 logging.getLogger('sqlalchemy').setLevel(logging.ERROR)
 logging.getLogger('pandas').setLevel(logging.ERROR)
 logging.getLogger().setLevel(logging.ERROR)
@@ -36,29 +38,73 @@ config.read('config.ini')
 
 PROJECT_ROOT = os.path.dirname(__file__)
 
-RR = Namespace("http://www.w3.org/ns/r2rml#")
-RML_OLD = Namespace("http://semweb.mmlab.be/ns/rml#")
+RR_COLUMN = NamedNode("http://www.w3.org/ns/r2rml#column")
+RR_TEMPLATE = NamedNode("http://www.w3.org/ns/r2rml#template")
+RR_CHILD = NamedNode("http://www.w3.org/ns/r2rml#child")
+RR_PARENT = NamedNode("http://www.w3.org/ns/r2rml#parent")
+RR_TABLE_NAME = NamedNode("http://www.w3.org/ns/r2rml#tableName")
+RR_LOGICAL_TABLE = NamedNode("http://www.w3.org/ns/r2rml#logicalTable")
+RML_OLD_REFERENCE = NamedNode("http://semweb.mmlab.be/ns/rml#reference")
+RML_OLD_LOGICAL_SOURCE = NamedNode("http://semweb.mmlab.be/ns/rml#logicalSource")
 
 register_suites(PROJECT_ROOT)
 
 db_connection = DatabaseConnection()
 
 
+def _normalize_term(term: RdfTerm) -> str:
+    if isinstance(term, BlankNode):
+        return "_:BNODE"
+    return str(term)
+
+
+def _graphs_isomorphic(store1: Store, store2: Store) -> bool:
+    quads1 = list(store1)
+    quads2 = list(store2)
+    if len(quads1) != len(quads2):
+        return False
+
+    has_bnodes = any(
+        isinstance(q.subject, BlankNode) or isinstance(q.object, BlankNode)
+        for q in quads1 + quads2
+    )
+    if not has_bnodes:
+        return set(quads1) == set(quads2)
+
+    def signature(quads: list[Quad]) -> set[tuple[str, str, str, str]]:
+        return {
+            (_normalize_term(q.subject), str(q.predicate), _normalize_term(q.object), str(q.graph_name))
+            for q in quads
+        }
+
+    return signature(quads1) == signature(quads2)
+
+
+def _parse_turtle(data: str) -> Store:
+    store = Store()
+    store.load(input=io.BytesIO(data.encode("utf-8")), format=RdfFormat.TURTLE)
+    return store
+
+
+def _literal_value(term: RdfTerm) -> str:
+    assert isinstance(term, (NamedNode, BlankNode, Literal))
+    return term.value
+
+
 def extract_columns_from_mapping(mapping_content: str) -> set[str]:
-    g = Graph()
-    g.parse(data=mapping_content, format='turtle')
+    store = _parse_turtle(mapping_content)
     columns: set[str] = set()
-    for _, _, o in g.triples((None, RR.column, None)):
-        columns.add(str(o).strip('"'))
-    for _, _, o in g.triples((None, RML_OLD.reference, None)):
-        columns.add(str(o).strip('"'))
-    for _, _, o in g.triples((None, RR.template, None)):
-        column_refs = TEMPLATE_COLUMN_REGEX.findall(str(o))
+    for quad in store.quads_for_pattern(None, RR_COLUMN, None):
+        columns.add(_literal_value(quad.object).strip('"'))
+    for quad in store.quads_for_pattern(None, RML_OLD_REFERENCE, None):
+        columns.add(_literal_value(quad.object).strip('"'))
+    for quad in store.quads_for_pattern(None, RR_TEMPLATE, None):
+        column_refs = TEMPLATE_COLUMN_REGEX.findall(_literal_value(quad.object))
         columns.update(column_refs)
-    for _, _, o in g.triples((None, RR.child, None)):
-        columns.add(str(o).strip('"'))
-    for _, _, o in g.triples((None, RR.parent, None)):
-        columns.add(str(o).strip('"'))
+    for quad in store.quads_for_pattern(None, RR_CHILD, None):
+        columns.add(_literal_value(quad.object).strip('"'))
+    for quad in store.quads_for_pattern(None, RR_PARENT, None):
+        columns.add(_literal_value(quad.object).strip('"'))
     return columns
 
 
@@ -77,43 +123,51 @@ def check_mapping_column_coverage(mapping_content: str, source_content: dict[str
 TEMPLATE_COLUMN_REGEX = re.compile(r'\{\\?"?\'?([^"\'{}\\]+)\\?"?\'?\}')
 
 
-def parse_mapping_graph(mapping_content: str) -> Graph:
-    g = Graph()
-    g.parse(data=mapping_content, format='turtle')
-    return g
+def parse_mapping_graph(mapping_content: str) -> Store:
+    return _parse_turtle(mapping_content)
 
 
-def get_mapped_table_names(mapping_graph: Graph) -> set[str]:
+def get_mapped_table_names(mapping_store: Store) -> set[str]:
     tables: set[str] = set()
-    for _, _, o in mapping_graph.triples((None, RR.tableName, None)):
-        tables.add(str(o).strip('"'))
+    for quad in mapping_store.quads_for_pattern(None, RR_TABLE_NAME, None):
+        tables.add(_literal_value(quad.object).strip('"'))
     return tables
 
 
-def find_subject_map_for_table(mapping_graph: Graph, table_name: str):
-    for logical_table in mapping_graph.subjects(RR.tableName, None):
-        tname = str(mapping_graph.value(logical_table, RR.tableName)).strip('"')
-        if tname != table_name:
-            continue
-        # Check both rr:logicalTable (R2RML) and rml:logicalSource (RML)
-        triples_map = next(mapping_graph.subjects(RR.logicalTable, logical_table), None)
-        if triples_map is None:
-            triples_map = next(mapping_graph.subjects(RML_OLD.logicalSource, logical_table), None)
-        if triples_map is None:
-            continue
-        for subject_map in mapping_graph.objects(triples_map, RR.subjectMap):
-            return subject_map
+def _first_object(store: Store, subject: RdfSubject, predicate: NamedNode) -> RdfTerm | None:
+    for quad in store.quads_for_pattern(subject, predicate, None):
+        return quad.object
     return None
 
 
-def check_null_in_subject_template(mapping_graph: Graph, source_df: pd.DataFrame, table_name: str):
-    subject_map = find_subject_map_for_table(mapping_graph, table_name)
+def _subjects_of(store: Store, predicate: NamedNode, obj: RdfTerm) -> list[RdfSubject]:
+    return [quad.subject for quad in store.quads_for_pattern(None, predicate, obj)]
+
+
+def find_subject_map_for_table(mapping_store: Store, table_name: str) -> RdfSubject | None:
+    for quad in mapping_store.quads_for_pattern(None, RR_TABLE_NAME, None):
+        if _literal_value(quad.object).strip('"') != table_name:
+            continue
+        logical_table = quad.subject
+        triples_maps = _subjects_of(mapping_store, RR_LOGICAL_TABLE, logical_table)
+        if not triples_maps:
+            triples_maps = _subjects_of(mapping_store, RML_OLD_LOGICAL_SOURCE, logical_table)
+        if not triples_maps:
+            continue
+        result = _first_object(mapping_store, triples_maps[0], RR_SUBJECT_MAP)
+        if result is not None and isinstance(result, (NamedNode, BlankNode)):
+            return result
+    return None
+
+
+def check_null_in_subject_template(mapping_store: Store, source_df: pd.DataFrame, table_name: str):
+    subject_map = find_subject_map_for_table(mapping_store, table_name)
     if subject_map is None:
         return None, False
-    template = mapping_graph.value(subject_map, RR.template)
-    if template is None:
+    template_quad = next(mapping_store.quads_for_pattern(subject_map, RR_TEMPLATE, None), None)
+    if template_quad is None:
         return None, False
-    column_refs = TEMPLATE_COLUMN_REGEX.findall(str(template))
+    column_refs = TEMPLATE_COLUMN_REGEX.findall(_literal_value(template_quad.object))
     for col in column_refs:
         if col in source_df.columns and bool(source_df[col].isna().any()):
             null_count = int(source_df[col].isna().sum())
@@ -125,8 +179,8 @@ def check_null_in_subject_template(mapping_graph: Graph, source_df: pd.DataFrame
     return None, False
 
 
-def detect_non_invertible(mapping_graph: Graph, source_df: pd.DataFrame, table_name: str):
-    null_msg, is_null = check_null_in_subject_template(mapping_graph, source_df, table_name)
+def detect_non_invertible(mapping_store: Store, source_df: pd.DataFrame, table_name: str):
+    null_msg, is_null = check_null_in_subject_template(mapping_store, source_df, table_name)
     if is_null:
         return null_msg, True
     return None, False
@@ -330,14 +384,14 @@ def _run_test(
     engine_output_path = suite.get_engine_output_path(t_identifier, database_system, output_format)
     engine_log_path = suite.get_engine_log_path(t_identifier, database_system)
 
-    expected_output_graph = ConjunctiveGraph()
+    expected_output_store = Store()
     if os.path.isfile(output_file):
         os.system(f"rm {output_file}")
 
     if expected_output:
         expected_output_file = suite.get_expected_output_path(t_identifier)
         if os.path.isfile(expected_output_file):
-            expected_output_graph.parse(expected_output_file, format="nquads")
+            expected_output_store.load(path=expected_output_file, format=RdfFormat.N_QUADS)
 
     engine_cmd = config['properties']['engine_command'].format(config_path=suite.morph_kgc_config_path)
     exit_code = os.system(f"{engine_cmd} > {engine_log_path}")
@@ -346,12 +400,11 @@ def _run_test(
         os.system(f"cp {output_file} {engine_output_path}")
 
         if expected_output:
-            output_graph = ConjunctiveGraph()
-            iso_expected = compare.to_isomorphic(expected_output_graph)
+            output_store = Store()
             try:
-                output_graph.parse(output_file, format=output_format)
-                iso_output = compare.to_isomorphic(output_graph)
-                if iso_expected == iso_output:
+                rdf_format = RdfFormat.TURTLE if output_format == "turtle" else RdfFormat.N_TRIPLES
+                output_store.load(path=output_file, format=rdf_format)
+                if _graphs_isomorphic(expected_output_store, output_store):
                     result = PASSED
                 else:
                     print("Output RDF does not match with the expected RDF")
@@ -367,7 +420,7 @@ def _run_test(
             result = FAILED
     else:
         if expected_output:
-            if len(expected_output_graph) == 0:
+            if len(expected_output_store) == 0:
                 result = PASSED
             else:
                 print("No RDF output found while output was expected")

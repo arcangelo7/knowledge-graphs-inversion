@@ -2,6 +2,8 @@
 
 import pathlib
 
+from pyoxigraph import NamedNode
+
 # RML constants from morph_kgc
 RML_BLANK_NODE = "http://w3id.org/rml/BlankNode"
 RML_CONSTANT = "http://w3id.org/rml/constant"
@@ -10,6 +12,9 @@ RML_LITERAL = "http://w3id.org/rml/Literal"
 RML_PARENT_TRIPLES_MAP = "http://w3id.org/rml/parentTriplesMap"
 RML_REFERENCE = "http://w3id.org/rml/reference"
 RML_TEMPLATE = "http://w3id.org/rml/template"
+
+# R2RML namespace constants (pyoxigraph NamedNodes)
+RR_SUBJECT_MAP = NamedNode("http://www.w3.org/ns/r2rml#subjectMap")
 
 # Regex patterns
 REF_TEMPLATE_REGEX = r"{([^{}]*)}"
