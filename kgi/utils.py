@@ -266,24 +266,25 @@ def insert_columns(df: pd.DataFrame, pure=False) -> pd.DataFrame:
     def _empty_lists() -> pd.Series:  # type: ignore[type-arg]
         return pd.Series([[] for _ in range(df.shape[0])])
 
-    nan_col = float("nan")
+    def _none_col() -> pd.Series:  # type: ignore[type-arg]
+        return pd.Series([None] * df.shape[0], dtype="object")
 
     # Add columns at specific positions
     df.insert(_col_pos("subject_map_value") + 1, "subject_references", _empty_lists())
-    df.insert(_col_pos("subject_map_value") + 1, "subject_references_template", nan_col)
+    df.insert(_col_pos("subject_map_value") + 1, "subject_references_template", _none_col())
     df.insert(_col_pos("subject_references") + 1, "subject_reference_count", 0)
     df.insert(
         _col_pos("predicate_map_value") + 1, "predicate_references", _empty_lists()
     )
     df.insert(
-        _col_pos("predicate_map_value") + 1, "predicate_references_template", nan_col
+        _col_pos("predicate_map_value") + 1, "predicate_references_template", _none_col()
     )
     df.insert(_col_pos("predicate_references") + 1, "predicate_reference_count", 0)
     df.insert(_col_pos("object_map_value") + 1, "object_references", _empty_lists())
-    df.insert(_col_pos("object_map_value") + 1, "object_references_template", nan_col)
+    df.insert(_col_pos("object_map_value") + 1, "object_references_template", _none_col())
     df.insert(_col_pos("object_references") + 1, "object_reference_count", 0)
     df.insert(_col_pos("graph_map_value") + 1, "graph_references", _empty_lists())
-    df.insert(_col_pos("graph_map_value") + 1, "graph_references_template", nan_col)
+    df.insert(_col_pos("graph_map_value") + 1, "graph_references_template", _none_col())
     df.insert(_col_pos("graph_references") + 1, "graph_reference_count", 0)
 
     # Process each mapping rule to extract references

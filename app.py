@@ -20,15 +20,11 @@ from kgi.constants import RR_SUBJECT_MAP
 from kgi.core import inversion
 from test_suites import RdfSubject, RdfTerm, TestSuite, register_suites, get_suite, SUITES
 
-logging.getLogger('morph_kgc').setLevel(logging.ERROR)
-logging.getLogger('morph_kgc.config').setLevel(logging.ERROR)
-logging.getLogger('morph_kgc.mapping').setLevel(logging.ERROR)
-logging.getLogger('morph_kgc.engine').setLevel(logging.ERROR)
-logging.getLogger('morph_kgc.args_parser').setLevel(logging.ERROR)
-logging.getLogger('pyoxigraph').setLevel(logging.ERROR)
-logging.getLogger('sqlalchemy').setLevel(logging.ERROR)
-logging.getLogger('pandas').setLevel(logging.ERROR)
-logging.getLogger().setLevel(logging.ERROR)
+for _logger_name in ('morph_kgc', 'morph_kgc.config', 'morph_kgc.mapping',
+                     'morph_kgc.engine', 'morph_kgc.args_parser', 'pyoxigraph',
+                     'sqlalchemy', 'pandas', 'kgi'):
+    logging.getLogger(_logger_name).setLevel(logging.CRITICAL)
+logging.getLogger().setLevel(logging.CRITICAL)
 
 
 app = Flask(__name__)
@@ -351,17 +347,12 @@ def test_one(test_id: str, database_system: str, config: ConfigParser, suite: Te
     try:
         metadata = suite.get_test_metadata(test_id)
         if metadata is None:
-            print(f"Test {test_id} not found in {suite.name} suite")
             return [["tester", "platform", "rdbms", "testid", "result"],
                     [config["tester"]["tester_name"], config["engine"]["engine_name"],
                      "PostgreSQL", test_id, "error"]]
 
-        print(f"Testing {suite.name} test-case: {test_id} ({metadata['title']})")
-        print(f"Purpose of this test is: {metadata['purpose']}")
-
         return _run_test(test_id, metadata, database_system, config, suite)
-    except Exception as e:
-        print(f"Error in test_one: {str(e)}")
+    except Exception:
         return [["tester", "platform", "rdbms", "testid", "result"],
                 [config["tester"]["tester_name"], config["engine"]["engine_name"],
                  "PostgreSQL", test_id, "error"]]
@@ -394,7 +385,7 @@ def _run_test(
             expected_output_store.load(path=expected_output_file, format=RdfFormat.N_QUADS)
 
     engine_cmd = config['properties']['engine_command'].format(config_path=suite.morph_kgc_config_path)
-    exit_code = os.system(f"{engine_cmd} > {engine_log_path}")
+    exit_code = os.system(f"{engine_cmd} > {engine_log_path} 2>&1")
 
     if os.path.isfile(output_file):
         os.system(f"cp {output_file} {engine_output_path}")
@@ -407,23 +398,18 @@ def _run_test(
                 if _graphs_isomorphic(expected_output_store, output_store):
                     result = PASSED
                 else:
-                    print("Output RDF does not match with the expected RDF")
                     result = FAILED
             except Exception:
-                print("Output RDF is invalid")
                 result = FAILED
         elif exit_code != 0:
-            print("The processor returned a non-zero error code signalling a mistake")
             result = PASSED
         else:
-            print("Output RDF found but none was expected")
             result = FAILED
     else:
         if expected_output:
             if len(expected_output_store) == 0:
                 result = PASSED
             else:
-                print("No RDF output found while output was expected")
                 result = FAILED
         else:
             result = PASSED
@@ -451,7 +437,8 @@ def run_single_test(test_id: str, database_system: str, suite: TestSuite) -> dic
             mapping_content = f.read()
 
         metadata = suite.get_test_metadata(test_id)
-        purpose = metadata['purpose'] if metadata else 'Purpose not specified'
+        assert metadata is not None
+        purpose = metadata['purpose']
 
         raw_results = test_one(test_id, database_system, config, suite)
 
@@ -461,7 +448,7 @@ def run_single_test(test_id: str, database_system: str, suite: TestSuite) -> dic
         inversion_status: str | None = None
         if isinstance(inversion_result, dict) and '__status__' in inversion_result:
             inversion_status = str(inversion_result['__status__'])
-            inversion_reason = str(inversion_result.get('__reason__', ''))
+            inversion_reason = str(inversion_result['__reason__'])
             inversion_success = False
         else:
             inversion_success = bool(inversion_result)
@@ -553,9 +540,9 @@ def process_results(
             formatted_sparql_queries = "\n\n".join(filter(None, sparql_queries))
 
         processed_row = {
-            'testid': row[3] if len(row) > 3 else 'N/A',
+            'testid': row[3],
             'purpose': purpose,
-            'result': row[4] if len(row) > 4 else 'N/A',
+            'result': row[4],
             'expected_result': expected_content,
             'actual_result': actual_content,
             'mapping': mapping_content,
@@ -585,10 +572,13 @@ def get_file_contents(
 
 
 def read_file_content(file_path: str) -> str:
-    if os.path.exists(file_path):
+    try:
         with open(file_path, 'r', encoding='utf-8') as file:
             return file.read()
-    return "File not found"
+    except FileNotFoundError:
+        # Test cases with invalid mappings don't produce RDF output files,
+        # so missing expected/actual files is part of the normal flow.
+        return ""
 
 
 def analyze_duplicate_loss(
@@ -618,239 +608,230 @@ def analyze_duplicate_loss(
 def generate_test_report(
     results: list[dict[str, object]], database_system: str | None, suite: TestSuite,
 ) -> None:
-    try:
-        results_dir = os.path.join(PROJECT_ROOT, 'test_results')
-        os.makedirs(results_dir, exist_ok=True)
+    results_dir = os.path.join(PROJECT_ROOT, 'test_results')
+    os.makedirs(results_dir, exist_ok=True)
 
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        report_filename = f"test_report_{suite.suite_id}_{database_system}_{timestamp}.json"
-        report_path = os.path.join(results_dir, report_filename)
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    report_filename = f"test_report_{suite.suite_id}_{database_system}_{timestamp}.json"
+    report_path = os.path.join(results_dir, report_filename)
 
-        total_tests = len(results)
-        passed_tests = 0
-        failed_tests = 0
-        not_supported_tests = 0
-        non_invertible_tests = 0
-        mapping_error_tests = 0
-        error_tests = 0
+    total_tests = len(results)
+    passed_tests = 0
+    failed_tests = 0
+    not_supported_tests = 0
+    non_invertible_tests = 0
+    mapping_error_tests = 0
+    error_tests = 0
 
-        test_details = []
+    test_details = []
 
-        for result in results:
-            if result.get('status') == 'error':
-                error_tests += 1
-                test_details.append({
-                    'test_id': result.get('test_id'),
-                    'status': 'error',
-                    'message': result.get('message')
-                })
-            elif result.get('status') == 'success':
-                results_data: dict[str, object] = result['results']  # type: ignore[assignment]
-                test_data: dict[str, object] = results_data['data'][0]  # type: ignore[index]
-                test_id = result.get('test_id')
-                inversion_success = test_data.get('inversion_success')
+    for result in results:
+        if result['status'] == 'error':
+            error_tests += 1
+            test_details.append({
+                'test_id': result['test_id'],
+                'status': 'error',
+                'message': result['message'],
+                'purpose': None,
+                'comparison_message': None
+            })
+        elif result['status'] == 'success':
+            results_data: dict[str, object] = result['results']  # type: ignore[assignment]
+            test_data: dict[str, object] = results_data['data'][0]  # type: ignore[index]
+            test_id = result['test_id']
+            inversion_success = test_data['inversion_success']
 
-                if inversion_success == 'not_supported':
-                    not_supported_tests += 1
-                    status = 'not_supported'
-                elif inversion_success == 'non_invertible':
-                    non_invertible_tests += 1
-                    status = 'non_invertible'
-                elif inversion_success == 'mapping_error':
-                    mapping_error_tests += 1
-                    status = 'mapping_error'
-                elif inversion_success is True:
-                    passed_tests += 1
-                    status = 'passed'
-                else:
-                    failed_tests += 1
-                    status = 'failed'
+            if inversion_success == 'not_supported':
+                not_supported_tests += 1
+                status = 'not_supported'
+            elif inversion_success == 'non_invertible':
+                non_invertible_tests += 1
+                status = 'non_invertible'
+            elif inversion_success == 'mapping_error':
+                mapping_error_tests += 1
+                status = 'mapping_error'
+            elif inversion_success is True:
+                passed_tests += 1
+                status = 'passed'
+            else:
+                failed_tests += 1
+                status = 'failed'
 
-                test_details.append({
-                    'test_id': test_id,
-                    'status': status,
-                    'purpose': test_data.get('purpose'),
-                    'result': test_data.get('result'),
-                    'inversion_success': inversion_success,
-                    'comparison_message': test_data.get('comparison_message')
-                })
+            test_details.append({
+                'test_id': test_id,
+                'status': status,
+                'purpose': test_data['purpose'],
+                'result': test_data['result'],
+                'inversion_success': inversion_success,
+                'comparison_message': test_data['comparison_message']
+            })
 
-        def pct(n: int) -> float:
-            return round((n / total_tests * 100), 2) if total_tests > 0 else 0
+    def pct(n: int) -> float:
+        return round((n / total_tests * 100), 2) if total_tests > 0 else 0
 
-        report = {
-            'metadata': {
-                'timestamp': timestamp,
-                'test_suite': suite.suite_id,
-                'suite_name': suite.name,
-                'database_system': database_system,
-                'total_tests': total_tests,
-                'execution_date': datetime.now().isoformat()
-            },
-            'summary': {
-                'total': total_tests,
-                'passed': passed_tests,
-                'failed': failed_tests,
-                'not_supported': not_supported_tests,
-                'non_invertible': non_invertible_tests,
-                'mapping_errors': mapping_error_tests,
-                'errors': error_tests,
-                'percentages': {
-                    'passed': pct(passed_tests),
-                    'failed': pct(failed_tests),
-                    'not_supported': pct(not_supported_tests),
-                    'non_invertible': pct(non_invertible_tests),
-                    'mapping_errors': pct(mapping_error_tests),
-                    'errors': pct(error_tests),
-                }
-            },
-            'test_details': test_details
-        }
+    report = {
+        'metadata': {
+            'timestamp': timestamp,
+            'test_suite': suite.suite_id,
+            'suite_name': suite.name,
+            'database_system': database_system,
+            'total_tests': total_tests,
+            'execution_date': datetime.now().isoformat()
+        },
+        'summary': {
+            'total': total_tests,
+            'passed': passed_tests,
+            'failed': failed_tests,
+            'not_supported': not_supported_tests,
+            'non_invertible': non_invertible_tests,
+            'mapping_errors': mapping_error_tests,
+            'errors': error_tests,
+            'percentages': {
+                'passed': pct(passed_tests),
+                'failed': pct(failed_tests),
+                'not_supported': pct(not_supported_tests),
+                'non_invertible': pct(non_invertible_tests),
+                'mapping_errors': pct(mapping_error_tests),
+                'errors': pct(error_tests),
+            }
+        },
+        'test_details': test_details
+    }
 
-        with open(report_path, 'w', encoding='utf-8') as f:
-            json.dump(report, f, indent=2, ensure_ascii=False)
+    with open(report_path, 'w', encoding='utf-8') as f:
+        json.dump(report, f, indent=2, ensure_ascii=False)
 
-        markdown_filename = f"test_report_{suite.suite_id}_{database_system}_{timestamp}.md"
-        markdown_path = os.path.join(results_dir, markdown_filename)
+    markdown_filename = f"test_report_{suite.suite_id}_{database_system}_{timestamp}.md"
+    markdown_path = os.path.join(results_dir, markdown_filename)
 
-        with open(markdown_path, 'w', encoding='utf-8') as f:
-            f.write(f"# {suite.name} inversion test report\n\n")
-            f.write(f"**Test suite:** {suite.name}\n")
-            f.write(f"**Database system:** {database_system}\n")
-            f.write(f"**Execution date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"**Total tests:** {total_tests}\n\n")
+    with open(markdown_path, 'w', encoding='utf-8') as f:
+        f.write(f"# {suite.name} inversion test report\n\n")
+        f.write(f"**Test suite:** {suite.name}\n")
+        f.write(f"**Database system:** {database_system}\n")
+        f.write(f"**Execution date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"**Total tests:** {total_tests}\n\n")
 
-            f.write("## Summary\n\n")
-            f.write("| Status | Count | Percentage |\n")
-            f.write("|--------|-------|------------|\n")
-            f.write(f"| Passed | {passed_tests} | {pct(passed_tests)}% |\n")
-            f.write(f"| Failed | {failed_tests} | {pct(failed_tests)}% |\n")
-            f.write(f"| Not supported | {not_supported_tests} | {pct(not_supported_tests)}% |\n")
-            f.write(f"| Non-invertible | {non_invertible_tests} | {pct(non_invertible_tests)}% |\n")
-            f.write(f"| Mapping errors | {mapping_error_tests} | {pct(mapping_error_tests)}% |\n")
-            f.write(f"| Execution errors | {error_tests} | {pct(error_tests)}% |\n")
+        f.write("## Summary\n\n")
+        f.write("| Status | Count | Percentage |\n")
+        f.write("|--------|-------|------------|\n")
+        f.write(f"| Passed | {passed_tests} | {pct(passed_tests)}% |\n")
+        f.write(f"| Failed | {failed_tests} | {pct(failed_tests)}% |\n")
+        f.write(f"| Not supported | {not_supported_tests} | {pct(not_supported_tests)}% |\n")
+        f.write(f"| Non-invertible | {non_invertible_tests} | {pct(non_invertible_tests)}% |\n")
+        f.write(f"| Mapping errors | {mapping_error_tests} | {pct(mapping_error_tests)}% |\n")
+        f.write(f"| Execution errors | {error_tests} | {pct(error_tests)}% |\n")
 
-            f.write("\n## Test details\n\n")
+        f.write("\n## Test details\n\n")
 
-            for status in ['passed', 'failed', 'not_supported', 'non_invertible', 'mapping_error', 'error']:
-                status_tests = [t for t in test_details if t['status'] == status]
-                if status_tests:
-                    status_label = status.replace('_', ' ').title()
-                    f.write(f"\n### {status_label} tests ({len(status_tests)})\n\n")
-                    for test in status_tests:
-                        f.write(f"- **{test['test_id']}**")
-                        if test.get('purpose'):
-                            purpose_text = test['purpose']
-                            f.write(f": {purpose_text[:100]}..." if len(purpose_text) > 100 else f": {purpose_text}")
-                        if test.get('comparison_message') and status in ['failed', 'non_invertible', 'mapping_error']:
-                            comp_msg = test['comparison_message']
-                            f.write(f"\n  - {comp_msg[:200]}..." if len(comp_msg) > 200 else f"\n  - {comp_msg}")
-                        f.write("\n")
-
-        print(f"Test report generated: {report_path}")
-        print(f"Markdown report generated: {markdown_path}")
-
-    except Exception as e:
-        print(f"Error generating test report: {str(e)}")
-        traceback.print_exc()
+        for status in ['passed', 'failed', 'not_supported', 'non_invertible', 'mapping_error', 'error']:
+            status_tests = [t for t in test_details if t['status'] == status]
+            if status_tests:
+                status_label = status.replace('_', ' ').title()
+                f.write(f"\n### {status_label} tests ({len(status_tests)})\n\n")
+                for test in status_tests:
+                    f.write(f"- **{test['test_id']}**")
+                    if test['purpose']:
+                        purpose_text = test['purpose']
+                        f.write(f": {purpose_text[:100]}..." if len(purpose_text) > 100 else f": {purpose_text}")
+                    if test['comparison_message'] and status in ['failed', 'non_invertible', 'mapping_error']:
+                        comp_msg = test['comparison_message']
+                        f.write(f"\n  - {comp_msg[:200]}..." if len(comp_msg) > 200 else f"\n  - {comp_msg}")
+                    f.write("\n")
 
 
 def compare_databases(
     db_connection: DatabaseConnection, source_system: str, dest_system: str, mapping_content: str | None = None,
 ):
-    try:
-        source_content = db_connection.get_database_content(source_system)
-        dest_content = db_connection.get_database_content(dest_system)
+    source_content = db_connection.get_database_content(source_system)
+    dest_content = db_connection.get_database_content(dest_system)
 
-        if not source_content and not dest_content:
-            return True, "Both databases are empty - comparison successful", None, None, None
-        elif not source_content or not dest_content:
-            return False, "One database is empty while the other is not", source_content, dest_content, None
+    if not source_content and not dest_content:
+        return True, "Both databases are empty - comparison successful", None, None, None
+    elif not source_content or not dest_content:
+        return False, "One database is empty while the other is not", source_content, dest_content, None
 
-        mapping_graph = parse_mapping_graph(mapping_content) if mapping_content else None
+    mapping_graph = parse_mapping_graph(mapping_content) if mapping_content else None
 
-        source_tables = set(source_content.keys())
-        dest_tables = set(dest_content.keys())
-        missing_from_dest = source_tables - dest_tables
+    source_tables = set(source_content.keys())
+    dest_tables = set(dest_content.keys())
+    missing_from_dest = source_tables - dest_tables
 
-        mismatched_tables = []
-        has_invertibility_issues = False
+    mismatched_tables = []
+    has_invertibility_issues = False
 
-        if missing_from_dest:
-            if mapping_graph:
-                mapped_tables = get_mapped_table_names(mapping_graph)
-                unmapped_tables = {t for t in missing_from_dest if t not in mapped_tables}
-                if unmapped_tables == missing_from_dest:
-                    unmapped_str = ", ".join(sorted(unmapped_tables))
-                    mismatched_tables.append(f"NON-INVERTIBLE: Unmapped tables: {unmapped_str}")
-                    has_invertibility_issues = True
-                else:
-                    return False, "Tables in source and destination databases do not match", source_content, dest_content, None
+    if missing_from_dest:
+        if mapping_graph:
+            mapped_tables = get_mapped_table_names(mapping_graph)
+            unmapped_tables = {t for t in missing_from_dest if t not in mapped_tables}
+            if unmapped_tables == missing_from_dest:
+                unmapped_str = ", ".join(sorted(unmapped_tables))
+                mismatched_tables.append(f"NON-INVERTIBLE: Unmapped tables: {unmapped_str}")
+                has_invertibility_issues = True
             else:
                 return False, "Tables in source and destination databases do not match", source_content, dest_content, None
-
-        common_tables = source_tables & dest_tables
-        for table_name in common_tables:
-            source_table = source_content[table_name]
-            dest_table = dest_content[table_name]
-
-            if set(source_table['columns']) != set(dest_table['columns']):
-                mismatched_tables.append(f"{table_name} (columns mismatch)")
-                continue
-
-            source_df = pd.DataFrame(source_table['data'], columns=pd.Index(source_table['columns']))
-            dest_df = pd.DataFrame(dest_table['data'], columns=pd.Index(dest_table['columns']))
-
-            if source_df.empty and dest_df.empty:
-                continue
-
-            source_df = source_df.dropna(how='all')
-            dest_df = dest_df.dropna(how='all')
-            source_df = source_df.reindex(sorted(source_df.columns), axis=1)
-            dest_df = dest_df.reindex(sorted(dest_df.columns), axis=1)
-            source_df.reset_index(drop=True, inplace=True)
-            dest_df.reset_index(drop=True, inplace=True)
-            source_df = source_df.sort_values(by=source_df.columns.tolist()).reset_index(drop=True)
-            dest_df = dest_df.sort_values(by=dest_df.columns.tolist()).reset_index(drop=True)
-
-            if not source_df.equals(dest_df):
-                resolved = False
-                if len(source_df) > len(dest_df):
-                    duplicate_analysis, is_dup_issue = analyze_duplicate_loss(source_df, dest_df, table_name)
-                    if duplicate_analysis:
-                        mismatched_tables.append(duplicate_analysis)
-                        if is_dup_issue:
-                            has_invertibility_issues = True
-                        resolved = True
-
-                if not resolved and mapping_graph:
-                    issue_msg, is_issue = detect_non_invertible(mapping_graph, source_df, table_name)
-                    if is_issue:
-                        mismatched_tables.append(issue_msg)
-                        has_invertibility_issues = True
-                        resolved = True
-
-                if not resolved:
-                    mismatched_tables.append(f"{table_name} (data mismatch)")
-
-        if mismatched_tables:
-            message = f"Mismatched tables: {', '.join(mismatched_tables)}"
-
-            if mapping_content and not has_invertibility_issues:
-                invertibility_issues = check_mapping_column_coverage(mapping_content, source_content)
-                if invertibility_issues:
-                    invertibility_message = "; ".join(invertibility_issues)
-                    message += f" (NON-INVERTIBLE: {invertibility_message})"
-                    has_invertibility_issues = True
-
-            if has_invertibility_issues:
-                return False, message, source_content, dest_content, "non_invertible"
-            else:
-                return False, message, source_content, dest_content, None
         else:
-            return True, "All tables in source and destination databases are identical", source_content, dest_content, None
-    except Exception as e:
-        return False, f"Error comparing databases: {str(e)}", None, None, None
+            return False, "Tables in source and destination databases do not match", source_content, dest_content, None
+
+    common_tables = source_tables & dest_tables
+    for table_name in common_tables:
+        source_table = source_content[table_name]
+        dest_table = dest_content[table_name]
+
+        if set(source_table['columns']) != set(dest_table['columns']):
+            mismatched_tables.append(f"{table_name} (columns mismatch)")
+            continue
+
+        source_df = pd.DataFrame(source_table['data'], columns=pd.Index(source_table['columns']))
+        dest_df = pd.DataFrame(dest_table['data'], columns=pd.Index(dest_table['columns']))
+
+        if source_df.empty and dest_df.empty:
+            continue
+
+        source_df = source_df.dropna(how='all')
+        dest_df = dest_df.dropna(how='all')
+        source_df = source_df.reindex(sorted(source_df.columns), axis=1)
+        dest_df = dest_df.reindex(sorted(dest_df.columns), axis=1)
+        source_df.reset_index(drop=True, inplace=True)
+        dest_df.reset_index(drop=True, inplace=True)
+        source_df = source_df.sort_values(by=source_df.columns.tolist()).reset_index(drop=True)
+        dest_df = dest_df.sort_values(by=dest_df.columns.tolist()).reset_index(drop=True)
+
+        if not source_df.equals(dest_df):
+            resolved = False
+            if len(source_df) > len(dest_df):
+                duplicate_analysis, is_dup_issue = analyze_duplicate_loss(source_df, dest_df, table_name)
+                if duplicate_analysis:
+                    mismatched_tables.append(duplicate_analysis)
+                    if is_dup_issue:
+                        has_invertibility_issues = True
+                    resolved = True
+
+            if not resolved and mapping_graph:
+                issue_msg, is_issue = detect_non_invertible(mapping_graph, source_df, table_name)
+                if is_issue:
+                    mismatched_tables.append(issue_msg)
+                    has_invertibility_issues = True
+                    resolved = True
+
+            if not resolved:
+                mismatched_tables.append(f"{table_name} (data mismatch)")
+
+    if mismatched_tables:
+        message = f"Mismatched tables: {', '.join(mismatched_tables)}"
+
+        if mapping_content and not has_invertibility_issues:
+            invertibility_issues = check_mapping_column_coverage(mapping_content, source_content)
+            if invertibility_issues:
+                invertibility_message = "; ".join(invertibility_issues)
+                message += f" (NON-INVERTIBLE: {invertibility_message})"
+                has_invertibility_issues = True
+
+        if has_invertibility_issues:
+            return False, message, source_content, dest_content, "non_invertible"
+        else:
+            return False, message, source_content, dest_content, None
+    else:
+        return True, "All tables in source and destination databases are identical", source_content, dest_content, None
 
 
 if __name__ == '__main__':

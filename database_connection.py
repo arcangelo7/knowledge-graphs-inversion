@@ -39,7 +39,7 @@ class DatabaseConnection:
         finally:
             engine.dispose()
 
-    def get_database_content(self, database_system: str) -> dict[str, dict[str, list[str]]] | None:
+    def get_database_content(self, database_system: str) -> dict[str, dict[str, list[str]]]:
         connection_string = self.get_connection_string(database_system)
         engine = create_engine(connection_string)
         try:
@@ -51,9 +51,6 @@ class DatabaseConnection:
                 for table in table_names:
                     db_content[table] = self._get_table_content(engine, table)
                 return db_content
-        except Exception as e:
-            print(f"Error getting database content: {str(e)}")
-            return None
         finally:
             engine.dispose()
 

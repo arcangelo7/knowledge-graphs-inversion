@@ -136,6 +136,7 @@ def test_logging_setup(test_id: str):
             handler.close()
             logger.removeHandler(handler)
     logger.setLevel(logging.DEBUG)
+    logger.propagate = False
     formatter = logging.Formatter("%(name)s - %(levelname)s - %(message)s")
     file_handler = logging.FileHandler(log_file)
     file_handler.setLevel(logging.DEBUG)
@@ -157,12 +158,6 @@ def logging_setup():
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
-
-    # Console handler
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
 
     logger.propagate = False
 
