@@ -69,6 +69,7 @@ dev = [
     "pyright>=1.1.408",
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
+    "reuse>=6.2.0",
     "ruff>=0.15.5",
     "scipy>=1.17.1",
 ]

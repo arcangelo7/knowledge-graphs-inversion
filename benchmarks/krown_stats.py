@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Arcangelo Massari <arcangelo.massari@unibo.it>
+#
+# SPDX-License-Identifier: ISC
+
 """Statistical analysis module for KROWN benchmark results.
 
 This module provides functions to calculate statistical metrics from benchmark runs,

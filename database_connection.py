@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Arcangelo Massari <arcangelo.massari@unibo.it>
+#
+# SPDX-License-Identifier: ISC
+
 import pandas as pd
 from sqlalchemy import MetaData, create_engine, text
 from sqlalchemy.engine import Engine
