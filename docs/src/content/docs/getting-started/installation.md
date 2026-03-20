@@ -3,7 +3,7 @@ title: Installation
 description: How to install and set up the tool.
 ---
 
-The tool requires Python 3.12.
+The tool requires Python 3.11, 3.12, or 3.13.
 
 ## Installation
 
@@ -21,7 +21,7 @@ cd knowledge-graphs-inversion
 uv sync
 ```
 
-To run the conformance tests or benchmarks, initialize the git submodules as well:
+Conformance tests and benchmarks also require [Docker](https://www.docker.com/) for the PostgreSQL databases, and the git submodules:
 
 ```bash
 git submodule update --init --recursive

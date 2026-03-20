@@ -1,11 +1,12 @@
 import io
 import re
+from typing import Union
 
 import pandas as pd
 from pyoxigraph import BlankNode, Literal, NamedNode, RdfFormat, Store, Triple
 
-type RdfSubject = NamedNode | BlankNode | Triple
-type RdfTerm = NamedNode | BlankNode | Literal | Triple
+RdfSubject = Union[NamedNode, BlankNode, Triple]
+RdfTerm = Union[NamedNode, BlankNode, Literal, Triple]
 
 TEMPLATE_COLUMN_REGEX = re.compile(r'\{\\?"?\'?([^"\'{}\\]+)\\?"?\'?\}')
 

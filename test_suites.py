@@ -1,11 +1,12 @@
 import csv
 import os
 from configparser import ConfigParser
+from typing import Union
 
 from pyoxigraph import BlankNode, Literal, NamedNode, RdfFormat, Store, Triple
 
-type RdfSubject = NamedNode | BlankNode | Triple
-type RdfTerm = NamedNode | BlankNode | Literal | Triple
+RdfSubject = Union[NamedNode, BlankNode, Triple]
+RdfTerm = Union[NamedNode, BlankNode, Literal, Triple]
 
 RDB2RDFTEST_DATABASE = NamedNode("http://purl.org/NET/rdb2rdf-test#database")
 RDB2RDFTEST_SQL_SCRIPT = NamedNode("http://purl.org/NET/rdb2rdf-test#sqlScriptFile")
