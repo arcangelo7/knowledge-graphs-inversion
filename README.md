@@ -1,4 +1,4 @@
-# RML Inversion
+# Knowledge Graphs Inversion
 
 Given an RDF graph and the [R2RML](https://www.w3.org/TR/r2rml/) mapping that produced it, this tool reconstructs the original relational data. It parses the mapping document, generates SPARQL queries that reverse each mapping rule, and writes the results back as SQL statements to reconstruct the original database tables.
 

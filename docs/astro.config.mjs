@@ -13,7 +13,7 @@ export default defineConfig({
 	},
 	integrations: [
 		starlight({
-			title: 'RML Inversion',
+			title: 'Knowledge Graphs Inversion',
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/arcangelo7/knowledge-graphs-inversion' }],
 			sidebar: [
 				{ label: 'Overview', slug: 'index' },
