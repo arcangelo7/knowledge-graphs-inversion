@@ -1,6 +1,6 @@
 ---
 title: Usage
-description: How to use RML Inversion as a Python library.
+description: How to use the tool as a Python library.
 ---
 
 The tool exposes a single entry point: the `inversion()` function in `kgi.core`. It takes a [Morph-KGC](https://morph-kgc.readthedocs.io/) configuration file, runs the inversion, and returns the reconstructed data.

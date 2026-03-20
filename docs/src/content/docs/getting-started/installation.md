@@ -1,9 +1,9 @@
 ---
 title: Installation
-description: How to install and set up RML Inversion.
+description: How to install and set up the tool.
 ---
 
-RML Inversion requires Python 3.12.
+The tool requires Python 3.12.
 
 ## Installation
 
@@ -31,7 +31,7 @@ git submodule update --init --recursive
 
 The library pulls in a few things worth knowing about:
 
-- [**morph-kgc**](https://morph-kgc.readthedocs.io/) parses [R2RML](https://www.w3.org/TR/r2rml/) and [RML](https://kg-construct.github.io/rml-core/spec/docs/) mapping documents into an internal representation the algorithm operates on.
+- [**morph-kgc**](https://morph-kgc.readthedocs.io/) parses [R2RML](https://www.w3.org/TR/r2rml/) mapping documents into an internal representation the algorithm operates on.
 - [**pyoxigraph**](https://pyoxigraph.readthedocs.io/) provides the in-memory RDF store and SPARQL engine for local graph queries.
 - [**pandas**](https://pandas.pydata.org/) handles tabular data throughout the pipeline.
 - [**SQLAlchemy**](https://www.sqlalchemy.org/) manages database connections when writing output to SQL databases.

@@ -1,6 +1,6 @@
 # RML Inversion
 
-Given an RDF graph and the [R2RML](https://www.w3.org/TR/r2rml/)/[RML](https://kg-construct.github.io/rml-core/spec/docs/) mapping that produced it, this tool reconstructs the original relational data. It parses the mapping document, generates SPARQL queries that reverse each mapping rule, and writes the results back as SQL statements to reconstruct the original database tables.
+Given an RDF graph and the [R2RML](https://www.w3.org/TR/r2rml/) mapping that produced it, this tool reconstructs the original relational data. It parses the mapping document, generates SPARQL queries that reverse each mapping rule, and writes the results back as SQL statements to reconstruct the original database tables.
 
 Full documentation at [arcangelo7.github.io/knowledge-graphs-inversion](https://arcangelo7.github.io/knowledge-graphs-inversion/).
 
