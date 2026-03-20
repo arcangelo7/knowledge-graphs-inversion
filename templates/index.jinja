@@ -47,8 +47,16 @@
             color: red !important;
             font-weight: bold;
         }
-        .result-warning {
-            color: orange !important;
+        .result-not-supported {
+            color: #ffc107 !important;
+            font-weight: bold;
+        }
+        .result-non-invertible {
+            color: #fd7e14 !important;
+            font-weight: bold;
+        }
+        .result-mapping-error {
+            color: #dc3545 !important;
             font-weight: bold;
         }
         .info-icon {
@@ -67,7 +75,9 @@
         }
         .table-striped > tbody > tr:nth-of-type(odd) .result-passed,
         .table-striped > tbody > tr:nth-of-type(odd) .result-failed,
-        .table-striped > tbody > tr:nth-of-type(odd) .result-warning {
+        .table-striped > tbody > tr:nth-of-type(odd) .result-not-supported,
+        .table-striped > tbody > tr:nth-of-type(odd) .result-non-invertible,
+        .table-striped > tbody > tr:nth-of-type(odd) .result-mapping-error {
             color: inherit;
         }
         .spinner-container {
@@ -679,9 +689,9 @@
         }
 
         function classifyInversionStatus(inversionSuccess, comparisonMessage) {
-            if (inversionSuccess === 'not_supported') return { cls: 'warning', text: 'Not Supported', category: 'notSupported', tooltip: (comparisonMessage || 'Not supported').replace(/'/g, '&apos;') };
-            if (inversionSuccess === 'non_invertible') return { cls: 'warning', text: 'Non-invertible', category: 'nonInvertible', tooltip: (comparisonMessage || 'Non-invertible').replace(/'/g, '&apos;') };
-            if (inversionSuccess === 'mapping_error') return { cls: 'warning', text: 'Mapping Error', category: 'mappingError', tooltip: (comparisonMessage || 'Mapping error').replace(/'/g, '&apos;') };
+            if (inversionSuccess === 'not_supported') return { cls: 'not-supported', text: 'Not Supported', category: 'notSupported', tooltip: (comparisonMessage || 'Not supported').replace(/'/g, '&apos;') };
+            if (inversionSuccess === 'non_invertible') return { cls: 'non-invertible', text: 'Non-invertible', category: 'nonInvertible', tooltip: (comparisonMessage || 'Non-invertible').replace(/'/g, '&apos;') };
+            if (inversionSuccess === 'mapping_error') return { cls: 'mapping-error', text: 'Mapping Error', category: 'mappingError', tooltip: (comparisonMessage || 'Mapping error').replace(/'/g, '&apos;') };
             if (inversionSuccess === 'error') return { cls: 'failed', text: 'Error', category: 'failed', tooltip: (comparisonMessage || 'Error').replace(/'/g, '&apos;') };
             if (inversionSuccess === true) return { cls: 'passed', text: 'Success', category: 'passed', tooltip: '' };
             return { cls: 'failed', text: 'Failure', category: 'failed', tooltip: '' };
