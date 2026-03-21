@@ -6,12 +6,14 @@ import configparser
 import logging
 import os
 import pathlib
+import re
 import tempfile
+from urllib.parse import quote_plus
 
 import pandas as pd
 from morph_kgc.args_parser import load_config_from_argument
 from morph_kgc.mapping.mapping_parser import retrieve_mappings
-from pyoxigraph import NamedNode, RdfFormat, Store
+from pyoxigraph import Literal, NamedNode, Quad, RdfFormat, Store
 
 from .constants import (
     RML_BLANK_NODE,
@@ -35,6 +37,16 @@ from .schema import DatabaseSchemaRetriever, apply_schema_ordering, apply_schema
 from .templates import CSVTemplate, JSONTemplate, RDBTemplate
 from .utils import insert_columns
 
+D2RQ_DATABASE = NamedNode("http://www.wiwiss.fu-berlin.de/suhl/bizer/D2RQ/0.1#Database")
+D2RQ_JDBC_DSN = NamedNode("http://www.wiwiss.fu-berlin.de/suhl/bizer/D2RQ/0.1#jdbcDSN")
+D2RQ_USERNAME = NamedNode("http://www.wiwiss.fu-berlin.de/suhl/bizer/D2RQ/0.1#username")
+D2RQ_PASSWORD = NamedNode("http://www.wiwiss.fu-berlin.de/suhl/bizer/D2RQ/0.1#password")
+
+JDBC_DRIVERS: dict[str, str] = {
+    "postgresql": "postgresql+psycopg2",
+    "mysql": "mysql+pymysql",
+}
+
 RR_SQL_QUERY = NamedNode("http://www.w3.org/ns/r2rml#sqlQuery")
 RML_QUERY_NEW = NamedNode("http://w3id.org/rml/query")
 RML_QUERY_LEGACY = NamedNode("http://semweb.mmlab.be/ns/rml#query")
@@ -50,6 +62,39 @@ def _parse_mapping_store(mapping_file: str) -> Store:
     store = Store()
     store.load(path=mapping_file, format=RdfFormat.TURTLE)
     return store
+
+
+def _literal_value(quad: Quad) -> str:
+    obj = quad.object
+    if isinstance(obj, Literal):
+        return obj.value
+    return str(obj)
+
+
+def _extract_db_url_from_mapping(mapping_path: str) -> str | None:
+    store = _parse_mapping_store(mapping_path)
+    databases = list(store.quads_for_pattern(None, RDF_TYPE, D2RQ_DATABASE))
+    if not databases:
+        return None
+    db_node = databases[0].subject
+    dsn_quads = list(store.quads_for_pattern(db_node, D2RQ_JDBC_DSN, None))
+    if not dsn_quads:
+        return None
+    jdbc_dsn = _literal_value(dsn_quads[0])
+    match = re.match(r"jdbc:(\w+)://(.+)", jdbc_dsn)
+    if not match:
+        return None
+    db_type, host_and_db = match.group(1), match.group(2)
+    driver = JDBC_DRIVERS.get(db_type)
+    if not driver:
+        get_logger().warning(f"Unsupported JDBC driver type: {db_type}")
+        return None
+    user_quads = list(store.quads_for_pattern(db_node, D2RQ_USERNAME, None))
+    pass_quads = list(store.quads_for_pattern(db_node, D2RQ_PASSWORD, None))
+    username = _literal_value(user_quads[0]) if user_quads else ""
+    password = _literal_value(pass_quads[0]) if pass_quads else ""
+    credentials = f"{quote_plus(username)}:{quote_plus(password)}@" if username else ""
+    return f"{driver}://{credentials}{host_and_db}"
 
 
 def _check_for_sql_queries(mapping_path: str) -> bool:
@@ -213,6 +258,12 @@ def reconstruct(
 
     if _check_for_multiple_subject_maps(mapping_path):
         raise MappingError("TriplesMap contains multiple subjectMaps")
+
+    if not source_db_url:
+        extracted_url = _extract_db_url_from_mapping(mapping_path)
+        if extracted_url:
+            source_db_url = extracted_url
+            logger.info(f"Extracted source database URL from mapping: {extracted_url}")
 
     config_file = _build_morph_config(mapping, rdf_graph_str, source_db_url)
     try:

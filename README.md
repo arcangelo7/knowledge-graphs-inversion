@@ -7,7 +7,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13-blue.svg)](https://www.python.org/)
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
 
-Given an RDF graph and the [R2RML](https://www.w3.org/TR/r2rml/) mapping that produced it, this tool reconstructs the original relational data. It parses the mapping document, generates SPARQL queries that reverse each mapping rule, and writes the results back as SQL statements to reconstruct the original database tables.
+Given an RDF graph and the [R2RML](https://www.w3.org/TR/r2rml/) or [RML](https://kg-construct.github.io/rml-core/spec/docs/) mapping that produced it, this tool reconstructs the original relational data. It parses the mapping document, generates SPARQL queries that reverse each mapping rule, and writes the results back as SQL statements.
 
 Full documentation at [arcangelo7.github.io/knowledge-graphs-inversion](https://arcangelo7.github.io/knowledge-graphs-inversion/).
 
@@ -42,7 +42,7 @@ for table_name, table in result.items():
     print(table.data)
 ```
 
-`source_db_url` is optional and used to read the original column types and ordering. `dest_db_url` is optional and sets the target database for the generated SQL.
+`source_db_url` is optional and used to read the original column types and ordering. When using RML mappings with [D2RQ](http://d2rq.org/) database definitions, the connection info is extracted automatically from the mapping itself, no need to pass `source_db_url` at all. `dest_db_url` is optional and sets the target database for the generated SQL.
 
 ## Testing
 

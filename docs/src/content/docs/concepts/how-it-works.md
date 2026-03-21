@@ -4,12 +4,12 @@
 # SPDX-License-Identifier: ISC
 
 title: How inversion works
-description: The algorithm behind R2RML mapping inversion.
+description: The algorithm behind mapping inversion.
 ---
 
-The starting point is a relational database table, an [R2RML](https://www.w3.org/TR/r2rml/) mapping that was used to transform the table into RDF, and the resulting RDF graph. The goal is to reconstruct the original relational data from the RDF graph using only the mapping document, without access to the original database.
+The starting point is a relational database table, an [R2RML](https://www.w3.org/TR/r2rml/) or [RML](https://kg-construct.github.io/rml-core/spec/docs/) mapping that was used to transform the table into RDF, and the resulting RDF graph. The goal is to reconstruct the original relational data from the RDF graph using only the mapping document, without access to the original database.
 
-Since the RDF graph is the only data source available for reconstruction, SPARQL provides the extraction mechanism. The mapping document encodes how each column value was transformed into RDF terms during the forward process. The algorithm reads this and generates SPARQL queries that reverse it.
+Since the RDF graph is the only data source available for reconstruction, SPARQL provides the extraction mechanism. The mapping document encodes how each column value was transformed into RDF terms during the forward process. The algorithm reads this and generates SPARQL queries that reverse it. RML extends R2RML with support for heterogeneous data sources, but the inversion algorithm targets the relational subset, so the same logic applies to both vocabularies.
 
 The following sections use a running example drawn from the [W3C R2RML test suite, R2RMLTC0007a](https://www.w3.org/2001/sw/rdb2rdf/test-cases/#R2RMLTC0007a). The source table is:
 

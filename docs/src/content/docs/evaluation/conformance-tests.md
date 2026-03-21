@@ -4,10 +4,10 @@
 # SPDX-License-Identifier: ISC
 
 title: Conformance tests
-description: Validation against the W3C R2RML test suite.
+description: Validation against the R2RML and RML test suites.
 ---
 
-The algorithm is validated against the W3C [R2RML](https://www.w3.org/TR/r2rml/) test suite. The test cases are included as a [git submodule](https://github.com/kg-construct/r2rml-test-cases-support).
+The algorithm is validated against two test suites: the W3C [R2RML](https://www.w3.org/TR/r2rml/) test suite and the [RML](https://kg-construct.github.io/rml-core/spec/docs/) test suite (PostgreSQL subset). Both are included as git submodules.
 
 ## Setup
 
@@ -29,10 +29,14 @@ Pytest manages the PostgreSQL containers automatically, so no manual Docker setu
 uv run pytest -v
 ```
 
-To run a single test case:
+To run a single test case from either suite:
 
 ```bash
 uv run pytest tests/test_conformance.py::test_r2rml_conformance[R2RMLTC0001a] -v
+```
+
+```bash
+uv run pytest tests/test_conformance.py::test_rml_conformance[RMLTC0001a] -v
 ```
 
 To generate an HTML coverage report:

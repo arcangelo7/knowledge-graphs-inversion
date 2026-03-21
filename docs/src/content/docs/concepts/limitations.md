@@ -7,7 +7,7 @@ title: Limitations
 description: What can and cannot be inverted.
 ---
 
-[R2RML](https://www.w3.org/TR/r2rml/) mapping inversion is feasible in many cases, but certain mapping patterns make it structurally impossible to reconstruct the original data. These are not algorithmic shortcomings: they reflect information loss that occurs during the forward RDF transformation.
+[R2RML](https://www.w3.org/TR/r2rml/) and [RML](https://kg-construct.github.io/rml-core/spec/docs/) mapping inversion is feasible in many cases, but certain mapping patterns make it structurally impossible to reconstruct the original data. These are not algorithmic shortcomings: they reflect information loss that occurs during the forward RDF transformation. The limitations below apply equally to both mapping languages.
 
 ## Supported RDF serialization formats
 
@@ -15,7 +15,7 @@ Local RDF files must be in N-Triples or N-Quads format. Other serializations (Tu
 
 ## SQL query logical sources
 
-Mappings that use `rr:sqlQuery` instead of `rr:tableName` define their logical source as an arbitrary SQL query with joins, aggregations, or subqueries. Inverting the result of an arbitrary SQL expression is a different problem from inverting a table mapping, and the algorithm does not attempt it.
+Mappings that use `rr:sqlQuery` (R2RML) or `rml:query` (RML) instead of `rr:tableName` define their logical source as an arbitrary SQL query with joins, aggregations, or subqueries. Inverting the result of an arbitrary SQL expression is a different problem from inverting a table mapping, and the algorithm does not attempt it.
 
 ## Constant-only mappings
 

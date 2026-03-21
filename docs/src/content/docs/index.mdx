@@ -4,11 +4,11 @@
 # SPDX-License-Identifier: ISC
 
 title: Knowledge Graphs Inversion
-description: Convert RDF knowledge graphs back to relational data by reversing R2RML mappings.
+description: Convert RDF knowledge graphs back to relational data by reversing R2RML and RML mappings.
 template: splash
 hero:
   title: Knowledge Graphs Inversion
-  tagline: Reverse the R2RML mapping process to reconstruct relational data from RDF knowledge graphs.
+  tagline: Reverse R2RML and RML mappings to reconstruct relational data from RDF knowledge graphs.
   actions:
     - text: Get started
       link: /knowledge-graphs-inversion/getting-started/installation/
@@ -20,6 +20,6 @@ hero:
 
 ## What does it do?
 
-[R2RML](https://www.w3.org/TR/r2rml/) transforms relational databases into RDF graphs. This tool does the opposite: given an RDF graph and the R2RML mapping that produced it, it reconstructs the original relational data.
+[R2RML](https://www.w3.org/TR/r2rml/) and [RML](https://kg-construct.github.io/rml-core/spec/docs/) transform relational databases into RDF graphs. This tool does the opposite: given an RDF graph and the mapping that produced it, it reconstructs the original relational data.
 
-The tool reads an R2RML mapping document, generates SPARQL queries that reverse each mapping rule, and executes them against the RDF graph (N-Triples or N-Quads). The query results are then written back as SQL statements that reconstruct the original database tables.
+The tool reads the mapping document, generates SPARQL queries that reverse each mapping rule, and executes them against the RDF graph (N-Triples or N-Quads). The query results are then written back as SQL statements that reconstruct the original database tables.

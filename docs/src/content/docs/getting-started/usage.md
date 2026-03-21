@@ -7,7 +7,7 @@ title: Usage
 description: How to use the tool as a Python library.
 ---
 
-The tool exposes a single entry point: the `reconstruct()` function. It takes an R2RML mapping file and an RDF graph, runs the inversion, and returns the reconstructed data.
+The tool exposes a single entry point: the `reconstruct()` function. It takes an R2RML or RML mapping file and an RDF graph, runs the inversion, and returns the reconstructed data.
 
 ## Basic invocation
 
@@ -45,6 +45,17 @@ result = kgi.reconstruct(
     source_db_url="postgresql+psycopg2://user:password@localhost:5432/source_db",
 )
 ```
+
+With RML mappings that contain [D2RQ](http://d2rq.org/) database definitions, the connection info is extracted directly from the mapping file. When the mapping includes a block like this:
+
+```turtle
+<#DB_source> a d2rq:Database;
+  d2rq:jdbcDSN "jdbc:postgresql://localhost:5432/mydb";
+  d2rq:username "user";
+  d2rq:password "pass" .
+```
+
+the JDBC DSN, username, and password are converted to a SQLAlchemy URL and used as `source_db_url` automatically. If you pass `source_db_url` explicitly, it takes precedence over whatever the mapping says.
 
 ## Writing output to a separate database
 
