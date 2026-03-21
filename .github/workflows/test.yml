@@ -12,10 +12,7 @@ on:
     branches: [master]
 
 permissions:
-  contents: write
-
-env:
-  COVERAGE_REPORT_PATH: htmlcov
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -52,42 +49,25 @@ jobs:
           uv run coverage xml
           echo "=== Coverage Report ==="
           uv run coverage report
-          echo "COVERAGE=$(uv run coverage report | grep TOTAL | awk '{print $4}')" >> $GITHUB_ENV
 
       - name: Generate HTML coverage report
+        if: matrix.python-version == '3.12'
         run: uv run coverage html -d htmlcov
 
-      - name: Upload coverage artifact
+      - name: Generate coverage badge
+        if: matrix.python-version == '3.12'
+        run: uv run genbadge coverage -i coverage.xml -o coverage-badge.svg
+
+      - name: Upload coverage report
         if: matrix.python-version == '3.12' && github.ref == 'refs/heads/master'
         uses: actions/upload-artifact@v7
         with:
           name: coverage-report
-          path: ${{ env.COVERAGE_REPORT_PATH }}
+          path: htmlcov
 
-      - name: Generate coverage badge
-        if: matrix.python-version == '3.12'
-        run: |
-          COVERAGE_NUM=$(echo ${{ env.COVERAGE }} | sed 's/%//')
-
-          if (( $(echo "$COVERAGE_NUM >= 90" | bc -l) )); then
-            COLOR="green"
-          elif (( $(echo "$COVERAGE_NUM >= 75" | bc -l) )); then
-            COLOR="yellow"
-          elif (( $(echo "$COVERAGE_NUM >= 60" | bc -l) )); then
-            COLOR="orange"
-          else
-            COLOR="red"
-          fi
-
-          echo "BADGE_COLOR=$COLOR" >> $GITHUB_ENV
-
-      - name: Create badge
-        if: matrix.python-version == '3.12'
-        uses: RubbaBoy/BYOB@v1.3.0
+      - name: Upload coverage badge
+        if: matrix.python-version == '3.12' && github.ref == 'refs/heads/master'
+        uses: actions/upload-artifact@v7
         with:
-          name: knowledge-graphs-inversion-coverage-${{ github.ref_name }}
-          label: "Coverage"
-          status: "${{ env.COVERAGE }}"
-          color: ${{ env.BADGE_COLOR }}
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          repository: arcangelo7/knowledge-graphs-inversion
+          name: coverage-badge
+          path: coverage-badge.svg
