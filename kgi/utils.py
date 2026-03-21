@@ -353,14 +353,19 @@ def insert_columns(df: pd.DataFrame, pure=False) -> pd.DataFrame:
                     REF_TEMPLATE_REGEX, r"([^/]*)", df.at[index, "object_map_value"]
                 )
             case "http://w3id.org/rml/parentTriplesMap":
-                df.at[index, "object_references"] = [
-                    list(
-                        json.loads(
-                            df.at[index, "object_join_conditions"].replace("'", '"')
-                        ).values()
-                    )[0]["child_value"]
-                ]
-                df.at[index, "object_reference_count"] = 1
+                join_conditions = df.at[index, "object_join_conditions"]
+                if pd.notna(join_conditions):
+                    df.at[index, "object_references"] = [
+                        list(
+                            json.loads(
+                                join_conditions.replace("'", '"')
+                            ).values()
+                        )[0]["child_value"]
+                    ]
+                    df.at[index, "object_reference_count"] = 1
+                else:
+                    df.at[index, "object_references"] = []
+                    df.at[index, "object_reference_count"] = 0
 
         # Graph references
         graph_map_type = df.at[index, "graph_map_type"]

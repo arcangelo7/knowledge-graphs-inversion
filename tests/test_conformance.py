@@ -14,6 +14,7 @@ from kgi.core import reconstruct
 from .conftest import (
     DEST_R2RML_DB,
     R2RML_TEST_IDS,
+    RML_TEST_IDS,
     SOURCE_R2RML_DB,
     drop_all_tables,
     get_db_content,
@@ -73,3 +74,9 @@ def _run_conformance_test(
 def test_r2rml_conformance(test_id: str, r2rml_suite: object) -> None:
     with tempfile.TemporaryDirectory() as tmp_dir:
         _run_conformance_test(test_id, r2rml_suite, SOURCE_R2RML_DB, DEST_R2RML_DB, tmp_dir)
+
+
+@pytest.mark.parametrize("test_id", RML_TEST_IDS)
+def test_rml_conformance(test_id: str, rml_suite: object) -> None:
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        _run_conformance_test(test_id, rml_suite, SOURCE_R2RML_DB, DEST_R2RML_DB, tmp_dir)

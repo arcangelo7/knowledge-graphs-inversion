@@ -315,9 +315,13 @@ class QueryTriple(Triple):
                     f"OPTIONAL {{ ?{subject_reference} {predicate} ?{object_reference} ."
                 ]
 
-            join_conditions = json.loads(
-                str(self.rule["object_join_conditions"]).replace("'", '"')
-            )
+            raw_join_value = self.rule["object_join_conditions"]
+            if isinstance(raw_join_value, str):
+                join_conditions = json.loads(
+                    raw_join_value.replace("'", '"')
+                )
+            else:
+                join_conditions = {}
             parent_template = object_rule["subject_references_template"]
             parent_references = object_rule["subject_references"]
 

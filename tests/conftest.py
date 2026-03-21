@@ -12,7 +12,7 @@ import pandas as pd
 import pytest
 from sqlalchemy import MetaData, create_engine, text
 
-from test_suites import R2RMLTestSuite
+from test_suites import R2RMLTestSuite, RMLTestSuite
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -146,10 +146,17 @@ def _collect_test_ids(suite_class: type, base_dir: str) -> list[str]:
 
 
 R2RML_BASE_DIR = os.path.join(PROJECT_ROOT, "r2rml_test_cases")
+RML_BASE_DIR = os.path.join(PROJECT_ROOT, "rml_test_cases_repo")
 
 R2RML_TEST_IDS = _collect_test_ids(R2RMLTestSuite, R2RML_BASE_DIR)
+RML_TEST_IDS = _collect_test_ids(RMLTestSuite, RML_BASE_DIR)
 
 
 @pytest.fixture(scope="session")
 def r2rml_suite() -> R2RMLTestSuite:
     return R2RMLTestSuite(R2RML_BASE_DIR, PROJECT_ROOT)
+
+
+@pytest.fixture(scope="session")
+def rml_suite() -> RMLTestSuite:
+    return RMLTestSuite(RML_BASE_DIR, PROJECT_ROOT)
