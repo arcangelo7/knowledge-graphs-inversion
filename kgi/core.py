@@ -17,6 +17,7 @@ from .constants import (
     RML_BLANK_NODE,
     RML_PARENT_TRIPLES_MAP,
     RML_REFERENCE,
+    RML_SOURCE,
     RML_TEMPLATE,
     RR_SUBJECT_MAP,
     TEST_LOG_FOLDER,
@@ -35,6 +36,8 @@ from .templates import CSVTemplate, JSONTemplate, RDBTemplate
 from .utils import insert_columns
 
 RR_SQL_QUERY = NamedNode("http://www.w3.org/ns/r2rml#sqlQuery")
+RML_QUERY_NEW = NamedNode("http://w3id.org/rml/query")
+RML_QUERY_LEGACY = NamedNode("http://semweb.mmlab.be/ns/rml#query")
 RR_TRIPLES_MAP = NamedNode("http://www.w3.org/ns/r2rml#TriplesMap")
 RDF_TYPE = NamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")
 
@@ -53,8 +56,9 @@ def _check_for_sql_queries(mapping_path: str) -> bool:
     try:
         if os.path.exists(mapping_path):
             store = _parse_mapping_store(mapping_path)
-            if any(store.quads_for_pattern(None, RR_SQL_QUERY, None)):
-                return True
+            for predicate in (RR_SQL_QUERY, RML_QUERY_NEW, RML_QUERY_LEGACY):
+                if any(store.quads_for_pattern(None, predicate, None)):
+                    return True
         return False
     except Exception as e:
         get_logger().warning(
@@ -258,6 +262,8 @@ def reconstruct(
         schema_retrievers: dict[str, DatabaseSchemaRetriever] = {}
         if source_db_url:
             schema_retrievers["DataSource1"] = DatabaseSchemaRetriever(source_db_url)
+
+        mappings = mappings[mappings["logical_source_type"] != RML_SOURCE]
 
         results: dict[str, ReconstructedTable] = {}
         for table_name, source_rules in mappings.groupby("logical_source_value"):
