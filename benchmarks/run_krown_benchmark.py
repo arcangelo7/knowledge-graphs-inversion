@@ -27,7 +27,7 @@ logging.disable(logging.CRITICAL)
 
 from benchmarks.krown_validator import KrownValidator
 from benchmarks.krown_stats import aggregate_scenario_statistics
-from kgi.core import inversion
+from kgi.core import reconstruct
 
 from benchmarks.krown_plots import plot_timing_bar_charts
 
@@ -267,46 +267,21 @@ class KrownBenchmarkRunner:
         if self.use_virtuoso:
             endpoint_url = f"http://{self.virtuoso_config['host']}:{self.virtuoso_config['port']}/sparql"
 
-        inversion_step = {
-            "command": "execute_inversion",
-            "parameters": {
-                "rdf_file": "out.nt",
-                "mapping_file": "mapping.r2rml.ttl",
-                "rdb_host": self.db_config['host'],
-                "rdb_port": self.db_config['port'],
-                "rdb_username": self.db_config['user'],
-                "rdb_password": self.db_config['password'],
-                "rdb_type": "postgresql",
-                "rdb_name": self.db_config['database']
-            }
-        }
-
-        config = ConfigParser()
-
-        config.add_section('CONFIGURATION')
-        config.set('CONFIGURATION', 'output_file', str(shared_dir / inversion_step["parameters"]["rdf_file"]))
-        config.set('CONFIGURATION', 'output_format', 'N-QUADS')
-
-        config.add_section('DataSource1')
-        config.set('DataSource1', 'mappings', str(shared_dir / inversion_step["parameters"]["mapping_file"]))
-
+        mapping_file = shared_dir / "mapping.r2rml.ttl"
+        rdf_file = shared_dir / "out.nt"
         conn_string = self.get_connection_string()
-        morph_conn = conn_string.replace('postgresql://', 'postgresql+psycopg2://')
-        config.set('DataSource1', 'db_url', morph_conn)
-
-        inversion_config_file = shared_dir / "inversion_config.ini"
-        with open(inversion_config_file, 'w') as f:
-            config.write(f)
+        source_db_url = conn_string.replace('postgresql://', 'postgresql+psycopg2://')
 
         original_cwd = os.getcwd()
         try:
             os.chdir(shared_dir)
-            inversion_results = inversion(
-                inversion_config_file,
-                test_id=scenario_name,
+            inversion_results = reconstruct(
+                mapping=str(mapping_file),
+                rdf_graph=str(rdf_file),
+                source_db_url=source_db_url,
                 sparql_endpoint=endpoint_url,
                 use_virtuoso=self.use_virtuoso,
-                virtuoso_container='kgi-virtuoso'
+                virtuoso_container='kgi-virtuoso',
             )
             return inversion_results, time.time() - start_time
         finally:

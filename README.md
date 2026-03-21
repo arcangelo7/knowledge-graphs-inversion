@@ -24,10 +24,25 @@ cd knowledge-graphs-inversion && uv sync
 ```
 
 ```python
-from kgi.core import inversion
+import kgi
 
-result = inversion(config_file="morph_kgc_config.ini")
+result = kgi.reconstruct(
+    mapping="mapping.ttl",
+    rdf_graph="output.nq",
+    source_db_url="postgresql+psycopg2://user:pass@localhost:5432/source",
+    dest_db_url="postgresql+psycopg2://user:pass@localhost:5433/dest",
+)
 ```
+
+The result is a dictionary mapping each table name to a `ReconstructedTable` with three attributes: `sql` (the CREATE TABLE and INSERT statements), `sparql_query` (the SPARQL query used to extract the data), and `data` (a pandas DataFrame with the reconstructed rows).
+
+```python
+for table_name, table in result.items():
+    print(table.sql)
+    print(table.data)
+```
+
+`source_db_url` is optional and used to read the original column types and ordering. `dest_db_url` is optional and sets the target database for the generated SQL.
 
 ## Testing
 

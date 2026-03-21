@@ -7,12 +7,12 @@ import tempfile
 
 import pytest
 
+from kgi import MappingError, NoDataError, NonInvertibleError, UnsupportedMappingError
 from kgi.comparison import compare_databases
-from kgi.core import inversion
+from kgi.core import reconstruct
 
 from .conftest import (
     DEST_R2RML_DB,
-    EXPECTED_STATUSES,
     R2RML_TEST_IDS,
     SOURCE_R2RML_DB,
     drop_all_tables,
@@ -43,11 +43,14 @@ def _run_conformance_test(
     write_morph_config(mapping_path, output_path, source_db, config_path)
     run_morph_kgc(config_path)
 
-    result = inversion(config_path, test_id, dest_db)
-
-    if isinstance(result, dict) and "__status__" in result:
-        status = result["__status__"]
-        assert status in EXPECTED_STATUSES, f"Unexpected inversion status: {status} - {result['__reason__']}"
+    try:
+        result = reconstruct(
+            mapping=mapping_path,
+            rdf_graph=output_path,
+            source_db_url=source_db,
+            dest_db_url=dest_db,
+        )
+    except (UnsupportedMappingError, MappingError, NonInvertibleError, NoDataError):
         return
 
     source_content = get_db_content(source_db)

@@ -2,13 +2,12 @@
 #
 # SPDX-License-Identifier: ISC
 
-"""Core inversion functionality."""
-
+import configparser
 import logging
 import os
 import pathlib
+import tempfile
 
-import morph_kgc.config
 import pandas as pd
 from morph_kgc.args_parser import load_config_from_argument
 from morph_kgc.mapping.mapping_parser import retrieve_mappings
@@ -23,6 +22,13 @@ from .constants import (
     TEST_LOG_FOLDER,
 )
 from .endpoints import EndpointFactory, RemoteEndpoint, VirtuosoEndpoint
+from .exceptions import (
+    MappingError,
+    NoDataError,
+    NonInvertibleError,
+    UnsupportedMappingError,
+)
+from .models import ReconstructedTable
 from .query import retrieve_data
 from .schema import DatabaseSchemaRetriever, apply_schema_ordering, apply_schema_types
 from .templates import CSVTemplate, JSONTemplate, RDBTemplate
@@ -34,7 +40,6 @@ RDF_TYPE = NamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")
 
 
 def get_logger() -> logging.Logger:
-    """Get the KGI logger."""
     return logging.getLogger("kgi")
 
 
@@ -44,15 +49,12 @@ def _parse_mapping_store(mapping_file: str) -> Store:
     return store
 
 
-def check_for_sql_queries(config: morph_kgc.config.Config) -> bool:
-    """Check if mapping contains rr:sqlQuery (not supported)."""
+def _check_for_sql_queries(mapping_path: str) -> bool:
     try:
-        for section in config.get_data_sources_sections():
-            for mapping_file in config.get_mappings_files(section):
-                if os.path.exists(mapping_file):
-                    store = _parse_mapping_store(mapping_file)
-                    if any(store.quads_for_pattern(None, RR_SQL_QUERY, None)):
-                        return True
+        if os.path.exists(mapping_path):
+            store = _parse_mapping_store(mapping_path)
+            if any(store.quads_for_pattern(None, RR_SQL_QUERY, None)):
+                return True
         return False
     except Exception as e:
         get_logger().warning(
@@ -61,26 +63,26 @@ def check_for_sql_queries(config: morph_kgc.config.Config) -> bool:
         return False
 
 
-def check_for_multiple_subject_maps(config: morph_kgc.config.Config) -> bool:
-    """Check if any TriplesMap has more than one rr:subjectMap (invalid R2RML)."""
+def _check_for_multiple_subject_maps(mapping_path: str) -> bool:
     try:
-        for section in config.get_data_sources_sections():
-            for mapping_file in config.get_mappings_files(section):
-                if os.path.exists(mapping_file):
-                    store = _parse_mapping_store(mapping_file)
-                    for quad in store.quads_for_pattern(None, RDF_TYPE, RR_TRIPLES_MAP):
-                        triples_map = quad.subject
-                        subject_maps = list(store.quads_for_pattern(triples_map, RR_SUBJECT_MAP, None))
-                        if len(subject_maps) > 1:
-                            return True
+        if os.path.exists(mapping_path):
+            store = _parse_mapping_store(mapping_path)
+            for quad in store.quads_for_pattern(None, RDF_TYPE, RR_TRIPLES_MAP):
+                triples_map = quad.subject
+                subject_maps = list(
+                    store.quads_for_pattern(triples_map, RR_SUBJECT_MAP, None)
+                )
+                if len(subject_maps) > 1:
+                    return True
         return False
     except Exception as e:
         get_logger().warning(f"Could not check for multiple subject maps: {e}")
         return False
 
 
-def generate_template(source_rules: pd.DataFrame, db_url: str | None = None):
-    """Generate appropriate template based on source type."""
+def _generate_template(
+    source_rules: pd.DataFrame, db_url: str | None = None
+) -> CSVTemplate | RDBTemplate | JSONTemplate:
     source_type = source_rules.iloc[0]["source_type"]
 
     if source_type == "JSON":
@@ -107,26 +109,51 @@ def generate_template(source_rules: pd.DataFrame, db_url: str | None = None):
         raise ValueError(f"Unsupported source type: {source_type}")
 
 
-def extract_db_config(config: morph_kgc.config.Config) -> dict:
-    """Extract database configuration from Morph-KGC config."""
-    db_configs = {}
-    for section in config.get_data_sources_sections():
-        try:
-            db_url = config.get_db_url(section)
-            if db_url:
-                db_configs[section] = {"db_url": db_url}
-        except Exception as e:
-            get_logger().warning(
-                f"Could not extract database URL for section {section}: {str(e)}"
-            )
+def _check_for_constant_only_mappings(mappings: pd.DataFrame) -> bool:
+    try:
+        for _, rule in mappings.iterrows():
+            subject_map_type = rule.get("subject_map_type")
+            predicate_map_type = rule.get("predicate_map_type")
+            object_map_type = rule.get("object_map_type")
 
-    if not db_configs:
-        raise ValueError("No valid database configurations found in Morph-KGC config")
-    return db_configs
+            if (
+                subject_map_type in [RML_REFERENCE, RML_TEMPLATE]
+                or predicate_map_type in [RML_REFERENCE, RML_TEMPLATE]
+                or object_map_type in [RML_REFERENCE, RML_TEMPLATE]
+            ):
+                return False
+
+        return True
+    except Exception as e:
+        get_logger().warning(f"Could not check for constant-only mappings: {e}")
+        return False
 
 
-def test_logging_setup(test_id: str):
-    """Set up logging for test cases."""
+def _build_morph_config(
+    mapping: str | pathlib.Path,
+    rdf_graph: str,
+    source_db_url: str | None = None,
+) -> str:
+    config = configparser.ConfigParser()
+    config["CONFIGURATION"] = {
+        "output_file": str(rdf_graph),
+        "output_format": "N-QUADS",
+        "logging_level": "ERROR",
+    }
+    data_source: dict[str, str] = {"mappings": str(mapping)}
+    if source_db_url:
+        data_source["db_url"] = source_db_url
+    config["DataSource1"] = data_source
+
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".ini", delete=False, prefix="kgi_"
+    )
+    config.write(tmp)
+    tmp.close()
+    return tmp.name
+
+
+def test_logging_setup(test_id: str) -> None:
     if not os.path.exists(TEST_LOG_FOLDER):
         os.mkdir(TEST_LOG_FOLDER)
 
@@ -148,8 +175,7 @@ def test_logging_setup(test_id: str):
     logger.addHandler(file_handler)
 
 
-def logging_setup():
-    """Set up general logging."""
+def logging_setup() -> None:
     if os.path.exists("inversion.log"):
         os.remove("inversion.log")
 
@@ -157,7 +183,6 @@ def logging_setup():
     logger.setLevel(logging.DEBUG)
     formatter = logging.Formatter("%(name)s - %(levelname)s - %(message)s")
 
-    # File handler
     file_handler = logging.FileHandler("inversion.log")
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)
@@ -166,180 +191,113 @@ def logging_setup():
     logger.propagate = False
 
 
-def check_for_constant_only_mappings(mappings: pd.DataFrame) -> bool:
-    """Check if all mappings contain only constants (no column references or templates)."""
-    try:
-        # Check if any mapping has non-constant types
-        for _, rule in mappings.iterrows():
-            subject_map_type = rule.get("subject_map_type")
-            predicate_map_type = rule.get("predicate_map_type")
-            object_map_type = rule.get("object_map_type")
-
-            # If any mapping uses references or templates, it's not constant-only
-            if (
-                subject_map_type in [RML_REFERENCE, RML_TEMPLATE]
-                or predicate_map_type in [RML_REFERENCE, RML_TEMPLATE]
-                or object_map_type in [RML_REFERENCE, RML_TEMPLATE]
-            ):
-                return False
-
-        # If we reach here, all mappings are constant-only
-        return True
-    except Exception as e:
-        get_logger().warning(f"Could not check for constant-only mappings: {e}")
-        return False
-
-
-def inversion(
-    config_file: str | pathlib.Path,
-    test_id: str | None = None,
+def reconstruct(
+    mapping: str | pathlib.Path,
+    rdf_graph: str | pathlib.Path,
+    source_db_url: str | None = None,
     dest_db_url: str | None = None,
     sparql_endpoint: str | None = None,
     use_virtuoso: bool = False,
     virtuoso_container: str = "virtuoso-kgi",
-) -> dict[str, dict[str, str]] | dict:
-    """
-    Main inversion function.
-
-    Args:
-        config_file: Path to Morph-KGC configuration file
-        test_id: Optional test ID for logging
-        dest_db_url: Optional destination database URL
-        sparql_endpoint: Optional SPARQL endpoint URL
-        use_virtuoso: Whether to use Virtuoso for RDF processing
-        virtuoso_container: Name of the Virtuoso Docker container
-
-    Returns:
-        Dictionary mapping source names to inverted results or special status dict
-    """
+) -> dict[str, ReconstructedTable]:
     logger = get_logger()
+    mapping_path = str(mapping)
+    rdf_graph_str = str(rdf_graph)
 
-    results = {}
+    if _check_for_sql_queries(mapping_path):
+        raise UnsupportedMappingError("SQL query as logical table is not supported")
 
-    if test_id is not None:
-        test_logging_setup(test_id)
+    if _check_for_multiple_subject_maps(mapping_path):
+        raise MappingError("TriplesMap contains multiple subjectMaps")
 
-    config = load_config_from_argument(config_file)
-    if check_for_sql_queries(config):
-        get_logger().warning(
-            "SQL query as logical table is not supported. Skipping inversion."
-        )
-        return {
-            "__status__": "not_supported",
-            "__reason__": "SQL query as logical table",
-        }
-
+    config_file = _build_morph_config(mapping, rdf_graph_str, source_db_url)
     try:
-        mappings, _, _ = retrieve_mappings(config)
-    except ValueError as e:
-        get_logger().error(f"Error retrieving mappings: {e}")
-        return {
-            "__status__": "mapping_error",
-            "__reason__": f"Invalid mapping: {str(e)}",
-        }
-    except KeyError as e:
-        if str(e) == "'object_map'":
-            get_logger().warning("Mapping with missing information. Skipping.")
-        return {
-            "__status__": "mapping_error",
-            "__reason__": "Mapping with missing object_map information",
-        }
-
-    if check_for_multiple_subject_maps(config):
-        get_logger().warning(
-            "Invalid mapping: TriplesMap contains multiple subjectMaps."
-        )
-        return {
-            "__status__": "mapping_error",
-            "__reason__": "Invalid mapping: TriplesMap contains multiple subjectMaps",
-        }
-
-    if check_for_constant_only_mappings(mappings):
-        get_logger().warning(
-            "Constant-only mappings detected - cannot retrieve original data from constants."
-        )
-        return {
-            "__status__": "non_invertible",
-            "__reason__": "Mappings contain only constants (no column references) - original data cannot be recovered",
-        }
-
-    try:
-        if sparql_endpoint:
-            url = config.get_output_file()
-
-            if use_virtuoso:
-                endpoint = VirtuosoEndpoint(
-                    sparql_endpoint,
-                    rdf_file_to_load=url,
-                    container_name=virtuoso_container,
-                )
-            else:
-                endpoint = RemoteEndpoint(sparql_endpoint, rdf_file_to_load=url)
-        else:
-            output_file = config.get_output_file()
-            endpoint = EndpointFactory.create_from_url(output_file)
-    except (FileNotFoundError, OSError):
-        get_logger().warning("Output file not found. Skipping inversion.")
-        return {
-            "__status__": "no_input_file",
-            "__reason__": "No RDF input file found for inversion, likely due to mapping errors",
-        }
-    except ValueError as e:
-        get_logger().warning(f"Invalid RDF data in output file: {e}")
-        return {
-            "__status__": "non_invertible",
-            "__reason__": f"Output RDF contains invalid data: {e}",
-        }
-
-    insert_columns(mappings)
-    db_configs = extract_db_config(config)
-    schema_retrievers = {}
-    for section, db_config in db_configs.items():
-        if "db_url" in db_config:
-            schema_retrievers[section] = DatabaseSchemaRetriever(db_config["db_url"])
-
-    for table_name, source_rules in mappings.groupby("logical_source_value"):
-        source_section = source_rules.iloc[0].get("source_section", "DataSource1")
-        db_config = db_configs.get(source_section, db_configs.get("DataSource1", {}))
-        template_db_url = dest_db_url if dest_db_url else db_config.get("db_url")
-        template = generate_template(source_rules, template_db_url)
-
-        source_data, sparql_query = retrieve_data(
-            mappings, source_rules, endpoint, decode_columns=True
-        )
-
-        if source_data is None:
-            results[table_name] = {"inverted_query": "", "sparql_query": ""}
-            get_logger().warning(f"No data generated for {table_name}")
-            continue
-
-        if source_section in schema_retrievers:
-            schema_retriever: DatabaseSchemaRetriever = schema_retrievers[
-                source_section
-            ]
-            table_schema = schema_retriever.get_table_schema(table_name)
-            if table_schema:
-                source_data = apply_schema_types(source_data, table_schema)
-                source_data = apply_schema_ordering(source_data, table_schema)
+        config = load_config_from_argument(config_file)
 
         try:
+            mappings, _, _ = retrieve_mappings(config)
+        except ValueError as e:
+            raise MappingError(f"Invalid mapping: {e}") from e
+        except KeyError as e:
+            if str(e) == "'object_map'":
+                raise MappingError(
+                    "Mapping with missing object_map information"
+                ) from e
+            raise MappingError(f"Mapping error: {e}") from e
+
+        if _check_for_constant_only_mappings(mappings):
+            raise NonInvertibleError(
+                "Mappings contain only constants (no column references) - original data cannot be recovered"
+            )
+
+        try:
+            if sparql_endpoint:
+                if use_virtuoso:
+                    endpoint = VirtuosoEndpoint(
+                        sparql_endpoint,
+                        rdf_file_to_load=rdf_graph_str,
+                        container_name=virtuoso_container,
+                    )
+                else:
+                    endpoint = RemoteEndpoint(
+                        sparql_endpoint, rdf_file_to_load=rdf_graph_str
+                    )
+            else:
+                endpoint = EndpointFactory.create_from_url(rdf_graph_str)
+        except (FileNotFoundError, OSError) as e:
+            raise NoDataError(
+                "No RDF input file found, likely due to mapping errors"
+            ) from e
+        except ValueError as e:
+            raise NonInvertibleError(
+                f"Output RDF contains invalid data: {e}"
+            ) from e
+
+        insert_columns(mappings)
+
+        schema_retrievers: dict[str, DatabaseSchemaRetriever] = {}
+        if source_db_url:
+            schema_retrievers["DataSource1"] = DatabaseSchemaRetriever(source_db_url)
+
+        results: dict[str, ReconstructedTable] = {}
+        for table_name, source_rules in mappings.groupby("logical_source_value"):
+            source_section = source_rules.iloc[0].get(
+                "source_section", "DataSource1"
+            )
+            template_db_url = dest_db_url if dest_db_url else source_db_url
+            template = _generate_template(source_rules, template_db_url)
+
+            source_data, sparql_query = retrieve_data(
+                mappings, source_rules, endpoint, decode_columns=True
+            )
+
+            if source_data is None:
+                results[table_name] = ReconstructedTable(
+                    sql="", sparql_query="", data=pd.DataFrame()
+                )
+                logger.warning(f"No data generated for {table_name}")
+                continue
+
+            if source_section in schema_retrievers:
+                schema_retriever = schema_retrievers[source_section]
+                table_schema = schema_retriever.get_table_schema(table_name)
+                if table_schema:
+                    source_data = apply_schema_types(source_data, table_schema)
+                    source_data = apply_schema_ordering(source_data, table_schema)
+
             filled_source = template.fill_data(source_data, table_name)
-            results[table_name] = {
-                "inverted_query": filled_source,
-                "sparql_query": sparql_query,
-            }
-        except AttributeError as e:
-            get_logger().error(f"Error while filling template: {e}")
-            raise e
+            results[table_name] = ReconstructedTable(
+                sql=filled_source,
+                sparql_query=sparql_query or "",
+                data=source_data,
+            )
 
-    for retriever in schema_retrievers.values():
-        retriever.dispose()
+        for retriever in schema_retrievers.values():
+            retriever.dispose()
 
-    # If no results were generated, return explicit status
-    if not results:
-        logger.warning("No results generated during inversion process")
-        return {
-            "__status__": "no_data_generated",
-            "__reason__": "No data was generated during inversion process",
-        }
-    return results
+        if not results:
+            raise NoDataError("No data was generated during reconstruction")
+
+        return results
+    finally:
+        os.unlink(config_file)

@@ -17,8 +17,15 @@ from flask import (Flask, Response, jsonify, render_template, request,
 from pyoxigraph import BlankNode, Quad, RdfFormat, Store
 
 from database_connection import DatabaseConnection
+from kgi import (
+    MappingError,
+    NoDataError,
+    NonInvertibleError,
+    ReconstructedTable,
+    UnsupportedMappingError,
+)
 from kgi.comparison import compare_databases
-from kgi.core import inversion
+from kgi.core import reconstruct
 from test_suites import RdfTerm, TestSuite, register_suites, get_suite, SUITES
 
 for _logger_name in ('morph_kgc', 'morph_kgc.config', 'morph_kgc.mapping',
@@ -330,40 +337,45 @@ def run_single_test(test_id: str, database_system: str, suite: TestSuite) -> dic
         raw_results = test_one(test_id, database_system, config, suite)
 
         dest_db_url = db_connection.get_connection_string(dest_db)
-        inversion_result = inversion(suite.morph_kgc_config_path, test_id, dest_db_url)
+        source_db_url = f'postgresql+psycopg2://r2rml:r2rml@{suite.source_db_host}:5432/r2rml'
+        output_format = config['properties'].get('output_format', 'ntriples')
+        rdf_output_path = suite.get_output_file_path(output_format)
 
+        inversion_result: dict[str, ReconstructedTable] | None = None
         inversion_status: str | None = None
-        if isinstance(inversion_result, dict) and '__status__' in inversion_result:
-            inversion_status = str(inversion_result['__status__'])
-            inversion_reason = str(inversion_result['__reason__'])
-            inversion_success = False
-        else:
-            inversion_success = bool(inversion_result)
-            inversion_reason = ''
+        comparison_status: str | None = None
 
-        if inversion_success:
+        try:
+            inversion_result = reconstruct(
+                mapping=mapping_file,
+                rdf_graph=rdf_output_path,
+                source_db_url=source_db_url,
+                dest_db_url=dest_db_url,
+            )
             source_content = db_connection.get_database_content(source_db)
             dest_content = db_connection.get_database_content(dest_db)
             databases_equal, comparison_message, comparison_status = compare_databases(source_content, dest_content, mapping_content)
-        elif inversion_status == 'not_supported':
+        except UnsupportedMappingError as e:
+            inversion_status = 'not_supported'
             databases_equal = None
-            comparison_message = f"Inversion not supported: {inversion_reason}"
+            comparison_message = f"Inversion not supported: {e}"
             source_content = None
             dest_content = None
-            comparison_status = None
-        elif inversion_status == 'non_invertible':
+        except NonInvertibleError as e:
+            inversion_status = 'non_invertible'
             source_content = db_connection.get_database_content(source_db)
             dest_content = db_connection.get_database_content(dest_db)
             databases_equal = None
-            comparison_message = f"Non-invertible mapping detected: {inversion_reason}"
+            comparison_message = f"Non-invertible mapping detected: {e}"
             comparison_status = 'non_invertible'
-        elif inversion_status == 'mapping_error':
+        except MappingError as e:
+            inversion_status = 'mapping_error'
             source_content = db_connection.get_database_content(source_db)
             dest_content = db_connection.get_database_content(dest_db)
             databases_equal = None
-            comparison_message = f"Invalid mapping: {inversion_reason}"
+            comparison_message = f"Invalid mapping: {e}"
             comparison_status = 'mapping_error'
-        elif inversion_status in ['no_input_file', 'no_data_generated']:
+        except NoDataError:
             source_content = db_connection.get_database_content(source_db)
             dest_content = db_connection.get_database_content(dest_db)
             databases_equal, comparison_message, comparison_status = compare_databases(source_content, dest_content, mapping_content)
@@ -371,10 +383,6 @@ def run_single_test(test_id: str, database_system: str, suite: TestSuite) -> dic
                 databases_equal = True
                 comparison_message = "Inversion correctly not performed due to mapping errors - destination database appropriately empty"
                 comparison_status = None
-        else:
-            source_content = db_connection.get_database_content(source_db)
-            dest_content = db_connection.get_database_content(dest_db)
-            databases_equal, comparison_message, comparison_status = compare_databases(source_content, dest_content, mapping_content)
 
         processed_results = process_results(
             raw_results, mapping_content, test_id, database_system,
@@ -404,7 +412,7 @@ def process_results(
     database_system: str,
     config: ConfigParser,
     purpose: str | bool,
-    inversion_result: dict[str, dict[str, str]],
+    inversion_result: dict[str, ReconstructedTable] | None,
     databases_equal: bool | None,
     comparison_message: str,
     source_content: dict[str, dict[str, list[str]]] | None,
@@ -422,15 +430,15 @@ def process_results(
     for row in raw_results[1:]:
         expected_content, actual_content = get_file_contents(test_id, database_system, config, suite)
 
-        if isinstance(inversion_result, dict) and '__status__' in inversion_result:
+        if inversion_result is None:
             formatted_inversion_result = ""
             formatted_sparql_queries = ""
         else:
             formatted_queries = []
             sparql_queries = []
-            for _, result in inversion_result.items():
-                formatted_queries.append(result['inverted_query'].strip())
-                sparql_queries.append(result['sparql_query'])
+            for table in inversion_result.values():
+                formatted_queries.append(table.sql.strip())  # type: ignore[union-attr]
+                sparql_queries.append(table.sparql_query)  # type: ignore[union-attr]
             formatted_inversion_result = "\n\n".join(formatted_queries)
             formatted_sparql_queries = "\n\n".join(filter(None, sparql_queries))
 

@@ -16,14 +16,6 @@ from test_suites import R2RMLTestSuite
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-EXPECTED_STATUSES = frozenset({
-    "not_supported",
-    "non_invertible",
-    "mapping_error",
-    "no_input_file",
-    "no_data_generated",
-})
-
 SOURCE_CONTAINER = "kgi-test-r2rml-source"
 DEST_CONTAINER = "kgi-test-r2rml-dest"
 SOURCE_PORT = 5440
