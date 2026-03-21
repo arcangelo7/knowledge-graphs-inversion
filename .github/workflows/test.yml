@@ -43,6 +43,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --all-extras --dev
 
+      - name: Pull RMLMapper Docker image
+        run: docker pull rmlio/rmlmapper-java:v8.0.1
+
       - name: Run tests with coverage
         run: |
           uv run coverage run -m pytest -v

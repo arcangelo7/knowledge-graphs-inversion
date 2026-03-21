@@ -5,17 +5,19 @@
 import json
 import logging
 import math
-import os
 import multiprocessing
+import os
+import tempfile
 import traceback
-from queue import Empty
 from configparser import ConfigParser
 from datetime import datetime
+from queue import Empty
 
 from flask import (Flask, Response, jsonify, render_template, request,
                    stream_with_context)
 from pyoxigraph import BlankNode, Quad, RdfFormat, Store
 
+import rmlmapper
 from database_connection import DatabaseConnection
 from kgi import (
     MappingError,
@@ -263,11 +265,8 @@ def _run_test(
     expected_output = metadata['expected_output']
     output_format = config['properties'].get('output_format', 'ntriples')
 
-    suite.write_morph_kgc_config(t_identifier, database_system, output_format)
-
     output_file = suite.get_output_file_path(output_format)
     engine_output_path = suite.get_engine_output_path(t_identifier, database_system, output_format)
-    engine_log_path = suite.get_engine_log_path(t_identifier, database_system)
 
     expected_output_store = Store()
     if os.path.isfile(output_file):
@@ -278,8 +277,19 @@ def _run_test(
         if os.path.isfile(expected_output_file):
             expected_output_store.load(path=expected_output_file, format=RdfFormat.N_QUADS)
 
-    engine_cmd = config['properties']['engine_command'].format(config_path=suite.morph_kgc_config_path)
-    exit_code = os.system(f"{engine_cmd} > {engine_log_path} 2>&1")
+    mapping_path = suite.get_mapping_path(t_identifier)
+    jdbc_dsn = f"jdbc:postgresql://{suite.source_db_host}:5432/r2rml"
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        if suite.suite_id == "rml":
+            prepared = rmlmapper.prepare_rml_mapping(
+                mapping_path, jdbc_dsn, "r2rml", "r2rml", tmp_dir,
+            )
+            exit_code = rmlmapper.run(prepared, output_file)
+        else:
+            exit_code = rmlmapper.run(
+                mapping_path, output_file,
+                dsn=jdbc_dsn, username="r2rml", password="r2rml",
+            )
 
     if os.path.isfile(output_file):
         os.system(f"cp {output_file} {engine_output_path}")

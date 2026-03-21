@@ -4,14 +4,13 @@
 
 import os
 import subprocess
-import sys
 import time
-from configparser import ConfigParser
 
 import pandas as pd
 import pytest
 from sqlalchemy import MetaData, create_engine, text
 
+import rmlmapper
 from test_suites import R2RMLTestSuite, RMLTestSuite
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -111,31 +110,22 @@ def get_db_content(db_url: str) -> dict[str, dict[str, list[str]]]:
         engine.dispose()
 
 
-def write_morph_config(
-    mapping_path: str, output_path: str, db_url: str, config_path: str,
-) -> None:
-    config = ConfigParser()
-    config["CONFIGURATION"] = {
-        "output_file": output_path,
-        "output_format": "N-QUADS",
-        "infer_sql_datatypes": "yes",
-        "logging_level": "ERROR",
-    }
-    config["DataSource1"] = {
-        "mappings": mapping_path,
-        "db_url": db_url,
-    }
-    with open(config_path, "w") as f:
-        config.write(f)
-
-
-def run_morph_kgc(config_path: str) -> int:
-    result = subprocess.run(
-        [sys.executable, "-m", "morph_kgc", config_path],
-        capture_output=True,
-        timeout=120,
+def run_forward_mapping(
+    mapping_path: str,
+    output_path: str,
+    db_url: str,
+    suite_id: str,
+    tmp_dir: str,
+) -> int:
+    jdbc_dsn, username, password = rmlmapper.sqlalchemy_to_jdbc(db_url)
+    if suite_id == "rml":
+        prepared = rmlmapper.prepare_rml_mapping(
+            mapping_path, jdbc_dsn, username, password, tmp_dir,
+        )
+        return rmlmapper.run(prepared, output_path)
+    return rmlmapper.run(
+        mapping_path, output_path, dsn=jdbc_dsn, username=username, password=password,
     )
-    return result.returncode
 
 
 def _collect_test_ids(suite_class: type, base_dir: str) -> list[str]:

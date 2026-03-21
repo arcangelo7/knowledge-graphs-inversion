@@ -26,6 +26,11 @@ RUN mkdir -p /opt/virtuoso-data && \
 
 RUN pip install uv
 
+RUN wget -q -O /opt/rmlmapper.jar \
+    https://github.com/RMLio/rmlmapper-java/releases/download/v8.1.0/rmlmapper-8.1.0-r380-all.jar
+
+ENV RMLMAPPER_JAR=/opt/rmlmapper.jar
+
 WORKDIR /app
 
 COPY pyproject.toml uv.lock ./

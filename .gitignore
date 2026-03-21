@@ -20,6 +20,7 @@ rml_test_cases_repo/test-cases/**/*.log
 rml_test_cases_repo/test-cases/output.*
 inversion.log
 morph_kgc_config_*.ini
+rmlmapper*.jar
 
 # Virtuoso data directory
 virtuoso-data/

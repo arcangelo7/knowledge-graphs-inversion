@@ -19,8 +19,7 @@ from .conftest import (
     drop_all_tables,
     get_db_content,
     load_sql_script,
-    run_morph_kgc,
-    write_morph_config,
+    run_forward_mapping,
 )
 
 
@@ -39,10 +38,8 @@ def _run_conformance_test(
 
     mapping_path = suite.get_mapping_path(test_id)  # type: ignore[union-attr]
     output_path = os.path.join(tmp_dir, "output.nq")
-    config_path = os.path.join(tmp_dir, "morph_kgc_config.ini")
 
-    write_morph_config(mapping_path, output_path, source_db, config_path)
-    run_morph_kgc(config_path)
+    run_forward_mapping(mapping_path, output_path, source_db, suite.suite_id, tmp_dir)  # type: ignore[union-attr]
 
     forward_mapping_produced_output = os.path.isfile(output_path)
 

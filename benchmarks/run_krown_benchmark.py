@@ -11,7 +11,6 @@ import os
 import subprocess
 import sys
 import time
-from configparser import ConfigParser
 from pathlib import Path
 
 import pandas as pd
@@ -25,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # Suppress all console logging - Rich handles console output
 logging.disable(logging.CRITICAL)
 
+import rmlmapper
 from benchmarks.krown_validator import KrownValidator
 from benchmarks.krown_stats import aggregate_scenario_statistics
 from kgi.core import reconstruct
@@ -116,7 +116,7 @@ class KrownBenchmarkRunner:
 
         try:
             self.execute_load_rdb_step(metadata, shared_dir, scenario_name)
-            morph_kgc_time = self.execute_morph_kgc_step(metadata, shared_dir)
+            morph_kgc_time = self.execute_forward_mapping_step(metadata, shared_dir)
             inversion_results, inversion_time = self.execute_inversion_step(metadata, shared_dir, scenario_name)
 
             validation_results = None
@@ -195,7 +195,7 @@ class KrownBenchmarkRunner:
         df.to_sql(table_name, engine, if_exists='replace', index=False)
         engine.dispose()
 
-    def execute_morph_kgc_step(self, metadata: dict, shared_dir: Path) -> float:
+    def execute_forward_mapping_step(self, metadata: dict, shared_dir: Path) -> float:
         start_time = time.time()
 
         mapping_step = None
@@ -207,45 +207,22 @@ class KrownBenchmarkRunner:
         if not mapping_step:
             raise ValueError("No mapping step found in metadata")
 
-        config = ConfigParser()
-
-        config.add_section('CONFIGURATION')
-        config.set('CONFIGURATION', 'na_values', ',#N/A,N/A,#N/A N/A,n/a,NA,<NA>,#NA,NULL,null,NaN,nan,None')
-        config.set('CONFIGURATION', 'output_file', str(shared_dir / mapping_step["parameters"]["output_file"]))
-        config.set('CONFIGURATION', 'output_format', 'N-QUADS')
-        config.set('CONFIGURATION', 'only_printable_characters', 'no')
-        config.set('CONFIGURATION', 'safe_percent_encoding', '')
-        config.set('CONFIGURATION', 'mapping_partitioning', 'PARTIAL-AGGREGATIONS')
-        config.set('CONFIGURATION', 'infer_sql_datatypes', 'no')
-        config.set('CONFIGURATION', 'number_of_processes', '')
-        config.set('CONFIGURATION', 'logging_level', 'ERROR')
-        config.set('CONFIGURATION', 'logs_file', '')
-
-        config.add_section('DataSource1')
-        config.set('DataSource1', 'mappings', str(shared_dir / mapping_step["parameters"]["mapping_file"]))
+        mapping_file = str(shared_dir / mapping_step["parameters"]["mapping_file"])
+        output_file = str(shared_dir / mapping_step["parameters"]["output_file"])
 
         conn_string = self.get_connection_string()
-        morph_conn = conn_string.replace('postgresql://', 'postgresql+psycopg2://')
-        config.set('DataSource1', 'db_url', morph_conn)
+        sa_url = conn_string.replace("postgresql://", "postgresql+psycopg2://")
+        jdbc_dsn, username, password = rmlmapper.sqlalchemy_to_jdbc(sa_url)
 
-        config_file = shared_dir / "morph_kgc_config.ini"
-        with open(config_file, 'w') as f:
-            config.write(f)
-
-        morph_cmd = ["python3", "-m", "morph_kgc", str(config_file)]
-
-        morph_result = subprocess.run(
-            morph_cmd,
-            cwd=shared_dir,
-            capture_output=True,
-            text=True
+        rc = rmlmapper.run(
+            mapping_file, output_file,
+            dsn=jdbc_dsn, username=username, password=password,
         )
 
-        if morph_result.returncode != 0:
-            raise RuntimeError(f"Morph-KGC failed: {morph_result.stderr}")
+        if rc != 0:
+            raise RuntimeError(f"RMLMapper failed with exit code {rc}")
 
-        output_file = shared_dir / mapping_step["parameters"]["output_file"]
-        if not output_file.exists():
+        if not Path(output_file).exists():
             raise FileNotFoundError(f"Expected output file not found: {output_file}")
 
         return time.time() - start_time

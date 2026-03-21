@@ -1,6 +1,10 @@
 # PostgreSQL data directories (used by docker-compose volumes)
 postgresql_data/
 dest_postgresql_data/
+postgresql_r2rml_data/
+dest_postgresql_r2rml_data/
+postgresql_rml_data/
+dest_postgresql_rml_data/
 benchmark_postgresql_data/
 
 # Virtuoso data
