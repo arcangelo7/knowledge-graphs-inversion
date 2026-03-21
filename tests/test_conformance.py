@@ -44,6 +44,8 @@ def _run_conformance_test(
     write_morph_config(mapping_path, output_path, source_db, config_path)
     run_morph_kgc(config_path)
 
+    forward_mapping_produced_output = os.path.isfile(output_path)
+
     try:
         result = reconstruct(
             mapping=mapping_path,
@@ -51,7 +53,11 @@ def _run_conformance_test(
             source_db_url=source_db,
             dest_db_url=dest_db,
         )
-    except (UnsupportedMappingError, MappingError, NonInvertibleError, NoDataError):
+    except NoDataError:
+        if not forward_mapping_produced_output:
+            pytest.skip("Forward mapping failed - no RDF output produced")
+        return
+    except (UnsupportedMappingError, MappingError, NonInvertibleError):
         return
 
     source_content = get_db_content(source_db)

@@ -2,51 +2,65 @@
 
 There are two repositories to consider:
 
-1. **Archived repository** (https://github.com/kg-construct/rml-test-cases). This repo is marked as deprecated ("new test cases are published per module") but it remains the only source for database-specific RML test cases. 
+1. **Archived repository** (https://github.com/kg-construct/rml-test-cases). This repo is marked as deprecated ("new test cases are published per module") but it remains the only source for database-specific RML test cases.
 	- Test case directories spanning RMLTC0000 through RMLTC0020
-2. **New modular repository** (https://github.com/kg-construct/rml-core): currently only JSON variants. 
+2. **New modular repository** (https://github.com/kg-construct/rml-core): currently only JSON variants.
 	- Contains 76 test cases spanning RMLTC0000 through RMLTC0031. Test cases RMLTC0021 through RMLTC0031 are entirely new and have no equivalent in the archived repo or in R2RML. Compared to the archived repo, the new repo also drops several test cases from the 0000-0020 range (detailed below).
 
-## Comparison with R2RML test cases
+## Comparison between archived RML test cases and R2RML test cases
 
 Our project currently uses 62 R2RML test cases (R2RMLTC0000 through R2RMLTC0020), matching the kg-construct/r2rml-test-cases-support repository. The W3C spec (https://www.w3.org/2001/sw/rdb2rdf/test-cases/) defines 63 test cases, but R2RMLTC0003a ("undefined SQL Version identifier", an error test case) was never implemented in the support repository. The archived RML repo covers the same range (RMLTC0000 through RMLTC0020) with 60 PostgreSQL test cases.
 
 ### Direct equivalents
 
-Most RML-PostgreSQL archived test cases map directly to R2RML test cases and test the same features, with only the expected vocabulary and quoting differences (detailed in the "Systematic differences" section below). Test cases marked with * have inconsistencies documented in the "Feature-level inconsistencies" section.
+Most RML-PostgreSQL archived test cases map directly to R2RML test cases and test the same features, with only the expected vocabulary and quoting differences (detailed in the "Systematic differences" section below). Test cases marked with * have inconsistencies. Test cases marked with ** are affected by the PostgreSQL case sensitivity bug documented below.
 
-| Feature area                    | R2RML IDs      | RML IDs (archived)            | Notes |
-| ------------------------------- | -------------- | ----------------------------- | ----- |
-| Empty table                     | R2RMLTC0000    | RMLTC0000                     | |
-| One column mapping              | R2RMLTC0001a   | RMLTC0001a                    | |
-| One column mapping              | R2RMLTC0001b   | RMLTC0001b*                   | RML tests SQL query, not blank nodes |
-| Two column variants             | R2RMLTC0002a-j | RMLTC0002a-j                  | |
-| Three column mapping            | R2RMLTC0003b-c (0003a missing from our set) | RMLTC0003a-c | |
-| Multiple triples from one row   | R2RMLTC0004a   | RMLTC0004a                    | |
-| Multiple triples from one row   | R2RMLTC0004b   | RMLTC0004b*                   | Both have invalid `rr:termType rr:Literal` on subject map; R2RML also uses `rr:sqlQuery`, RML uses simple table |
-| Resource typing                 | R2RMLTC0005a   | RMLTC0005a                    | |
-| Resource typing                 | R2RMLTC0005b   | RMLTC0005b*                   | Different blank node template separators |
-| Constants                       | R2RMLTC0006a   | RMLTC0006a                    | |
-| Named graphs and typing         | R2RMLTC0007a-f | RMLTC0007a-f*                 | Different column names (Name vs FirstName) |
-| Named graphs and typing         | R2RMLTC0007g-h | RMLTC0007g-h*                 | Missing rdf:type triple in RML |
-| Composite keys, ref object maps | R2RMLTC0008a-c | RMLTC0008a-c                  | |
-| Foreign keys                    | R2RMLTC0009a-d | RMLTC0009a-d                  | 0009c-d: `rr:sqlQuery` vs `rml:query` |
-| Special characters              | R2RMLTC0010a-c | RMLTC0010a-c                  | |
-| Many-to-many                    | R2RMLTC0011a-b | RMLTC0011a-b                  | |
-| Blank nodes                     | R2RMLTC0012a   | RMLTC0012a*                   | Different blank node template separators |
-| Blank nodes                     | R2RMLTC0012b   | RMLTC0012b*                   | Different table names (IOUs/Lives vs persons/lives) |
-| Blank nodes                     | R2RMLTC0012c-e | RMLTC0012c-e                  | |
-| Null values                     | R2RMLTC0013a   | RMLTC0013a                    | |
-| Language tags                   | R2RMLTC0015a-b | RMLTC0015a-b                  | |
-| SQL datatypes                   | R2RMLTC0016a-e | RMLTC0016a-e                  | |
-| CHAR type                       | R2RMLTC0018a   | RMLTC0018a                    | |
-| IRI values                      | R2RMLTC0019a-b | RMLTC0019a-b                  | |
-| IRI errors                      | R2RMLTC0020a-b | RMLTC0020a-b                  | |
+| Feature area                    | R2RML IDs                                   | RML IDs (archived) | Notes                                                                                                          |
+| ------------------------------- | ------------------------------------------- | ------------------ | -------------------------------------------------------------------------------------------------------------- |
+| Empty table                     | R2RMLTC0000                                 | RMLTC0000          |                                                                                                                |
+| One column mapping              | R2RMLTC0001a                                | RMLTC0001a         |                                                                                                                |
+| One column mapping              | R2RMLTC0001b                                | RMLTC0001b*        | RML tests SQL query, not blank nodes                                                                           |
+| Two column variants             | R2RMLTC0002a-j                              | RMLTC0002a-j       |                                                                                                                |
+| Three column mapping            | R2RMLTC0003b-c (0003a missing from our set) | RMLTC0003a-c       |                                                                                                                |
+| Multiple triples from one row   | R2RMLTC0004a                                | RMLTC0004a         |                                                                                                                |
+| Multiple triples from one row   | R2RMLTC0004b                                | RMLTC0004b*        | Both have invalid `rr:termType rr:Literal` on subject map; R2RML also uses `rr:sqlQuery` RML uses simple table |
+| Resource typing                 | R2RMLTC0005a                                | RMLTC0005a**       | Forward mapping fails in RML (case sensitivity bug)                                                            |
+| Resource typing                 | R2RMLTC0005b                                | RMLTC0005b**       | Different blank node template separators; forward mapping fails in RML (case sensitivity bug)                  |
+| Constants                       | R2RMLTC0006a                                | RMLTC0006a         |                                                                                                                |
+| Named graphs and typing         | R2RMLTC0007a-f                              | RMLTC0007a-f*      | Different column names (Name vs FirstName)                                                                     |
+| Named graphs and typing         | R2RMLTC0007g-h                              | RMLTC0007g-h*      | Missing rdf:type triple in RML                                                                                 |
+| Composite keys, ref object maps | R2RMLTC0008a-c                              | RMLTC0008a-c       |                                                                                                                |
+| Foreign keys                    | R2RMLTC0009a-d                              | RMLTC0009a-d       | 0009c-d: `rr:sqlQuery` vs `rml:query`                                                                          |
+| Special characters              | R2RMLTC0010a-c                              | RMLTC0010a-c       |                                                                                                                |
+| Many-to-many                    | R2RMLTC0011a-b                              | RMLTC0011a-b       |                                                                                                                |
+| Blank nodes                     | R2RMLTC0012a                                | RMLTC0012a**       | Different blank node template separators; forward mapping fails in RML (case sensitivity bug)                  |
+| Blank nodes                     | R2RMLTC0012b                                | RMLTC0012b*        | Different table names (IOUs/Lives vs persons/lives)                                                            |
+| Blank nodes                     | R2RMLTC0012c-d                              | RMLTC0012c-d       |                                                                                                                |
+| Blank nodes                     | R2RMLTC0012e                                | RMLTC0012e**       | Forward mapping fails in RML (case sensitivity bug)                                                            |
+| Null values                     | R2RMLTC0013a                                | RMLTC0013a**       | Forward mapping fails in RML (case sensitivity bug)                                                            |
+| Language tags                   | R2RMLTC0015a-b                              | RMLTC0015a-b       |                                                                                                                |
+| SQL datatypes                   | R2RMLTC0016a-e                              | RMLTC0016a-e**     | Forward mapping fails in RML (case sensitivity bug)                                                            |
+| CHAR type                       | R2RMLTC0018a                                | RMLTC0018a**       | Forward mapping fails in RML (case sensitivity bug)                                                            |
+| IRI values                      | R2RMLTC0019a                                | RMLTC0019a         |                                                                                                                |
+| IRI values                      | R2RMLTC0019b                                | RMLTC0019b**       | Forward mapping fails in RML (case sensitivity bug)                                                            |
+| IRI errors                      | R2RMLTC0020a-b                              | RMLTC0020a-b**     | Forward mapping fails in RML (case sensitivity bug)                                                            |
+
+The coverage is nearly complete. The legacy RML repo adapted R2RML features to RML vocabulary: for instance, RMLTC0009c-d use `rml:query` instead of R2RML's `rr:sqlQuery` for SQL queries as logical sources (verified in https://github.com/kg-construct/rml-test-cases/blob/master/test-cases/RMLTC0009c-PostgreSQL/mapping.ttl). Similarly, RMLTC0002f-j exist as PostgreSQL variants and test the same SQL identifier scenarios as their R2RML counterparts.
 
 The only R2RML test cases with no equivalent in either the legacy or new RML repos are **R2RMLTC0014a-c**, which test `rr:inverseExpression`, a construct that exists only in R2RML.
 
-Conversely, **RMLTC0003a** exists in the RML legacy repo and corresponds to R2RMLTC0003a, which is defined in the W3C spec but was never added to the r2rml-test-cases-support repository. It tests the presence of an undefined SQL Version identifier and expects an error. The RML legacy repo therefore has 60 PostgreSQL test cases: 62 - 3 (no 0014a-c) + 1 (adds 0003a) = 60.
+Conversely, **RMLTC0003a** exists in the RML legacy repo and corresponds to R2RMLTC0003a, which is defined in the W3C spec but was never added to the r2rml-test-cases-support repository.
 
+The RML legacy repo therefore has 60 PostgreSQL test cases: 62 - 3 (no 0014a-c) + 1 (adds 0003a) = 60.
+
+### PostgreSQL case sensitivity bug in RML test cases
+
+14 RML test cases fail at the forward mapping stage (morph-kgc cannot generate RDF) due to a mismatch between the SQL setup scripts and the mapping files.
+
+The R2RML SQL scripts use quoted identifiers (`CREATE TABLE "IOUs"`), which preserves the original case in PostgreSQL. The RML SQL scripts use unquoted identifiers (`CREATE TABLE IOUs`), which PostgreSQL normalizes to lowercase (`ious`). The mapping files then reference the original mixed-case name (`rr:tableName "IOUs"`), and morph-kgc generates a quoted SQL query (`SELECT ... FROM "IOUs"`). Since the table is stored as `ious`, PostgreSQL raises `relation "IOUs" does not exist`.
+
+---
+## New rml-core repo
 ### Test cases dropped from the new rml-core repo
 
 The new `rml-core` repo (JSON-only) includes fewer test cases from the 0000-0020 range than the legacy repo.
@@ -151,9 +165,9 @@ The **new** RML mappings are syntactically very different. The same test case (R
 | TriplesMap IRI                            | `<TriplesMap1>` (relative to `@base`)                    | `<http://example.com/base/TriplesMap1>` (absolute)                 |
 
 
-Luckily, our system never reads mapping files directly (except for two validation functions discussed below). The mapping parsing is delegated to morph-kgc, which (hopefully) normalizes both the legacy and new vocabularies to the same internal DataFrame representation.
+Luckily, our system never reads mapping files directly (except for two validation functions discussed below). The mapping parsing is delegated to morph-kgc, which (hopefully) normalizes both the legacy and new vocabularies to the same internal DataFrame representation
 
 Reviewing the KGI codebase, the inversion pipeline is largely vocabulary-agnostic because morph-kgc handles normalization. There are, however, two functions in `core.py` that parse mapping files directly using the R2RML namespace:
 
-- `check_for_sql_queries()`: looks for `rr:sqlQuery` triples.
-- `check_for_multiple_subject_maps()`: looks for `rr:TriplesMap` and `rr:subjectMap`.
+- `check_for_sql_queries()`: looks for `rr:sqlQuery` triples
+- `check_for_multiple_subject_maps()`: looks for `rr:TriplesMap` and `rr:subjectMap`
