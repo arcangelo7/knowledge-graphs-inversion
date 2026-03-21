@@ -59,18 +59,19 @@ The interface is available at `http://localhost:5000`. Results are saved to `tes
 
 The [R2RML test suite](https://www.w3.org/2001/sw/rdb2rdf/test-cases/) contains 62 test cases.
 
-Of these 62 cases, 17 use SQL queries as logical sources (`rr:sqlQuery`), which the algorithm does not handle. The remaining 45 break down as follows:
+Of these 62 cases, 16 use SQL queries as logical sources (`rr:sqlQuery`), which the algorithm does not handle. The remaining 46 break down as follows:
 
 | Category | Count |
 |---|---|
-| Successfully inverted | 26 |
+| Successfully inverted | 24 |
 | Non-invertible: partial mappings | 9 |
 | Non-invertible: non-unique subject templates | 3 |
-| Non-invertible: combined cases | 2 |
+| Non-invertible: invalid RDF data | 3 |
+| Non-invertible: combined cases | 1 |
 | Non-invertible: constant-only mapping | 1 |
 | Non-invertible: NULL in subject template | 1 |
-| Invalid mappings (correctly rejected) | 3 |
+| Invalid mappings (correctly rejected) | 4 |
 
-The 26 passing cases cover all the term map types and extraction strategies described in the [algorithm overview](/knowledge-graphs-inversion/concepts/how-it-works/). The 16 non-invertible cases each fall into one of the [known limitation categories](/knowledge-graphs-inversion/concepts/limitations/).
+The 24 passing cases cover all the term map types and extraction strategies described in the [algorithm overview](/knowledge-graphs-inversion/concepts/how-it-works/). The 18 non-invertible cases each fall into one of the [known limitation categories](/knowledge-graphs-inversion/concepts/limitations/).
 
-Three test cases contain invalid mappings (literals as graph names, missing subject maps, multiple subject maps per triples map) and are correctly detected and rejected.
+Four test cases contain invalid mappings (literal term type on subject maps, literals as graph names, missing subject maps, multiple subject maps per triples map) and are correctly detected and rejected.

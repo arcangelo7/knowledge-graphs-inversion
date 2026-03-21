@@ -13,31 +13,35 @@ Our project currently uses 62 R2RML test cases (R2RMLTC0000 through R2RMLTC0020)
 
 ### Direct equivalents
 
-Most RML-PostgreSQL archived test cases map directly to R2RML test cases and test the same features:
+Most RML-PostgreSQL archived test cases map directly to R2RML test cases and test the same features, with only the expected vocabulary and quoting differences (detailed in the "Systematic differences" section below). Test cases marked with * have inconsistencies documented in the "Feature-level inconsistencies" section.
 
-| Feature area                    | R2RML IDs      | RML IDs (archived)            |
-| ------------------------------- | -------------- | ----------------------------- |
-| Empty table                     | R2RMLTC0000    | RMLTC0000                     |
-| One column mapping              | R2RMLTC0001a-b | RMLTC0001a-b                  |
-| Two column variants             | R2RMLTC0002a-j | RMLTC0002a-j                  |
-| Three column mapping            | R2RMLTC0003b-c (0003a missing from our set) | RMLTC0003a-c |
-| Multiple triples from one row   | R2RMLTC0004a-b | RMLTC0004a-b                  |
-| Resource typing                 | R2RMLTC0005a-b | RMLTC0005a-b                  |
-| Constants                       | R2RMLTC0006a   | RMLTC0006a                    |
-| Named graphs and typing         | R2RMLTC0007a-h | RMLTC0007a-h                  |
-| Composite keys, ref object maps | R2RMLTC0008a-c | RMLTC0008a-c                  |
-| Foreign keys                    | R2RMLTC0009a-b | RMLTC0009a-b                  |
-| Special characters              | R2RMLTC0010a-c | RMLTC0010a-c                  |
-| Many-to-many                    | R2RMLTC0011a-b | RMLTC0011a-b                  |
-| Blank nodes                     | R2RMLTC0012a-e | RMLTC0012a-e                  |
-| Null values                     | R2RMLTC0013a   | RMLTC0013a                    |
-| Language tags                   | R2RMLTC0015a-b | RMLTC0015a-b                  |
-| SQL datatypes                   | R2RMLTC0016a-e | RMLTC0016a-e                  |
-| CHAR type                       | R2RMLTC0018a   | RMLTC0018a                    |
-| IRI values                      | R2RMLTC0019a-b | RMLTC0019a-b                  |
-| IRI errors                      | R2RMLTC0020a-b | RMLTC0020a-b                  |
-
-The coverage is nearly complete. The legacy RML repo adapted R2RML features to RML vocabulary: for instance, RMLTC0009c-d use `rml:query` instead of R2RML's `rr:sqlQuery` for SQL queries as logical sources (verified in https://github.com/kg-construct/rml-test-cases/blob/master/test-cases/RMLTC0009c-PostgreSQL/mapping.ttl). Similarly, RMLTC0002f-j exist as PostgreSQL variants and test the same SQL identifier scenarios as their R2RML counterparts.
+| Feature area                    | R2RML IDs      | RML IDs (archived)            | Notes |
+| ------------------------------- | -------------- | ----------------------------- | ----- |
+| Empty table                     | R2RMLTC0000    | RMLTC0000                     | |
+| One column mapping              | R2RMLTC0001a   | RMLTC0001a                    | |
+| One column mapping              | R2RMLTC0001b   | RMLTC0001b*                   | RML tests SQL query, not blank nodes |
+| Two column variants             | R2RMLTC0002a-j | RMLTC0002a-j                  | |
+| Three column mapping            | R2RMLTC0003b-c (0003a missing from our set) | RMLTC0003a-c | |
+| Multiple triples from one row   | R2RMLTC0004a   | RMLTC0004a                    | |
+| Multiple triples from one row   | R2RMLTC0004b   | RMLTC0004b*                   | Both have invalid `rr:termType rr:Literal` on subject map; R2RML also uses `rr:sqlQuery`, RML uses simple table |
+| Resource typing                 | R2RMLTC0005a   | RMLTC0005a                    | |
+| Resource typing                 | R2RMLTC0005b   | RMLTC0005b*                   | Different blank node template separators |
+| Constants                       | R2RMLTC0006a   | RMLTC0006a                    | |
+| Named graphs and typing         | R2RMLTC0007a-f | RMLTC0007a-f*                 | Different column names (Name vs FirstName) |
+| Named graphs and typing         | R2RMLTC0007g-h | RMLTC0007g-h*                 | Missing rdf:type triple in RML |
+| Composite keys, ref object maps | R2RMLTC0008a-c | RMLTC0008a-c                  | |
+| Foreign keys                    | R2RMLTC0009a-d | RMLTC0009a-d                  | 0009c-d: `rr:sqlQuery` vs `rml:query` |
+| Special characters              | R2RMLTC0010a-c | RMLTC0010a-c                  | |
+| Many-to-many                    | R2RMLTC0011a-b | RMLTC0011a-b                  | |
+| Blank nodes                     | R2RMLTC0012a   | RMLTC0012a*                   | Different blank node template separators |
+| Blank nodes                     | R2RMLTC0012b   | RMLTC0012b*                   | Different table names (IOUs/Lives vs persons/lives) |
+| Blank nodes                     | R2RMLTC0012c-e | RMLTC0012c-e                  | |
+| Null values                     | R2RMLTC0013a   | RMLTC0013a                    | |
+| Language tags                   | R2RMLTC0015a-b | RMLTC0015a-b                  | |
+| SQL datatypes                   | R2RMLTC0016a-e | RMLTC0016a-e                  | |
+| CHAR type                       | R2RMLTC0018a   | RMLTC0018a                    | |
+| IRI values                      | R2RMLTC0019a-b | RMLTC0019a-b                  | |
+| IRI errors                      | R2RMLTC0020a-b | RMLTC0020a-b                  | |
 
 The only R2RML test cases with no equivalent in either the legacy or new RML repos are **R2RMLTC0014a-c**, which test `rr:inverseExpression`, a construct that exists only in R2RML.
 

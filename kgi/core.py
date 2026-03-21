@@ -13,7 +13,7 @@ from urllib.parse import quote_plus
 import pandas as pd
 from morph_kgc.args_parser import load_config_from_argument
 from morph_kgc.mapping.mapping_parser import retrieve_mappings
-from pyoxigraph import Literal, NamedNode, Quad, RdfFormat, Store
+from pyoxigraph import BlankNode, Literal, NamedNode, Quad, RdfFormat, Store
 
 from .constants import (
     RML_BLANK_NODE,
@@ -21,7 +21,9 @@ from .constants import (
     RML_REFERENCE,
     RML_SOURCE,
     RML_TEMPLATE,
+    RR_LITERAL,
     RR_SUBJECT_MAP,
+    RR_TERM_TYPE,
     TEST_LOG_FOLDER,
 )
 from .endpoints import EndpointFactory, RemoteEndpoint, VirtuosoEndpoint
@@ -98,35 +100,34 @@ def _extract_db_url_from_mapping(mapping_path: str) -> str | None:
 
 
 def _check_for_sql_queries(mapping_path: str) -> bool:
-    try:
-        if os.path.exists(mapping_path):
-            store = _parse_mapping_store(mapping_path)
-            for predicate in (RR_SQL_QUERY, RML_QUERY_NEW, RML_QUERY_LEGACY):
-                if any(store.quads_for_pattern(None, predicate, None)):
-                    return True
-        return False
-    except Exception as e:
-        get_logger().warning(
-            f"Could not parse mapping file to check for SQL queries: {e}"
-        )
-        return False
+    store = _parse_mapping_store(mapping_path)
+    for predicate in (RR_SQL_QUERY, RML_QUERY_NEW, RML_QUERY_LEGACY):
+        if any(store.quads_for_pattern(None, predicate, None)):
+            return True
+    return False
 
 
 def _check_for_multiple_subject_maps(mapping_path: str) -> bool:
-    try:
-        if os.path.exists(mapping_path):
-            store = _parse_mapping_store(mapping_path)
-            for quad in store.quads_for_pattern(None, RDF_TYPE, RR_TRIPLES_MAP):
-                triples_map = quad.subject
-                subject_maps = list(
-                    store.quads_for_pattern(triples_map, RR_SUBJECT_MAP, None)
-                )
-                if len(subject_maps) > 1:
-                    return True
-        return False
-    except Exception as e:
-        get_logger().warning(f"Could not check for multiple subject maps: {e}")
-        return False
+    store = _parse_mapping_store(mapping_path)
+    for quad in store.quads_for_pattern(None, RDF_TYPE, RR_TRIPLES_MAP):
+        triples_map = quad.subject
+        subject_maps = list(
+            store.quads_for_pattern(triples_map, RR_SUBJECT_MAP, None)
+        )
+        if len(subject_maps) > 1:
+            return True
+    return False
+
+
+def _check_for_literal_subjects(mapping_path: str) -> bool:
+    store = _parse_mapping_store(mapping_path)
+    for sm_quad in store.quads_for_pattern(None, RR_SUBJECT_MAP, None):
+        subject_map_node = sm_quad.object
+        if not isinstance(subject_map_node, (NamedNode, BlankNode)):
+            continue
+        if any(store.quads_for_pattern(subject_map_node, RR_TERM_TYPE, RR_LITERAL)):
+            return True
+    return False
 
 
 def _generate_template(
@@ -252,6 +253,9 @@ def reconstruct(
     logger = get_logger()
     mapping_path = str(mapping)
     rdf_graph_str = str(rdf_graph)
+
+    if _check_for_literal_subjects(mapping_path):
+        raise MappingError("rr:termType rr:Literal on subjectMap is not valid")
 
     if _check_for_sql_queries(mapping_path):
         raise UnsupportedMappingError("SQL query as logical table is not supported")
