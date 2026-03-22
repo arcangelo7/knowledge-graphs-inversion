@@ -7,6 +7,14 @@ from sqlalchemy import MetaData, create_engine, text
 from sqlalchemy.engine import Engine
 
 
+def hex_encode_binary_columns(df: pd.DataFrame) -> pd.DataFrame:
+    for col in df.columns:
+        df[col] = df[col].apply(
+            lambda v: bytes(v).hex().upper() if isinstance(v, (bytes, memoryview)) else v
+        )
+    return df
+
+
 class DatabaseConnection:
     def __init__(self):
         self._connection_strings = {
@@ -71,6 +79,7 @@ class DatabaseConnection:
             if datatypes.empty:
                 return None
             content = content.where(pd.notnull(content), None)
+            hex_encode_binary_columns(content)
             return {
                 'columns': content.columns.tolist(),
                 'data': content.values.tolist()

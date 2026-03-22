@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import MetaData, create_engine, text
 
 import rmlmapper
+from database_connection import hex_encode_binary_columns
 from test_suites import R2RMLTestSuite, RMLTestSuite
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -101,6 +102,7 @@ def get_db_content(db_url: str) -> dict[str, dict[str, list[str]]]:
             for table in table_names:
                 df = pd.read_sql(f'SELECT * FROM "{table}";', conn)
                 df = df.where(pd.notnull(df), None)
+                hex_encode_binary_columns(df)
                 content[table] = {
                     "columns": df.columns.tolist(),
                     "data": df.values.tolist(),
