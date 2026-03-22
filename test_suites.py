@@ -192,7 +192,7 @@ class RMLTestSuite(TestSuite):
             return None
         error_expected = row.get('error expected?', 'false').lower() == 'true'
         output_path = self.get_expected_output_path(test_id)
-        has_output = os.path.exists(output_path)
+        has_output = os.path.exists(output_path) and os.path.getsize(output_path) > 0
         return {
             'title': row.get('title', ''),
             'purpose': row.get('purpose', 'Purpose not specified'),
