@@ -4,7 +4,6 @@
 
 """Utility functions and classes."""
 
-import functools
 import json
 import logging
 import re
@@ -12,7 +11,6 @@ from decimal import Decimal
 from datetime import datetime
 from urllib.parse import ParseResult, unquote, urlparse
 
-import jsonpath_ng
 import pandas as pd
 
 from .constants import REF_TEMPLATE_REGEX
@@ -44,33 +42,6 @@ class Validator:
         except Exception:
             return False
 
-    @staticmethod
-    def df_equals(df1: pd.DataFrame, df2: pd.DataFrame) -> bool:
-        """Compare two DataFrames for equality."""
-        df1 = df1.copy(deep=True)
-        df2 = df2.copy(deep=True)
-
-        # Sort by columns and rows
-        df1.sort_index(axis=1, inplace=True)
-        df1.sort_values(by=list(df1.columns), inplace=True)
-        df1.drop_duplicates(inplace=True)
-        df2.sort_index(axis=1, inplace=True)
-        df2.sort_values(by=list(df2.columns), inplace=True)
-        df2.drop_duplicates(inplace=True)
-
-        if df1.shape != df2.shape:
-            return False
-
-        # Check if all rows exist in both DataFrames
-        for row in df1.itertuples():
-            if row not in df2.itertuples():
-                return False
-
-        for row in df2.itertuples():
-            if row not in df1.itertuples():
-                return False
-
-        return True
 
 
 class Identifier:
@@ -78,18 +49,9 @@ class Identifier:
 
     @staticmethod
     def generate_plain_identifier(rule: pd.Series, value: str) -> str | None:
-        """Generate a plain identifier from a rule and value."""
         source_type = str(rule["source_type"])
 
-        if source_type == "CSV":
-            return value
-        elif source_type == "JSON":
-            try:
-                iterator = str(rule["iterator"])
-                return JSONPathFunctions.extend_string_path(iterator, value)
-            except Exception:
-                return value
-        elif source_type == "RDB":
+        if source_type in ("CSV", "RDB"):
             return value
         else:
             logging.getLogger("kgi").error(f"Unsupported source type: {source_type}")
@@ -186,40 +148,6 @@ class Codex:
         """Get ID and check if key was already bound."""
         is_bound = key in self.codex.keys()
         return self.get_id(key), is_bound
-
-
-class JSONPathFunctions:
-    """JSON path manipulation utilities."""
-
-    def __init__(self):
-        raise NotImplementedError("This class should not be instantiated")
-
-    @staticmethod
-    def list_path_steps(jsonpath: jsonpath_ng.JSONPath) -> list[jsonpath_ng.JSONPath]:
-        """Break down a JSON path into steps."""
-        steps = []
-        current = jsonpath
-        while isinstance(current, jsonpath_ng.Child):
-            steps.append(current.right)
-            current = current.left
-        steps.append(current)
-        return steps[::-1]
-
-    @staticmethod
-    @functools.cache
-    def normalize_json_path(path: str) -> str:
-        """Normalize a JSON path string."""
-        parsed: jsonpath_ng.Child = jsonpath_ng.parse(path)
-        return str(parsed)
-
-    @staticmethod
-    def extend_string_path(path: str, extension: str) -> str:
-        """Extend a JSON path with an additional segment."""
-        if " " in extension:
-            new_path = f"{path}['{extension}']"
-        else:
-            new_path = f"{path}.{extension}"
-        return JSONPathFunctions.normalize_json_path(new_path)
 
 
 def sparql_to_python_type(value, datatype):

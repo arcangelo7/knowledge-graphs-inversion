@@ -11,14 +11,13 @@ dependencies = [
     "pandas>=2.3.0,<3.0.0",
     "sqlalchemy>=2.0.41,<3.0.0",
     "morph-kgc>=2.10.0,<3.0.0",
-    "jsonpath-ng>=1.7.0,<2.0.0",
     "flask>=3.1.1",
     "psycopg2-binary>=2.9.0,<3.0.0",
     "mysql-connector-python>=9.3.0",
     "sparqlite>=1.2.1",
     "pyoxigraph>=0.5.6",
     "rich>=14.3.3",
-    "falcon>=4",  # morph-kgc depends on falcon 3.x which fails to build on Python 3.13+
+    "falcon>=4", # morph-kgc depends on falcon 3.x which fails to build on Python 3.13+
 ]
 
 [tool.uv]

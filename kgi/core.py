@@ -16,16 +16,13 @@ from morph_kgc.mapping.mapping_parser import retrieve_mappings
 from pyoxigraph import BlankNode, Literal, NamedNode, Quad, RdfFormat, Store
 
 from .constants import (
-    RML_BLANK_NODE,
     RML_IRI,
-    RML_PARENT_TRIPLES_MAP,
     RML_REFERENCE,
     RML_SOURCE,
     RML_TEMPLATE,
     RR_LITERAL,
     RR_SUBJECT_MAP,
     RR_TERM_TYPE,
-    TEST_LOG_FOLDER,
 )
 from .endpoints import EndpointFactory, RemoteEndpoint, VirtuosoEndpoint
 from .exceptions import (
@@ -37,7 +34,7 @@ from .exceptions import (
 from .models import ReconstructedTable
 from .query import retrieve_data
 from .schema import DatabaseSchemaRetriever, apply_schema_ordering, apply_schema_types
-from .templates import CSVTemplate, JSONTemplate, RDBTemplate
+from .templates import RDBTemplate
 from .utils import insert_columns
 
 D2RQ_DATABASE = NamedNode("http://www.wiwiss.fu-berlin.de/suhl/bizer/D2RQ/0.1#Database")
@@ -129,28 +126,10 @@ def _check_for_literal_subjects(store: Store) -> bool:
 
 def _generate_template(
     source_rules: pd.DataFrame, db_url: str | None = None
-) -> CSVTemplate | RDBTemplate | JSONTemplate:
+) -> RDBTemplate:
     source_type = source_rules.iloc[0]["source_type"]
 
-    if source_type == "JSON":
-        template = JSONTemplate()
-        for _, rule in source_rules.iterrows():
-            if rule["object_map_type"] in [RML_BLANK_NODE, RML_PARENT_TRIPLES_MAP]:
-                continue
-            iterator = rule["iterator"]
-            for value in (
-                rule["subject_references"]
-                + rule["predicate_references"]
-                + rule["object_references"]
-            ):
-                splitted = value.split(".")
-                predecessors = ".".join(splitted[:-1])
-                path = f"{iterator}.{predecessors}['{splitted[-1]}']"
-                template.add_path(path)
-        return template
-    elif source_type == "CSV":
-        return CSVTemplate()
-    elif source_type == "RDB":
+    if source_type == "RDB":
         return RDBTemplate(db_url)
     else:
         raise ValueError(f"Unsupported source type: {source_type}")
@@ -219,44 +198,6 @@ def _build_morph_config(
     config.write(tmp)
     tmp.close()
     return tmp.name
-
-
-def test_logging_setup(test_id: str) -> None:
-    if not os.path.exists(TEST_LOG_FOLDER):
-        os.mkdir(TEST_LOG_FOLDER)
-
-    log_file = TEST_LOG_FOLDER / f"{test_id}.log"
-    if os.path.exists(log_file):
-        os.remove(log_file)
-
-    logger = get_logger()
-    for handler in logger.handlers[:]:
-        if isinstance(handler, logging.FileHandler):
-            handler.close()
-            logger.removeHandler(handler)
-    logger.setLevel(logging.DEBUG)
-    logger.propagate = False
-    formatter = logging.Formatter("%(name)s - %(levelname)s - %(message)s")
-    file_handler = logging.FileHandler(log_file)
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-
-
-def logging_setup() -> None:
-    if os.path.exists("inversion.log"):
-        os.remove("inversion.log")
-
-    logger = get_logger()
-    logger.setLevel(logging.DEBUG)
-    formatter = logging.Formatter("%(name)s - %(levelname)s - %(message)s")
-
-    file_handler = logging.FileHandler("inversion.log")
-    file_handler.setLevel(logging.DEBUG)
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-
-    logger.propagate = False
 
 
 def reconstruct(

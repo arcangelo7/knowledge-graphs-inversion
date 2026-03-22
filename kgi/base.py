@@ -2,8 +2,6 @@
 #
 # SPDX-License-Identifier: ISC
 
-"""Abstract base classes for the KGI library."""
-
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -11,74 +9,32 @@ from typing import TYPE_CHECKING
 
 import pandas as pd
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover
     from .utils import Codex, IdGenerator
 
 
-class Endpoint(ABC):
-    """Abstract base class for SPARQL endpoints."""
+class Endpoint(ABC):  # pragma: no cover
 
     @abstractmethod
     def query(self, query: str):
-        """Execute a SPARQL query and return results."""
         raise NotImplementedError
 
 
-class Triple(ABC):
-    """Abstract base class for RDF triples."""
+class Triple(ABC):  # pragma: no cover
 
     @abstractmethod
     def generate(
         self, id_generator: IdGenerator, codex: Codex, all_mapping_rules: pd.DataFrame
     ) -> str | None:
-        """Generate the string representation of the triple."""
         raise NotImplementedError
 
 
-class Node(ABC):
-    """Abstract base class for JSON template nodes."""
-
-    def find(self, key: str) -> Node | None:
-        """Find a child node by key."""
-        raise NotImplementedError
-
-    @property
-    @abstractmethod
-    def path(self) -> str:
-        """Get the path of this node."""
-        raise NotImplementedError
-
-    @property
-    @abstractmethod
-    def parent_path(self) -> str:
-        """Get the parent path of this node."""
-        raise NotImplementedError
-
-    @parent_path.setter
-    @abstractmethod
-    def parent_path(self, value: str) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    def to_template(self) -> str:
-        """Convert node to template string."""
-        raise NotImplementedError
-
-    @abstractmethod
-    def fill(self, data: pd.DataFrame) -> str:
-        """Fill the node with actual data."""
-        raise NotImplementedError
-
-
-class Template(ABC):
-    """Abstract base class for data templates."""
+class Template(ABC):  # pragma: no cover
 
     @abstractmethod
     def create_template(self) -> str:
-        """Create a template structure."""
         raise NotImplementedError
 
     @abstractmethod
     def fill_data(self, data: pd.DataFrame, source_name: str) -> str:
-        """Fill template with data."""
         raise NotImplementedError
