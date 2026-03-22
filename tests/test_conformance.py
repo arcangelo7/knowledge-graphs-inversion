@@ -41,7 +41,14 @@ def _run_conformance_test(
 
     run_forward_mapping(mapping_path, output_path, source_db, suite.suite_id, tmp_dir)  # type: ignore[union-attr]
 
-    forward_mapping_produced_output = os.path.isfile(output_path)
+    forward_mapping_produced_output = (
+        os.path.isfile(output_path) and os.path.getsize(output_path) > 0
+    )
+    if not forward_mapping_produced_output:
+        metadata = suite.get_test_metadata(test_id)  # type: ignore[union-attr]
+        expects_output = metadata and metadata["expected_output"]
+        if not expects_output:
+            pytest.skip("Forward mapping produced no RDF output (error test case)")
 
     try:
         result = reconstruct(

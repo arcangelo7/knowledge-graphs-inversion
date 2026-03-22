@@ -291,7 +291,8 @@ def _run_test(
                 dsn=jdbc_dsn, username="r2rml", password="r2rml",
             )
 
-    if os.path.isfile(output_file):
+    output_file_has_data = os.path.isfile(output_file) and os.path.getsize(output_file) > 0
+    if output_file_has_data:
         os.system(f"cp {output_file} {engine_output_path}")
 
         if expected_output:
@@ -355,56 +356,72 @@ def run_single_test(test_id: str, database_system: str, suite: TestSuite) -> dic
         inversion_status: str | None = None
         comparison_status: str | None = None
 
-        try:
-            inversion_result = reconstruct(
-                mapping=mapping_file,
-                rdf_graph=rdf_output_path,
-                source_db_url=source_db_url,
-                dest_db_url=dest_db_url,
-            )
+        rdf_file_has_data = os.path.isfile(rdf_output_path) and os.path.getsize(rdf_output_path) > 0
+        if not rdf_file_has_data:
             source_content = db_connection.get_database_content(source_db)
             dest_content = db_connection.get_database_content(dest_db)
-            databases_equal, comparison_message, comparison_status = compare_databases(source_content, dest_content, mapping_content)
-        except UnsupportedMappingError as e:
-            inversion_status = 'not_supported'
-            databases_equal = None
-            comparison_message = f"Inversion not supported: {e}"
-            source_content = None
-            dest_content = None
-        except NonInvertibleError as e:
-            inversion_status = 'non_invertible'
-            source_content = db_connection.get_database_content(source_db)
-            dest_content = db_connection.get_database_content(dest_db)
-            databases_equal = None
-            comparison_message = f"Non-invertible mapping detected: {e}"
-            comparison_status = 'non_invertible'
-        except MappingError as e:
-            inversion_status = 'mapping_error'
-            source_content = db_connection.get_database_content(source_db)
-            dest_content = db_connection.get_database_content(dest_db)
-            databases_equal = None
-            comparison_message = f"Invalid mapping: {e}"
-            comparison_status = 'mapping_error'
-        except NoDataError:
-            source_content = db_connection.get_database_content(source_db)
-            dest_content = db_connection.get_database_content(dest_db)
-            forward_mapping_result = raw_results[1][4] if len(raw_results) > 1 else None
-            if forward_mapping_result == FAILED:
+            if not metadata["expected_output"]:
                 inversion_status = 'forward_mapping_failed'
                 databases_equal = None
-                comparison_message = "Forward mapping failed - inversion could not be attempted"
+                comparison_message = "Forward mapping produced no output (error test case)"
                 comparison_status = 'forward_mapping_failed'
             else:
+                databases_equal = True
+                comparison_message = "Forward mapping produced empty output - no data to invert"
+                comparison_status = None
+
+        else:
+            try:
+                inversion_result = reconstruct(
+                    mapping=mapping_file,
+                    rdf_graph=rdf_output_path,
+                    source_db_url=source_db_url,
+                    dest_db_url=dest_db_url,
+                )
+                source_content = db_connection.get_database_content(source_db)
+                dest_content = db_connection.get_database_content(dest_db)
                 databases_equal, comparison_message, comparison_status = compare_databases(source_content, dest_content, mapping_content)
-                if not databases_equal and not dest_content:
-                    databases_equal = True
-                    comparison_message = "Inversion correctly not performed due to mapping errors - destination database appropriately empty"
-                    comparison_status = None
+            except UnsupportedMappingError as e:
+                inversion_status = 'not_supported'
+                databases_equal = None
+                comparison_message = f"Inversion not supported: {e}"
+                source_content = None
+                dest_content = None
+            except NonInvertibleError as e:
+                inversion_status = 'non_invertible'
+                source_content = db_connection.get_database_content(source_db)
+                dest_content = db_connection.get_database_content(dest_db)
+                databases_equal = None
+                comparison_message = f"Non-invertible mapping detected: {e}"
+                comparison_status = 'non_invertible'
+            except MappingError as e:
+                inversion_status = 'forward_mapping_failed'
+                source_content = db_connection.get_database_content(source_db)
+                dest_content = db_connection.get_database_content(dest_db)
+                databases_equal = None
+                comparison_message = f"Forward mapping failed: {e}"
+                comparison_status = 'forward_mapping_failed'
+            except NoDataError:
+                source_content = db_connection.get_database_content(source_db)
+                dest_content = db_connection.get_database_content(dest_db)
+                forward_mapping_result = raw_results[1][4] if len(raw_results) > 1 else None
+                if forward_mapping_result == FAILED:
+                    inversion_status = 'forward_mapping_failed'
+                    databases_equal = None
+                    comparison_message = "Forward mapping failed - inversion could not be attempted"
+                    comparison_status = 'forward_mapping_failed'
+                else:
+                    databases_equal, comparison_message, comparison_status = compare_databases(source_content, dest_content, mapping_content)
+                    if not databases_equal and not dest_content:
+                        databases_equal = True
+                        comparison_message = "Inversion correctly not performed due to mapping errors - destination database appropriately empty"
+                        comparison_status = None
 
         processed_results = process_results(
             raw_results, mapping_content, test_id, database_system,
             config, purpose, inversion_result, databases_equal, comparison_message,
-            source_content, dest_content, suite, inversion_status, comparison_status
+            source_content, dest_content, suite, inversion_status, comparison_status,
+            error_test=not metadata["expected_output"],
         )
 
         return {
@@ -437,6 +454,7 @@ def process_results(
     suite: TestSuite,
     inversion_status: str | None = None,
     comparison_status: str | None = None,
+    error_test: bool = False,
 ) -> dict[str, list[str] | list[dict[str, object]]]:
     processed_results: dict[str, list[str] | list[dict[str, object]]] = {
         'headers': ['Test ID', 'Purpose', 'Result', 'Expected Result', 'Actual Result', 'Mapping', 'SPARQL Query', 'Inversion Query', 'Inversion Success', 'Tables Comparison'],
@@ -470,12 +488,12 @@ def process_results(
             'inversion_query': formatted_inversion_result,
             'inversion_success': ('not_supported' if inversion_status == 'not_supported' else
                                 'forward_mapping_failed' if inversion_status == 'forward_mapping_failed' else
-                                'non_invertible' if comparison_status == 'non_invertible' else
-                                'mapping_error' if comparison_status == 'mapping_error' else databases_equal),
+                                'non_invertible' if comparison_status == 'non_invertible' else databases_equal),
             'tables_equal': databases_equal,
             'comparison_message': comparison_message,
             'original_tables': source_content,
-            'inverted_tables': dest_content
+            'inverted_tables': dest_content,
+            'error_test': error_test,
         }
         data_list.append(processed_row)
 
@@ -517,7 +535,6 @@ def generate_test_report(
     failed_tests = 0
     not_supported_tests = 0
     non_invertible_tests = 0
-    mapping_error_tests = 0
     forward_mapping_failed_tests = 0
     error_tests = 0
 
@@ -548,9 +565,6 @@ def generate_test_report(
             elif inversion_success == 'non_invertible':
                 non_invertible_tests += 1
                 status = 'non_invertible'
-            elif inversion_success == 'mapping_error':
-                mapping_error_tests += 1
-                status = 'mapping_error'
             elif inversion_success is True:
                 passed_tests += 1
                 status = 'passed'
@@ -585,7 +599,6 @@ def generate_test_report(
             'failed': failed_tests,
             'not_supported': not_supported_tests,
             'non_invertible': non_invertible_tests,
-            'mapping_errors': mapping_error_tests,
             'forward_mapping_failed': forward_mapping_failed_tests,
             'errors': error_tests,
             'percentages': {
@@ -593,7 +606,6 @@ def generate_test_report(
                 'failed': pct(failed_tests),
                 'not_supported': pct(not_supported_tests),
                 'non_invertible': pct(non_invertible_tests),
-                'mapping_errors': pct(mapping_error_tests),
                 'forward_mapping_failed': pct(forward_mapping_failed_tests),
                 'errors': pct(error_tests),
             }
@@ -621,13 +633,12 @@ def generate_test_report(
         f.write(f"| Failed | {failed_tests} | {pct(failed_tests)}% |\n")
         f.write(f"| Not supported | {not_supported_tests} | {pct(not_supported_tests)}% |\n")
         f.write(f"| Non-invertible | {non_invertible_tests} | {pct(non_invertible_tests)}% |\n")
-        f.write(f"| Mapping errors | {mapping_error_tests} | {pct(mapping_error_tests)}% |\n")
         f.write(f"| Forward mapping failed | {forward_mapping_failed_tests} | {pct(forward_mapping_failed_tests)}% |\n")
         f.write(f"| Execution errors | {error_tests} | {pct(error_tests)}% |\n")
 
         f.write("\n## Test details\n\n")
 
-        for status in ['passed', 'failed', 'not_supported', 'non_invertible', 'mapping_error', 'forward_mapping_failed', 'error']:
+        for status in ['passed', 'failed', 'not_supported', 'non_invertible', 'forward_mapping_failed', 'error']:
             status_tests = [t for t in test_details if t['status'] == status]
             if status_tests:
                 status_label = status.replace('_', ' ').title()
@@ -637,7 +648,7 @@ def generate_test_report(
                     if test['purpose']:
                         purpose_text = test['purpose']
                         f.write(f": {purpose_text[:100]}..." if len(purpose_text) > 100 else f": {purpose_text}")
-                    if test['comparison_message'] and status in ['failed', 'non_invertible', 'mapping_error', 'forward_mapping_failed']:
+                    if test['comparison_message'] and status in ['failed', 'non_invertible', 'forward_mapping_failed']:
                         comp_msg = test['comparison_message']
                         f.write(f"\n  - {comp_msg[:200]}..." if len(comp_msg) > 200 else f"\n  - {comp_msg}")
                     f.write("\n")

@@ -61,13 +61,19 @@ SPDX-License-Identifier: ISC
             color: #fd7e14 !important;
             font-weight: bold;
         }
-        .result-mapping-error {
-            color: #dc3545 !important;
-            font-weight: bold;
-        }
         .result-forward-mapping-failed {
             color: #6f42c1 !important;
             font-weight: bold;
+        }
+        .error-test-badge {
+            display: inline-block;
+            background-color: #6c757d;
+            color: white;
+            font-size: 0.7em;
+            padding: 1px 5px;
+            border-radius: 3px;
+            margin-left: 5px;
+            vertical-align: middle;
         }
         .info-icon {
             cursor: help;
@@ -87,7 +93,6 @@ SPDX-License-Identifier: ISC
         .table-striped > tbody > tr:nth-of-type(odd) .result-failed,
         .table-striped > tbody > tr:nth-of-type(odd) .result-not-supported,
         .table-striped > tbody > tr:nth-of-type(odd) .result-non-invertible,
-        .table-striped > tbody > tr:nth-of-type(odd) .result-mapping-error,
         .table-striped > tbody > tr:nth-of-type(odd) .result-forward-mapping-failed {
             color: inherit;
         }
@@ -179,7 +184,6 @@ SPDX-License-Identifier: ISC
         .stat-failed { color: #dc3545; }
         .stat-not-supported { color: #ffc107; }
         .stat-non-invertible { color: #fd7e14; }
-        .stat-mapping-error { color: #dc3545; }
         .stat-forward-mapping-failed { color: #6f42c1; }
         .suite-badge {
             font-size: 0.7em;
@@ -280,10 +284,6 @@ SPDX-License-Identifier: ISC
                         <div class="stat-label">Non-invertible (<span id="stat-non-invertible-percent">0</span>%)</div>
                     </div>
                     <div class="stat-item">
-                        <div class="stat-value stat-mapping-error" id="stat-mapping-error">0</div>
-                        <div class="stat-label">Mapping errors (<span id="stat-mapping-error-percent">0</span>%)</div>
-                    </div>
-                    <div class="stat-item">
                         <div class="stat-value stat-forward-mapping-failed" id="stat-forward-mapping-failed">0</div>
                         <div class="stat-label">Forward mapping failed (<span id="stat-forward-mapping-failed-percent">0</span>%)</div>
                     </div>
@@ -347,7 +347,6 @@ SPDX-License-Identifier: ISC
             failed: 0,
             notSupported: 0,
             nonInvertible: 0,
-            mappingError: 0,
             forwardMappingFailed: 0
         };
         let suiteStats = {};
@@ -385,7 +384,6 @@ SPDX-License-Identifier: ISC
             $('#stat-failed').text(testStats.failed);
             $('#stat-not-supported').text(testStats.notSupported);
             $('#stat-non-invertible').text(testStats.nonInvertible);
-            $('#stat-mapping-error').text(testStats.mappingError);
             $('#stat-forward-mapping-failed').text(testStats.forwardMappingFailed);
 
             if (total > 0) {
@@ -393,7 +391,6 @@ SPDX-License-Identifier: ISC
                 $('#stat-failed-percent').text(Math.round((testStats.failed / total) * 100));
                 $('#stat-not-supported-percent').text(Math.round((testStats.notSupported / total) * 100));
                 $('#stat-non-invertible-percent').text(Math.round((testStats.nonInvertible / total) * 100));
-                $('#stat-mapping-error-percent').text(Math.round((testStats.mappingError / total) * 100));
                 $('#stat-forward-mapping-failed-percent').text(Math.round((testStats.forwardMappingFailed / total) * 100));
             }
         }
@@ -405,7 +402,6 @@ SPDX-License-Identifier: ISC
                 failed: 0,
                 notSupported: 0,
                 nonInvertible: 0,
-                mappingError: 0,
                 forwardMappingFailed: 0
             };
             updateStats();
@@ -642,7 +638,8 @@ SPDX-License-Identifier: ISC
             const suiteId = response.suite_id || 'r2rml';
             let rowHtml = '<tr>';
             rowHtml += `<td>${getSuiteBadge(suiteId)}</td>`;
-            rowHtml += `<td>${row.testid || 'N/A'}</td>`;
+            const errorBadge = row.error_test ? '<span class="error-test-badge">error test</span>' : '';
+            rowHtml += `<td>${row.testid || 'N/A'}${errorBadge}</td>`;
             rowHtml += `<td>${row.purpose || 'N/A'}</td>`;
             rowHtml += `<td class="result-${(row.result || '').toLowerCase()}">${row.result || 'N/A'}</td>`;
             rowHtml += `<td><button onclick="showFileContent('${row.testid}', 'expected')">View</button></td>`;
@@ -711,7 +708,6 @@ SPDX-License-Identifier: ISC
         function classifyInversionStatus(inversionSuccess, comparisonMessage) {
             if (inversionSuccess === 'not_supported') return { cls: 'not-supported', text: 'Not Supported', category: 'notSupported', tooltip: (comparisonMessage || 'Not supported').replace(/'/g, '&apos;') };
             if (inversionSuccess === 'non_invertible') return { cls: 'non-invertible', text: 'Non-invertible', category: 'nonInvertible', tooltip: (comparisonMessage || 'Non-invertible').replace(/'/g, '&apos;') };
-            if (inversionSuccess === 'mapping_error') return { cls: 'mapping-error', text: 'Mapping Error', category: 'mappingError', tooltip: (comparisonMessage || 'Mapping error').replace(/'/g, '&apos;') };
             if (inversionSuccess === 'forward_mapping_failed') return { cls: 'forward-mapping-failed', text: 'Forward Mapping Failed', category: 'forwardMappingFailed', tooltip: (comparisonMessage || 'Forward mapping failed').replace(/'/g, '&apos;') };
             if (inversionSuccess === 'error') return { cls: 'failed', text: 'Error', category: 'failed', tooltip: (comparisonMessage || 'Error').replace(/'/g, '&apos;') };
             if (inversionSuccess === true) return { cls: 'passed', text: 'Success', category: 'passed', tooltip: '' };
@@ -721,7 +717,7 @@ SPDX-License-Identifier: ISC
         function resetAllSuiteStats() {
             suiteStats = {};
             Object.keys(allTests).forEach(sid => {
-                suiteStats[sid] = { total: 0, passed: 0, failed: 0, notSupported: 0, nonInvertible: 0, mappingError: 0, forwardMappingFailed: 0 };
+                suiteStats[sid] = { total: 0, passed: 0, failed: 0, notSupported: 0, nonInvertible: 0, forwardMappingFailed: 0 };
             });
         }
 
@@ -740,7 +736,6 @@ SPDX-License-Identifier: ISC
             $(`#ps-failed-${sid}`).text(s.failed);
             $(`#ps-ns-${sid}`).text(s.notSupported);
             $(`#ps-ni-${sid}`).text(s.nonInvertible);
-            $(`#ps-me-${sid}`).text(s.mappingError);
             $(`#ps-fmf-${sid}`).text(s.forwardMappingFailed);
         }
 
@@ -756,7 +751,6 @@ SPDX-License-Identifier: ISC
                     <span class="stat-failed">Failed: <strong id="ps-failed-${sid}">0</strong></span>
                     <span class="stat-not-supported">Not supported: <strong id="ps-ns-${sid}">0</strong></span>
                     <span class="stat-non-invertible">Non-invertible: <strong id="ps-ni-${sid}">0</strong></span>
-                    <span class="stat-mapping-error">Mapping errors: <strong id="ps-me-${sid}">0</strong></span>
                     <span class="stat-forward-mapping-failed">Forward mapping failed: <strong id="ps-fmf-${sid}">0</strong></span>
                 </div>
                 <div class="suite-panel-table">
@@ -774,8 +768,9 @@ SPDX-License-Identifier: ISC
             }
             const row = response.results.data[0];
             const tid = row.testid || 'N/A';
+            const errorBadge = row.error_test ? '<span class="error-test-badge">error test</span>' : '';
             let html = '<tr>';
-            html += `<td>${tid}</td>`;
+            html += `<td>${tid}${errorBadge}</td>`;
             html += `<td class="result-${(row.result || '').toLowerCase()}">${row.result || 'N/A'}</td>`;
             html += `<td><a href="#" onclick="showFileContent('${tid}', 'expected'); return false;" class="compact-link">View</a></td>`;
             html += `<td><a href="#" onclick="showFileContent('${tid}', 'actual'); return false;" class="compact-link">View</a></td>`;
