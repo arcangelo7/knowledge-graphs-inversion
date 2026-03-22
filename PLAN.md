@@ -172,3 +172,21 @@ Reviewing the KGI codebase, the inversion pipeline is largely vocabulary-agnosti
 
 - `check_for_sql_queries()`: looks for `rr:sqlQuery` triples
 - `check_for_multiple_subject_maps()`: looks for `rr:TriplesMap` and `rr:subjectMap`
+
+---
+
+## Forward mapping engine: RMLMapper
+
+The R2RML implementation report (https://kg-construct.github.io/r2rml-implementation-report/) shows Ontop as the most spec-compliant R2RML engine on PostgreSQL (54/59 passed vs RMLMapper's 51/59). However, Ontop only supports R2RML, not RML. Since we need a single engine for both the R2RML and RML test suites, RMLMapper is the only option that covers both with reasonable conformance.
+
+The official R2RML implementation report tested RMLMapper v4.10.0 on PostgreSQL in 2021 and found 5 failures out of 56 tests. With v8.0.1 (Docker image, 2026) we observe only 3 failures. Two have been fixed between versions:
+
+| Test | Issue | v4.10.0 (2021) | v8.0.1 (2026) |
+|------|-------|:--------------:|:-------------:|
+| R2RMLTC0002f | `{ID}` (regular, should lowercase to `id`) treated same as `{\"ID\"}` (delimited, case-preserved) in templates | failed | failed |
+| R2RMLTC0004b | `rr:termType rr:Literal` on subject map should be rejected as invalid | failed | passed |
+| R2RMLTC0016e | `VARBINARY` column used in IRI template (`data:image/png;hex,{Photo}`) requires hex serialization of binary data | failed | passed |
+| R2RMLTC0019b | `rr:column` with IRI term type: RMLMapper correctly resolves non-absolute values against `@base` and skips invalid ones (spaces), producing partial output. The spec allows this (`MAY provide partial access`) but the test expects no output | failed | failed |
+| R2RMLTC0020b | Same `rr:column` + `@base` resolution with partial output. `rr:column` does not percent-encode (unlike `rr:template`), so spaces cause data errors while slashes and `..` paths produce valid IRIs | failed | failed |
+
+R2RMLTC0002f is a genuine RMLMapper bug. R2RMLTC0019b and R2RMLTC0020b follow the spec but the test cases are stricter than what the spec mandates. None of the 3 affect inversion correctness.
