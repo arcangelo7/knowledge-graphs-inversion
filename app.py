@@ -27,7 +27,7 @@ from kgi import (
     UnsupportedMappingError,
 )
 from kgi.comparison import compare_databases
-from kgi.core import reconstruct
+from kgi.core import _check_for_sql_queries, _parse_mapping_store, reconstruct
 from test_suites import RdfTerm, TestSuite, register_suites, get_suite, SUITES
 
 for _logger_name in ('morph_kgc', 'morph_kgc.config', 'morph_kgc.mapping',
@@ -366,9 +366,16 @@ def run_single_test(test_id: str, database_system: str, suite: TestSuite) -> dic
                 comparison_message = "Forward mapping produced no output (error test case)"
                 comparison_status = 'forward_mapping_failed'
             else:
-                databases_equal = True
-                comparison_message = "Forward mapping produced empty output - no data to invert"
-                comparison_status = None
+                mapping_store = _parse_mapping_store(mapping_file)
+                if _check_for_sql_queries(mapping_store):
+                    inversion_status = 'not_supported'
+                    databases_equal = None
+                    comparison_message = "Inversion not supported: SQL query as logical table is not supported"
+                    comparison_status = None
+                else:
+                    databases_equal = True
+                    comparison_message = "Forward mapping produced empty output - no data to invert"
+                    comparison_status = None
 
         else:
             try:
