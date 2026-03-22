@@ -24,33 +24,112 @@ SPDX-License-Identifier: ISC
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.24.1/components/prism-sql.min.js"></script>
 
     <style>
+        :root {
+            --bg-primary: #ffffff;
+            --bg-secondary: #f8f9fa;
+            --bg-tertiary: #e9ecef;
+            --text-primary: #212529;
+            --text-secondary: #6c757d;
+            --border-color: #dee2e6;
+            --pre-bg: #f8f9fa;
+            --pre-border: #e9ecef;
+            --modal-bg: #fefefe;
+            --modal-border: #888;
+            --close-color: #aaa;
+            --close-hover: black;
+            --overlay-bg: rgba(0,0,0,0.4);
+            --link-color: #0d6efd;
+            --suite-r2rml-bg: #e3f2fd;
+            --suite-r2rml-color: #1565c0;
+            --suite-rml-bg: #f3e5f5;
+            --suite-rml-color: #7b1fa2;
+            --table-striped-bg: rgba(0,0,0,0.05);
+            --input-bg: #fff;
+            --input-border: #ced4da;
+            --input-color: #212529;
+            --footer-bg: #f8f9fa;
+        }
+        [data-theme="dark"] {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-tertiary: #0f3460;
+            --text-primary: #e0e0e0;
+            --text-secondary: #a0a0b0;
+            --border-color: #2a2a4a;
+            --pre-bg: #0d1117;
+            --pre-border: #30363d;
+            --modal-bg: #1a1a2e;
+            --modal-border: #2a2a4a;
+            --close-color: #a0a0b0;
+            --close-hover: #e0e0e0;
+            --overlay-bg: rgba(0,0,0,0.7);
+            --link-color: #58a6ff;
+            --suite-r2rml-bg: #0d2137;
+            --suite-r2rml-color: #58a6ff;
+            --suite-rml-bg: #2a1533;
+            --suite-rml-color: #d2a8ff;
+            --table-striped-bg: rgba(255,255,255,0.05);
+            --input-bg: #0d1117;
+            --input-border: #30363d;
+            --input-color: #e0e0e0;
+            --footer-bg: #16213e;
+        }
         html, body {
             height: 100%;
         }
         body {
             display: flex;
             flex-direction: column;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            transition: background-color 0.3s, color 0.3s;
         }
         .content {
             flex: 1 0 auto;
         }
         .footer {
             flex-shrink: 0;
+            background-color: var(--footer-bg) !important;
+        }
+        .footer a {
+            color: var(--link-color);
+        }
+        .footer h5, .footer p {
+            color: var(--text-primary);
         }
         pre {
-            background-color: #f8f9fa;
-            border: 1px solid #e9ecef;
+            background-color: var(--pre-bg);
+            border: 1px solid var(--pre-border);
             border-radius: 0.25rem;
             padding: 1rem;
             white-space: pre-wrap;
             word-wrap: break-word;
+            color: var(--text-primary);
+        }
+        a {
+            color: var(--link-color);
+        }
+        .form-select, .form-control {
+            background-color: var(--input-bg);
+            border-color: var(--input-border);
+            color: var(--input-color);
+        }
+        .form-label {
+            color: var(--text-primary);
+        }
+        .table {
+            color: var(--text-primary);
+        }
+        .table-striped > tbody > tr:nth-of-type(odd) > * {
+            --bs-table-accent-bg: var(--table-striped-bg);
+            color: var(--text-primary);
         }
         .result-passed {
-            color: green !important;
+            color: #28a745 !important;
             font-weight: bold;
         }
         .result-failed {
-            color: red !important;
+            color: #dc3545 !important;
             font-weight: bold;
         }
         .result-not-supported {
@@ -65,6 +144,18 @@ SPDX-License-Identifier: ISC
             color: #6f42c1 !important;
             font-weight: bold;
         }
+        [data-theme="dark"] .result-passed { color: #3fb950 !important; }
+        [data-theme="dark"] .result-failed { color: #f85149 !important; }
+        [data-theme="dark"] .result-not-supported { color: #d29922 !important; }
+        [data-theme="dark"] .result-non-invertible { color: #db6d28 !important; }
+        [data-theme="dark"] .result-forward-mapping-failed { color: #a371f7 !important; }
+        .table-striped > tbody > tr:nth-of-type(odd) .result-passed,
+        .table-striped > tbody > tr:nth-of-type(odd) .result-failed,
+        .table-striped > tbody > tr:nth-of-type(odd) .result-not-supported,
+        .table-striped > tbody > tr:nth-of-type(odd) .result-non-invertible,
+        .table-striped > tbody > tr:nth-of-type(odd) .result-forward-mapping-failed {
+            color: inherit;
+        }
         .error-test-badge {
             display: inline-block;
             background-color: #6c757d;
@@ -77,24 +168,13 @@ SPDX-License-Identifier: ISC
         }
         .info-icon {
             cursor: help;
-            color: #6c757d;
+            color: var(--text-secondary);
             font-size: 0.9em;
             vertical-align: super;
             margin-left: 2px;
         }
         .info-icon:hover {
-            color: #495057;
-        }
-        .table-striped > tbody > tr:nth-of-type(odd) > * {
-            --bs-table-accent-bg: var(--bs-table-striped-bg);
-            color: var(--bs-table-striped-color);
-        }
-        .table-striped > tbody > tr:nth-of-type(odd) .result-passed,
-        .table-striped > tbody > tr:nth-of-type(odd) .result-failed,
-        .table-striped > tbody > tr:nth-of-type(odd) .result-not-supported,
-        .table-striped > tbody > tr:nth-of-type(odd) .result-non-invertible,
-        .table-striped > tbody > tr:nth-of-type(odd) .result-forward-mapping-failed {
-            color: inherit;
+            color: var(--text-primary);
         }
         .spinner-container {
             display: flex;
@@ -125,24 +205,25 @@ SPDX-License-Identifier: ISC
             width: 100%;
             height: 100%;
             overflow: auto;
-            background-color: rgba(0,0,0,0.4);
+            background-color: var(--overlay-bg);
         }
         .modal-content {
-            background-color: #fefefe;
+            background-color: var(--modal-bg);
             margin: 15% auto;
             padding: 20px;
-            border: 1px solid #888;
+            border: 1px solid var(--modal-border);
             width: 80%;
+            color: var(--text-primary);
         }
         .close {
-            color: #aaa;
+            color: var(--close-color);
             float: right;
             font-size: 28px;
             font-weight: bold;
         }
         .close:hover,
         .close:focus {
-            color: black;
+            color: var(--close-hover);
             text-decoration: none;
             cursor: pointer;
         }
@@ -153,8 +234,8 @@ SPDX-License-Identifier: ISC
             font-family: Consolas, Monaco, 'Andale Mono', 'Ubuntu Mono', monospace;
         }
         .stats-box {
-            background-color: #f8f9fa;
-            border: 1px solid #dee2e6;
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border-color);
             border-radius: 0.25rem;
             padding: 1rem;
             margin-bottom: 1.5rem;
@@ -178,13 +259,18 @@ SPDX-License-Identifier: ISC
         }
         .stat-label {
             font-size: 0.875rem;
-            color: #6c757d;
+            color: var(--text-secondary);
         }
         .stat-passed { color: #28a745; }
         .stat-failed { color: #dc3545; }
         .stat-not-supported { color: #ffc107; }
         .stat-non-invertible { color: #fd7e14; }
         .stat-forward-mapping-failed { color: #6f42c1; }
+        [data-theme="dark"] .stat-passed { color: #3fb950; }
+        [data-theme="dark"] .stat-failed { color: #f85149; }
+        [data-theme="dark"] .stat-not-supported { color: #d29922; }
+        [data-theme="dark"] .stat-non-invertible { color: #db6d28; }
+        [data-theme="dark"] .stat-forward-mapping-failed { color: #a371f7; }
         .suite-badge {
             font-size: 0.7em;
             padding: 2px 6px;
@@ -192,8 +278,8 @@ SPDX-License-Identifier: ISC
             margin-left: 6px;
             vertical-align: middle;
         }
-        .suite-r2rml { background-color: #e3f2fd; color: #1565c0; }
-        .suite-rml { background-color: #f3e5f5; color: #7b1fa2; }
+        .suite-r2rml { background-color: var(--suite-r2rml-bg); color: var(--suite-r2rml-color); }
+        .suite-rml { background-color: var(--suite-rml-bg); color: var(--suite-rml-color); }
         .suite-panels {
             display: flex;
             gap: 1.5rem;
@@ -211,8 +297,8 @@ SPDX-License-Identifier: ISC
             gap: 0.5rem;
             flex-wrap: wrap;
             padding: 0.5rem 0.75rem;
-            background: #f8f9fa;
-            border: 1px solid #dee2e6;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
             border-radius: 0.25rem;
             margin-bottom: 0.75rem;
         }
@@ -220,6 +306,27 @@ SPDX-License-Identifier: ISC
             max-height: 70vh;
             overflow-y: auto;
             overflow-x: auto;
+        }
+        .theme-toggle {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            z-index: 1000;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 1.2rem;
+            color: var(--text-primary);
+            transition: background-color 0.3s, border-color 0.3s;
+        }
+        .theme-toggle:hover {
+            background: var(--bg-tertiary);
         }
         @media (max-width: 991px) {
             .suite-panels {
@@ -229,6 +336,9 @@ SPDX-License-Identifier: ISC
     </style>
 </head>
 <body>
+    <button class="theme-toggle" id="themeToggle" title="Toggle dark mode">
+        <i class="fas fa-moon" id="themeIcon"></i>
+    </button>
     <div class="container-fluid mt-5 px-4">
         <h1 class="mb-4">RML inversion test interface</h1>
         <div class="row">
@@ -339,6 +449,23 @@ SPDX-License-Identifier: ISC
     </footer>
 
     <script>
+        (function() {
+            const saved = localStorage.getItem('theme');
+            const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            const theme = saved || (prefersDark ? 'dark' : 'light');
+            document.documentElement.setAttribute('data-theme', theme);
+            const icon = document.getElementById('themeIcon');
+            if (icon) icon.className = theme === 'dark' ? 'fas fa-sun' : 'fas fa-moon';
+        })();
+
+        document.getElementById('themeToggle').addEventListener('click', function() {
+            const current = document.documentElement.getAttribute('data-theme');
+            const next = current === 'dark' ? 'light' : 'dark';
+            document.documentElement.setAttribute('data-theme', next);
+            localStorage.setItem('theme', next);
+            document.getElementById('themeIcon').className = next === 'dark' ? 'fas fa-sun' : 'fas fa-moon';
+        });
+
         const allTests = {{ all_tests | tojson }};
         const testResults = {};
         let testStats = {
