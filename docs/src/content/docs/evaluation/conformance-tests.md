@@ -57,21 +57,36 @@ The interface is available at `http://localhost:5000`. Results are saved to `tes
 
 ## W3C R2RML test suite
 
-The [R2RML test suite](https://www.w3.org/2001/sw/rdb2rdf/test-cases/) contains 62 test cases.
-
-Of these 62 cases, 16 use SQL queries as logical sources (`rr:sqlQuery`), which the algorithm does not handle. The remaining 46 break down as follows:
+The [R2RML test suite](https://www.w3.org/2001/sw/rdb2rdf/test-cases/) contains 62 test cases, broken down as follows:
 
 | Category | Count |
 |---|---|
-| Successfully inverted | 24 |
-| Non-invertible: partial mappings | 9 |
-| Non-invertible: non-unique subject templates | 3 |
-| Non-invertible: invalid RDF data | 3 |
-| Non-invertible: combined cases | 1 |
-| Non-invertible: constant-only mapping | 1 |
-| Non-invertible: NULL in subject template | 1 |
-| Invalid mappings (correctly rejected) | 4 |
+| Successfully inverted | 22 |
+| Not supported | 13 |
+| Non-invertible | 18 |
+| Forward mapping failed (error test cases) | 9 |
 
-The 24 passing cases cover all the term map types and extraction strategies described in the [algorithm overview](/knowledge-graphs-inversion/concepts/how-it-works/). The 18 non-invertible cases each fall into one of the [known limitation categories](/knowledge-graphs-inversion/concepts/limitations/).
+### Successfully inverted (22)
 
-Four test cases contain invalid mappings (literal term type on subject maps, literals as graph names, missing subject maps, multiple subject maps per triples map) and are correctly detected and rejected.
+The 22 passing cases cover all the term map types and extraction strategies described in the [algorithm overview](/knowledge-graphs-inversion/concepts/how-it-works/).
+
+### Not supported (13)
+
+These test cases use SQL queries as logical sources (`rr:sqlQuery`), which the algorithm does not handle.
+
+### Non-invertible (18)
+
+Each of these falls into one of the [known limitation categories](/knowledge-graphs-inversion/concepts/limitations/):
+
+| Reason | Count |
+|---|---|
+| Partial mappings (unmapped columns) | 8 |
+| Non-unique subject templates (duplicate rows lost) | 3 |
+| IRI column term type (ambiguous base IRI resolution) | 3 |
+| Combined causes (unmapped tables/columns and duplicates) | 2 |
+| Constant-only mapping | 1 |
+| NULL values in subject template | 1 |
+
+### Forward mapping failed (9)
+
+Nine test cases are error test cases where the R2RML forward mapping itself produces no output.
