@@ -17,6 +17,7 @@ from pyoxigraph import BlankNode, Literal, NamedNode, Quad, RdfFormat, Store
 
 from .constants import (
     RML_BLANK_NODE,
+    RML_IRI,
     RML_PARENT_TRIPLES_MAP,
     RML_REFERENCE,
     RML_SOURCE,
@@ -73,8 +74,7 @@ def _literal_value(quad: Quad) -> str:
     return str(obj)
 
 
-def _extract_db_url_from_mapping(mapping_path: str) -> str | None:
-    store = _parse_mapping_store(mapping_path)
+def _extract_db_url_from_mapping(store: Store) -> str | None:
     databases = list(store.quads_for_pattern(None, RDF_TYPE, D2RQ_DATABASE))
     if not databases:
         return None
@@ -99,16 +99,14 @@ def _extract_db_url_from_mapping(mapping_path: str) -> str | None:
     return f"{driver}://{credentials}{host_and_db}"
 
 
-def _check_for_sql_queries(mapping_path: str) -> bool:
-    store = _parse_mapping_store(mapping_path)
+def _check_for_sql_queries(store: Store) -> bool:
     for predicate in (RR_SQL_QUERY, RML_QUERY_NEW, RML_QUERY_LEGACY):
         if any(store.quads_for_pattern(None, predicate, None)):
             return True
     return False
 
 
-def _check_for_multiple_subject_maps(mapping_path: str) -> bool:
-    store = _parse_mapping_store(mapping_path)
+def _check_for_multiple_subject_maps(store: Store) -> bool:
     for quad in store.quads_for_pattern(None, RDF_TYPE, RR_TRIPLES_MAP):
         triples_map = quad.subject
         subject_maps = list(
@@ -119,8 +117,7 @@ def _check_for_multiple_subject_maps(mapping_path: str) -> bool:
     return False
 
 
-def _check_for_literal_subjects(mapping_path: str) -> bool:
-    store = _parse_mapping_store(mapping_path)
+def _check_for_literal_subjects(store: Store) -> bool:
     for sm_quad in store.quads_for_pattern(None, RR_SUBJECT_MAP, None):
         subject_map_node = sm_quad.object
         if not isinstance(subject_map_node, (NamedNode, BlankNode)):
@@ -157,6 +154,27 @@ def _generate_template(
         return RDBTemplate(db_url)
     else:
         raise ValueError(f"Unsupported source type: {source_type}")
+
+
+def _is_column_only_iri(map_type: object, map_value: object, term_type: object) -> bool:
+    if map_type == RML_REFERENCE and term_type == RML_IRI:
+        return True
+    if map_type == RML_TEMPLATE and term_type == RML_IRI:
+        stripped = str(map_value).strip()
+        if stripped.startswith("{") and stripped.endswith("}") and stripped.count("{") == 1:
+            return True
+    return False
+
+
+def _check_for_column_iri_term_maps(mappings: pd.DataFrame) -> bool:
+    for _, rule in mappings.iterrows():
+        if _is_column_only_iri(rule["subject_map_type"], rule["subject_map_value"], rule["subject_termtype"]):
+            return True
+        if _is_column_only_iri(rule["object_map_type"], rule["object_map_value"], rule["object_termtype"]):
+            return True
+        if _is_column_only_iri(rule["predicate_map_type"], rule["predicate_map_value"], RML_IRI):
+            return True
+    return False
 
 
 def _check_for_constant_only_mappings(mappings: pd.DataFrame) -> bool:
@@ -254,17 +272,19 @@ def reconstruct(
     mapping_path = str(mapping)
     rdf_graph_str = str(rdf_graph)
 
-    if _check_for_literal_subjects(mapping_path):
+    mapping_store = _parse_mapping_store(mapping_path)
+
+    if _check_for_literal_subjects(mapping_store):
         raise MappingError("rr:termType rr:Literal on subjectMap is not valid")
 
-    if _check_for_sql_queries(mapping_path):
+    if _check_for_sql_queries(mapping_store):
         raise UnsupportedMappingError("SQL query as logical table is not supported")
 
-    if _check_for_multiple_subject_maps(mapping_path):
+    if _check_for_multiple_subject_maps(mapping_store):
         raise MappingError("TriplesMap contains multiple subjectMaps")
 
     if not source_db_url:
-        extracted_url = _extract_db_url_from_mapping(mapping_path)
+        extracted_url = _extract_db_url_from_mapping(mapping_store)
         if extracted_url:
             source_db_url = extracted_url
             logger.info(f"Extracted source database URL from mapping: {extracted_url}")
@@ -287,6 +307,11 @@ def reconstruct(
         if _check_for_constant_only_mappings(mappings):
             raise NonInvertibleError(
                 "Mappings contain only constants (no column references) - original data cannot be recovered"
+            )
+
+        if _check_for_column_iri_term_maps(mappings):
+            raise NonInvertibleError(
+                "Term map uses rr:column with IRI term type - base IRI resolution makes inversion ambiguous"
             )
 
         try:
