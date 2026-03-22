@@ -4,10 +4,10 @@
 # SPDX-License-Identifier: ISC
 
 title: Conformance tests
-description: Validation against the R2RML and RML test suites.
+description: Validation against the R2RML and RML test suites
 ---
 
-The algorithm is validated against two test suites: the W3C [R2RML](https://www.w3.org/TR/r2rml/) test suite and the [RML](https://kg-construct.github.io/rml-core/spec/docs/) test suite (PostgreSQL subset). Both are included as git submodules.
+The algorithm is validated against two test suites: the W3C [R2RML](https://www.w3.org/TR/r2rml/) test suite and the [RML](https://kg-construct.github.io/rml-core/spec/docs/) test suite (PostgreSQL subset). Both are included as git submodules. Forward mapping for both suites is performed with [RMLMapper](https://github.com/RMLio/rmlmapper-java) v8.0.1.
 
 ## Setup
 
@@ -64,11 +64,7 @@ The [R2RML test suite](https://www.w3.org/2001/sw/rdb2rdf/test-cases/) contains 
 | Successfully inverted | 22 |
 | Not supported | 13 |
 | Non-invertible | 18 |
-| Forward mapping failed (error test cases) | 9 |
-
-### Successfully inverted (22)
-
-The 22 passing cases cover all the term map types and extraction strategies described in the [algorithm overview](/knowledge-graphs-inversion/concepts/how-it-works/).
+| Forward mapping failed | 9 |
 
 ### Not supported (13)
 
@@ -89,4 +85,36 @@ Each of these falls into one of the [known limitation categories](/knowledge-gra
 
 ### Forward mapping failed (9)
 
-Nine test cases are error test cases where the R2RML forward mapping itself produces no output.
+In nine test cases the forward mapping produces no RDF output, so inversion cannot be attempted.
+
+## RML test suite
+
+The [RML test suite](https://kg-construct.github.io/rml-test-cases/) contains 60 PostgreSQL test cases.
+
+| Category | Count |
+|---|---|
+| Successfully inverted | 12 |
+| Not supported | 9 |
+| Non-invertible | 27 |
+| Forward mapping failed | 12 |
+
+### Not supported (9)
+
+All nine use SQL queries as logical sources (`rml:query`), which the algorithm does not handle, same as the R2RML counterpart (`rr:sqlQuery`).
+
+### Non-invertible (27)
+
+| Reason | Count |
+|---|---|
+| Partial mappings (unmapped tables) | 12 |
+| Partial mappings (unmapped columns) | 11 |
+| IRI column term type (ambiguous base IRI resolution) | 3 |
+| Constant-only mapping | 1 |
+
+11 of the 12 unmapped-tables cases are inflated by a case-sensitivity bug: the table name in the mapping (e.g. `Patient`) is compared literally against the PostgreSQL catalog name (`patient`), which lowercases unquoted identifiers. The mismatch causes these tables to appear unmapped even though they have a triples map. With a case-insensitive comparison these 11 would fall into the unmapped-columns category instead, since each of them maps only a subset of the table's columns. The single genuine unmapped-table case is RMLTC0012a, where the `Lives` table has no triples map at all.
+
+The 11 unmapped-columns cases are structurally similar: the table itself is reconstructed, yet one or more columns have no corresponding predicate-object map and are therefore lost during inversion.
+
+### Forward mapping failed (12)
+
+In twelve test cases the forward mapping produces no RDF output, so inversion cannot be attempted.
