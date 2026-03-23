@@ -101,6 +101,20 @@ When a term map uses `rr:column` (or a template with a single placeholder and no
 
 Replaced SPARQLWrapper with sparqlite (https://opencitations.github.io/sparqlite/architecture/benchmarks/) and rdflib with pyoxigraph for RDF parsing and SPARQL queries on local store. pyoxigraph enforces RFC 3986 compliance when constructing `NamedNode` instances, while rdflib's `URIRef` silently accepted malformed IRIs without any validation.
 
+## Test results (2026-03-22)
+
+Data from the latest run on PostgreSQL using RMLMapper v8.0.1 (Docker).
+
+### Summary
+
+|                          | R2RML (62 tests) | RML (60 tests) |
+|--------------------------|:-----------------:|:--------------:|
+| Passed                   | 22 (35.5%)        | 12 (20.0%)     |
+| Non-invertible           | 18 (29.0%)        | 27 (45.0%)     |
+| Not supported (sqlQuery) | 13 (21.0%)        |  9 (15.0%)     |
+| Forward mapping failed   |  9 (14.5%)        | 12 (20.0%)     |
+| Failed                   |  0                |  0             |
+
 ## Questions
 
 Should we allow inversion of malformed RDF? pyoxigraph now correctly rejects these inputs, and the tool classifies them as "non-invertible". However, morph-kgc itself is permissive in both directions: it does not fully validate R2RML/RML mapping input, and it does not validate the RDF it produces as output. Invalid mappings can be processed, and the resulting RDF may contain malformed IRIs.
