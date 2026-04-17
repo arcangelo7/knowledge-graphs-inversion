@@ -67,6 +67,20 @@ def check_mapping_column_coverage(
     return invertibility_issues
 
 
+PARTIAL_COLUMNS_LOST = "columns_lost"
+PARTIAL_ROWS_LOST = "rows_lost"
+PARTIAL_MULTIPLICITY_LOST = "multiplicity_lost"
+PARTIAL_TABLES_LOST = "tables_lost"
+
+
+def _encode_outcome(subcategories: set[str]) -> str | None:
+    if not subcategories:
+        return None
+    order = [PARTIAL_COLUMNS_LOST, PARTIAL_ROWS_LOST, PARTIAL_MULTIPLICITY_LOST, PARTIAL_TABLES_LOST]
+    ordered = [s for s in order if s in subcategories]
+    return "partial:" + ",".join(ordered)
+
+
 def get_mapped_table_names(mapping_store: Store) -> set[str]:
     tables: set[str] = set()
     for quad in mapping_store.quads_for_pattern(None, RR_TABLE_NAME, None):
@@ -114,7 +128,7 @@ def check_null_in_subject_template(
         if col in source_df.columns and bool(source_df[col].isna().any()):
             null_count = int(source_df[col].isna().sum())
             return (
-                f"{table_name} (NON-INVERTIBLE: NULL values in subject template column "
+                f"{table_name} (PARTIALLY INVERTED: NULL values in subject template column "
                 f"'{col}' cause {null_count} row(s) to be excluded from RDF)",
                 True,
             )
@@ -150,7 +164,7 @@ def analyze_duplicate_loss(
                 for src_cnt, dst_cnt, row in duplicate_rows
             ])
             message = (
-                f"{table_name} (NON-INVERTIBLE: Duplicate rows lost during inversion - {duplicate_info}. "
+                f"{table_name} (PARTIALLY INVERTED: Duplicate rows lost during inversion - {duplicate_info}. "
                 "Consider adding unique identifiers to your mapping template to preserve row distinctness)"
             )
             return message, True
@@ -175,7 +189,7 @@ def compare_databases(
     missing_from_dest = source_tables - dest_tables
 
     mismatched_tables = []
-    has_invertibility_issues = False
+    subcategories: set[str] = set()
 
     if missing_from_dest:
         if mapping_graph:
@@ -183,8 +197,8 @@ def compare_databases(
             unmapped_tables = {t for t in missing_from_dest if t not in mapped_tables}
             if unmapped_tables == missing_from_dest:
                 unmapped_str = ", ".join(sorted(unmapped_tables))
-                mismatched_tables.append(f"NON-INVERTIBLE: Unmapped tables: {unmapped_str}")
-                has_invertibility_issues = True
+                mismatched_tables.append(f"PARTIALLY INVERTED: Unmapped tables: {unmapped_str}")
+                subcategories.add(PARTIAL_TABLES_LOST)
             else:
                 return False, "Tables in source and destination databases do not match", None
         else:
@@ -221,14 +235,14 @@ def compare_databases(
                 if duplicate_analysis:
                     mismatched_tables.append(duplicate_analysis)
                     if is_dup_issue:
-                        has_invertibility_issues = True
+                        subcategories.add(PARTIAL_MULTIPLICITY_LOST)
                     resolved = True
 
             if not resolved and mapping_graph:
                 issue_msg, is_issue = detect_non_invertible(mapping_graph, source_df, table_name)
                 if is_issue:
                     mismatched_tables.append(issue_msg)
-                    has_invertibility_issues = True
+                    subcategories.add(PARTIAL_ROWS_LOST)
                     resolved = True
 
             if not resolved:
@@ -237,15 +251,16 @@ def compare_databases(
     if mismatched_tables:
         message = f"Mismatched tables: {', '.join(mismatched_tables)}"
 
-        if mapping_content and not has_invertibility_issues:
+        if mapping_content:
             invertibility_issues = check_mapping_column_coverage(mapping_content, source_content)
             if invertibility_issues:
                 invertibility_message = "; ".join(invertibility_issues)
-                message += f" (NON-INVERTIBLE: {invertibility_message})"
-                has_invertibility_issues = True
+                message += f" (PARTIALLY INVERTED: {invertibility_message})"
+                subcategories.add(PARTIAL_COLUMNS_LOST)
 
-        if has_invertibility_issues:
-            return False, message, "non_invertible"
+        outcome = _encode_outcome(subcategories)
+        if outcome is not None:
+            return False, message, outcome
         return False, message, None
 
     return True, "All tables in source and destination databases are identical", None

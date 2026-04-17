@@ -136,6 +136,10 @@ SPDX-License-Identifier: ISC
             color: #ffc107 !important;
             font-weight: bold;
         }
+        .result-partially-inverted {
+            color: #0dcaf0 !important;
+            font-weight: bold;
+        }
         .result-non-invertible {
             color: #fd7e14 !important;
             font-weight: bold;
@@ -147,11 +151,13 @@ SPDX-License-Identifier: ISC
         [data-theme="dark"] .result-passed { color: #3fb950 !important; }
         [data-theme="dark"] .result-failed { color: #f85149 !important; }
         [data-theme="dark"] .result-not-supported { color: #d29922 !important; }
+        [data-theme="dark"] .result-partially-inverted { color: #39c0e2 !important; }
         [data-theme="dark"] .result-non-invertible { color: #db6d28 !important; }
         [data-theme="dark"] .result-forward-mapping-failed { color: #a371f7 !important; }
         .table-striped > tbody > tr:nth-of-type(odd) .result-passed,
         .table-striped > tbody > tr:nth-of-type(odd) .result-failed,
         .table-striped > tbody > tr:nth-of-type(odd) .result-not-supported,
+        .table-striped > tbody > tr:nth-of-type(odd) .result-partially-inverted,
         .table-striped > tbody > tr:nth-of-type(odd) .result-non-invertible,
         .table-striped > tbody > tr:nth-of-type(odd) .result-forward-mapping-failed {
             color: inherit;
@@ -264,11 +270,13 @@ SPDX-License-Identifier: ISC
         .stat-passed { color: #28a745; }
         .stat-failed { color: #dc3545; }
         .stat-not-supported { color: #ffc107; }
+        .stat-partially-inverted { color: #0dcaf0; }
         .stat-non-invertible { color: #fd7e14; }
         .stat-forward-mapping-failed { color: #6f42c1; }
         [data-theme="dark"] .stat-passed { color: #3fb950; }
         [data-theme="dark"] .stat-failed { color: #f85149; }
         [data-theme="dark"] .stat-not-supported { color: #d29922; }
+        [data-theme="dark"] .stat-partially-inverted { color: #39c0e2; }
         [data-theme="dark"] .stat-non-invertible { color: #db6d28; }
         [data-theme="dark"] .stat-forward-mapping-failed { color: #a371f7; }
         .suite-badge {
@@ -383,15 +391,19 @@ SPDX-License-Identifier: ISC
                     </div>
                     <div class="stat-item">
                         <div class="stat-value stat-passed" id="stat-passed">0</div>
-                        <div class="stat-label">Passed (<span id="stat-passed-percent">0</span>%)</div>
+                        <div class="stat-label">Fully inverted (<span id="stat-passed-percent">0</span>%)</div>
                     </div>
                     <div class="stat-item">
-                        <div class="stat-value stat-not-supported" id="stat-not-supported">0</div>
-                        <div class="stat-label">Not supported (<span id="stat-not-supported-percent">0</span>%)</div>
+                        <div class="stat-value stat-partially-inverted" id="stat-partially-inverted">0</div>
+                        <div class="stat-label">Partially inverted (<span id="stat-partially-inverted-percent">0</span>%)</div>
                     </div>
                     <div class="stat-item">
                         <div class="stat-value stat-non-invertible" id="stat-non-invertible">0</div>
                         <div class="stat-label">Non-invertible (<span id="stat-non-invertible-percent">0</span>%)</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value stat-not-supported" id="stat-not-supported">0</div>
+                        <div class="stat-label">Not supported (<span id="stat-not-supported-percent">0</span>%)</div>
                     </div>
                     <div class="stat-item">
                         <div class="stat-value stat-forward-mapping-failed" id="stat-forward-mapping-failed">0</div>
@@ -468,6 +480,7 @@ SPDX-License-Identifier: ISC
             passed: 0,
             failed: 0,
             notSupported: 0,
+            partiallyInverted: 0,
             nonInvertible: 0,
             forwardMappingFailed: 0
         };
@@ -505,6 +518,7 @@ SPDX-License-Identifier: ISC
             $('#stat-passed').text(testStats.passed);
             $('#stat-failed').text(testStats.failed);
             $('#stat-not-supported').text(testStats.notSupported);
+            $('#stat-partially-inverted').text(testStats.partiallyInverted);
             $('#stat-non-invertible').text(testStats.nonInvertible);
             $('#stat-forward-mapping-failed').text(testStats.forwardMappingFailed);
 
@@ -512,6 +526,7 @@ SPDX-License-Identifier: ISC
                 $('#stat-passed-percent').text(Math.round((testStats.passed / total) * 100));
                 $('#stat-failed-percent').text(Math.round((testStats.failed / total) * 100));
                 $('#stat-not-supported-percent').text(Math.round((testStats.notSupported / total) * 100));
+                $('#stat-partially-inverted-percent').text(Math.round((testStats.partiallyInverted / total) * 100));
                 $('#stat-non-invertible-percent').text(Math.round((testStats.nonInvertible / total) * 100));
                 $('#stat-forward-mapping-failed-percent').text(Math.round((testStats.forwardMappingFailed / total) * 100));
             }
@@ -523,6 +538,7 @@ SPDX-License-Identifier: ISC
                 passed: 0,
                 failed: 0,
                 notSupported: 0,
+                partiallyInverted: 0,
                 nonInvertible: 0,
                 forwardMappingFailed: 0
             };
@@ -829,17 +845,18 @@ SPDX-License-Identifier: ISC
 
         function classifyInversionStatus(inversionSuccess, comparisonMessage) {
             if (inversionSuccess === 'not_supported') return { cls: 'not-supported', text: 'Not Supported', category: 'notSupported', tooltip: (comparisonMessage || 'Not supported').replace(/'/g, '&apos;') };
+            if (inversionSuccess === 'partially_inverted') return { cls: 'partially-inverted', text: 'Partially Inverted', category: 'partiallyInverted', tooltip: (comparisonMessage || 'Partially inverted').replace(/'/g, '&apos;') };
             if (inversionSuccess === 'non_invertible') return { cls: 'non-invertible', text: 'Non-invertible', category: 'nonInvertible', tooltip: (comparisonMessage || 'Non-invertible').replace(/'/g, '&apos;') };
             if (inversionSuccess === 'forward_mapping_failed') return { cls: 'forward-mapping-failed', text: 'Forward Mapping Failed', category: 'forwardMappingFailed', tooltip: (comparisonMessage || 'Forward mapping failed').replace(/'/g, '&apos;') };
             if (inversionSuccess === 'error') return { cls: 'failed', text: 'Error', category: 'failed', tooltip: (comparisonMessage || 'Error').replace(/'/g, '&apos;') };
-            if (inversionSuccess === true) return { cls: 'passed', text: 'Success', category: 'passed', tooltip: '' };
+            if (inversionSuccess === true) return { cls: 'passed', text: 'Fully Inverted', category: 'passed', tooltip: '' };
             return { cls: 'failed', text: 'Failure', category: 'failed', tooltip: '' };
         }
 
         function resetAllSuiteStats() {
             suiteStats = {};
             Object.keys(allTests).forEach(sid => {
-                suiteStats[sid] = { total: 0, passed: 0, failed: 0, notSupported: 0, nonInvertible: 0, forwardMappingFailed: 0 };
+                suiteStats[sid] = { total: 0, passed: 0, failed: 0, notSupported: 0, partiallyInverted: 0, nonInvertible: 0, forwardMappingFailed: 0 };
             });
         }
 
@@ -857,6 +874,7 @@ SPDX-License-Identifier: ISC
             $(`#ps-passed-${sid}`).text(s.passed);
             $(`#ps-failed-${sid}`).text(s.failed);
             $(`#ps-ns-${sid}`).text(s.notSupported);
+            $(`#ps-pi-${sid}`).text(s.partiallyInverted);
             $(`#ps-ni-${sid}`).text(s.nonInvertible);
             $(`#ps-fmf-${sid}`).text(s.forwardMappingFailed);
         }
@@ -869,11 +887,12 @@ SPDX-License-Identifier: ISC
                 <h3><span class="suite-badge suite-${sid}">${name}</span> test cases</h3>
                 <div class="suite-panel-stats" id="panel-stats-${sid}">
                     <span>Total: <strong id="ps-total-${sid}">0</strong></span>
-                    <span class="stat-passed">Passed: <strong id="ps-passed-${sid}">0</strong></span>
-                    <span class="stat-failed">Failed: <strong id="ps-failed-${sid}">0</strong></span>
-                    <span class="stat-not-supported">Not supported: <strong id="ps-ns-${sid}">0</strong></span>
+                    <span class="stat-passed">Fully inverted: <strong id="ps-passed-${sid}">0</strong></span>
+                    <span class="stat-partially-inverted">Partially inverted: <strong id="ps-pi-${sid}">0</strong></span>
                     <span class="stat-non-invertible">Non-invertible: <strong id="ps-ni-${sid}">0</strong></span>
+                    <span class="stat-not-supported">Not supported: <strong id="ps-ns-${sid}">0</strong></span>
                     <span class="stat-forward-mapping-failed">Forward mapping failed: <strong id="ps-fmf-${sid}">0</strong></span>
+                    <span class="stat-failed">Failed: <strong id="ps-failed-${sid}">0</strong></span>
                 </div>
                 <div class="suite-panel-table">
                     <table class="table table-striped table-sm">

@@ -9,6 +9,25 @@ description: Validation against the R2RML and RML test suites
 
 The algorithm is validated against two test suites: the W3C [R2RML](https://www.w3.org/TR/r2rml/) test suite and the [RML](https://kg-construct.github.io/rml-core/spec/docs/) test suite (PostgreSQL subset). Both are included as git submodules. Forward mapping for both suites is performed with [RMLMapper](https://github.com/RMLio/rmlmapper-java) v8.0.1.
 
+## Defining invertibility
+
+Given a mapping M and the RDF graph G = M(D) produced by applying M to a relational instance D, the inversion function M⁻¹ attempts to reconstruct D from G. Two properties are distinguished:
+
+- **Recoverability**: the reconstructed instance D' = M⁻¹(G) is consistent with the information that M preserves in G. Values, rows and tables that survive the forward mapping are reproduced correctly.
+- **Completeness**: D' = D. Every row, column, duplicate and NULL present in D is reconstructed.
+
+A mapping is **fully invertible** when the inversion is both recoverable and complete. It is **partially invertible** when the inversion is recoverable but incomplete, because M projects away part of D (unmapped columns or tables, NULL values in subject templates, duplicate rows collapsed by non-unique subject identifiers). It is **non-invertible** when the RDF graph does not retain enough information to reconstruct any useful approximation of D, either because all terms are constants independent of D or because the encoding is ambiguous (e.g. `rr:column` with IRI term type, where the base IRI cannot be separated from the column value).
+
+Test cases are therefore classified into five outcomes:
+
+| Outcome | Meaning |
+|---|---|
+| Fully inverted | D' = D |
+| Partially inverted | D' ⊊ D with characterised loss (columns, rows, multiplicity or tables) |
+| Non-invertible | Mapping does not preserve D in G (structural limitation) |
+| Not supported | Engine limitation unrelated to invertibility (e.g. SQL queries as logical sources) |
+| Forward mapping failed | Error test case: the forward mapping produces no RDF output |
+
 ## Setup
 
 Initialize the submodule:
@@ -57,31 +76,39 @@ The interface is available at `http://localhost:5000`. Results are saved to `tes
 
 ## W3C R2RML test suite
 
-The [R2RML test suite](https://www.w3.org/2001/sw/rdb2rdf/test-cases/) contains 62 test cases, broken down as follows:
+The [R2RML test suite](https://www.w3.org/2001/sw/rdb2rdf/test-cases/) contains 62 test cases.
 
-| Category | Count |
+| Outcome | Count |
 |---|---|
-| Successfully inverted | 22 |
+| Fully inverted | 22 |
+| Partially inverted | 14 |
+| Non-invertible | 4 |
 | Not supported | 13 |
-| Non-invertible | 18 |
 | Forward mapping failed | 9 |
+
+### Partially inverted (14)
+
+Each case recovers the information preserved in the RDF graph, but the forward mapping discards part of the source. Sub-categories are counted per tag: a test may contribute to more than one sub-category when multiple forms of loss co-occur, so the counts below sum to more than the number of tests.
+
+| Sub-category | Count |
+|---|---|
+| Columns lost (unmapped columns) | 10 |
+| Rows lost (NULL in subject template) | 1 |
+| Multiplicity lost (duplicate rows collapsed) | 4 |
+| Tables lost (unmapped tables) | 1 |
+
+One test (R2RMLTC0012a) is tagged with three sub-categories simultaneously: the `Lives` table has no triples map, `IOUs` has non-unique subject identifiers that collapse duplicates, and the column coverage check also flags unmapped columns.
+
+### Non-invertible (4)
+
+| Reason | Count |
+|---|---|
+| Constant-only mapping | 1 |
+| IRI column term type (ambiguous base IRI resolution) | 3 |
 
 ### Not supported (13)
 
 These test cases use SQL queries as logical sources (`rr:sqlQuery`), which the algorithm does not handle.
-
-### Non-invertible (18)
-
-Each of these falls into one of the [known limitation categories](/knowledge-graphs-inversion/concepts/limitations/):
-
-| Reason | Count |
-|---|---|
-| Partial mappings (unmapped columns) | 8 |
-| Non-unique subject templates (duplicate rows lost) | 3 |
-| IRI column term type (ambiguous base IRI resolution) | 3 |
-| Combined causes (unmapped tables/columns and duplicates) | 2 |
-| Constant-only mapping | 1 |
-| NULL values in subject template | 1 |
 
 ### Forward mapping failed (9)
 
@@ -91,29 +118,35 @@ In nine test cases the forward mapping produces no RDF output, so inversion cann
 
 The [RML test suite](https://kg-construct.github.io/rml-test-cases/) contains 60 PostgreSQL test cases.
 
-| Category | Count |
+| Outcome | Count |
 |---|---|
-| Successfully inverted | 12 |
+| Fully inverted | 12 |
+| Partially inverted | 23 |
+| Non-invertible | 4 |
 | Not supported | 9 |
-| Non-invertible | 27 |
 | Forward mapping failed | 12 |
 
-### Not supported (9)
+### Partially inverted (23)
 
-All nine use SQL queries as logical sources (`rml:query`), which the algorithm does not handle, same as the R2RML counterpart (`rr:sqlQuery`).
+Sub-categories are counted per tag; a test contributes to every form of loss that applies, so the counts below sum to more than the number of tests. Eight tests are double-tagged (`columns_lost` and `tables_lost`).
 
-### Non-invertible (27)
+| Sub-category | Count |
+|---|---|
+| Columns lost (unmapped columns) | 19 |
+| Tables lost (unmapped tables) | 12 |
+
+Eleven of the twelve unmapped-tables cases are inflated by a case-sensitivity issue: the table name in the mapping (e.g. `Patient`) is compared literally against the PostgreSQL catalog name (`patient`), which lowercases unquoted identifiers. With a case-insensitive comparison these eleven would be tagged only as `columns_lost`, because each of them maps only a subset of the table's columns. The single genuine unmapped-table case is RMLTC0012a, where the `Lives` table has no triples map at all.
+
+### Non-invertible (4)
 
 | Reason | Count |
 |---|---|
-| Partial mappings (unmapped tables) | 12 |
-| Partial mappings (unmapped columns) | 11 |
-| IRI column term type (ambiguous base IRI resolution) | 3 |
 | Constant-only mapping | 1 |
+| IRI column term type (ambiguous base IRI resolution) | 3 |
 
-11 of the 12 unmapped-tables cases are inflated by a case-sensitivity bug: the table name in the mapping (e.g. `Patient`) is compared literally against the PostgreSQL catalog name (`patient`), which lowercases unquoted identifiers. The mismatch causes these tables to appear unmapped even though they have a triples map. With a case-insensitive comparison these 11 would fall into the unmapped-columns category instead, since each of them maps only a subset of the table's columns. The single genuine unmapped-table case is RMLTC0012a, where the `Lives` table has no triples map at all.
+### Not supported (9)
 
-The 11 unmapped-columns cases are structurally similar: the table itself is reconstructed, yet one or more columns have no corresponding predicate-object map and are therefore lost during inversion.
+All nine use SQL queries as logical sources (`rml:query`), same as the R2RML counterpart (`rr:sqlQuery`).
 
 ### Forward mapping failed (12)
 

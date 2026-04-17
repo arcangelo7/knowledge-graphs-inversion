@@ -74,7 +74,7 @@ def _run_conformance_test(
         source_content, dest_content, mapping_content,
     )
 
-    if comparison_status == "non_invertible":
+    if comparison_status and comparison_status.startswith("partial:"):
         return
 
     assert databases_equal, message

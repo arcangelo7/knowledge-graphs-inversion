@@ -424,6 +424,13 @@ def run_single_test(test_id: str, database_system: str, suite: TestSuite) -> dic
                         comparison_message = "Inversion correctly not performed due to mapping errors - destination database appropriately empty"
                         comparison_status = None
 
+        if (
+            inversion_status is None
+            and comparison_status
+            and comparison_status.startswith("partial:")
+        ):
+            inversion_status = 'partially_inverted'
+
         processed_results = process_results(
             raw_results, mapping_content, test_id, database_system,
             config, purpose, inversion_result, databases_equal, comparison_message,
@@ -495,9 +502,11 @@ def process_results(
             'inversion_query': formatted_inversion_result,
             'inversion_success': ('not_supported' if inversion_status == 'not_supported' else
                                 'forward_mapping_failed' if inversion_status == 'forward_mapping_failed' else
-                                'non_invertible' if comparison_status == 'non_invertible' else databases_equal),
+                                'non_invertible' if inversion_status == 'non_invertible' or comparison_status == 'non_invertible' else
+                                'partially_inverted' if inversion_status == 'partially_inverted' else databases_equal),
             'tables_equal': databases_equal,
             'comparison_message': comparison_message,
+            'comparison_subcategory': comparison_status if comparison_status and comparison_status.startswith('partial:') else None,
             'original_tables': source_content,
             'inverted_tables': dest_content,
             'error_test': error_test,
@@ -542,8 +551,12 @@ def generate_test_report(
     failed_tests = 0
     not_supported_tests = 0
     non_invertible_tests = 0
+    partially_inverted_tests = 0
     forward_mapping_failed_tests = 0
     error_tests = 0
+    partial_subcategory_counts: dict[str, int] = {
+        'columns_lost': 0, 'rows_lost': 0, 'multiplicity_lost': 0, 'tables_lost': 0,
+    }
 
     test_details = []
 
@@ -555,13 +568,16 @@ def generate_test_report(
                 'status': 'error',
                 'message': result['message'],
                 'purpose': None,
-                'comparison_message': None
+                'comparison_message': None,
+                'subcategory': None,
             })
         elif result['status'] == 'success':
             results_data: dict[str, object] = result['results']  # type: ignore[assignment]
             test_data: dict[str, object] = results_data['data'][0]  # type: ignore[index]
             test_id = result['test_id']
             inversion_success = test_data['inversion_success']
+            subcategory_raw = test_data.get('comparison_subcategory')
+            subcategory = subcategory_raw if isinstance(subcategory_raw, str) else None
 
             if inversion_success == 'not_supported':
                 not_supported_tests += 1
@@ -572,6 +588,13 @@ def generate_test_report(
             elif inversion_success == 'non_invertible':
                 non_invertible_tests += 1
                 status = 'non_invertible'
+            elif inversion_success == 'partially_inverted':
+                partially_inverted_tests += 1
+                status = 'partially_inverted'
+                if subcategory and subcategory.startswith('partial:'):
+                    for tag in subcategory[len('partial:'):].split(','):
+                        if tag in partial_subcategory_counts:
+                            partial_subcategory_counts[tag] += 1
             elif inversion_success is True:
                 passed_tests += 1
                 status = 'passed'
@@ -585,7 +608,8 @@ def generate_test_report(
                 'purpose': test_data['purpose'],
                 'result': test_data['result'],
                 'inversion_success': inversion_success,
-                'comparison_message': test_data['comparison_message']
+                'comparison_message': test_data['comparison_message'],
+                'subcategory': subcategory,
             })
 
     def pct(n: int) -> float:
@@ -605,13 +629,16 @@ def generate_test_report(
             'passed': passed_tests,
             'failed': failed_tests,
             'not_supported': not_supported_tests,
+            'partially_inverted': partially_inverted_tests,
             'non_invertible': non_invertible_tests,
             'forward_mapping_failed': forward_mapping_failed_tests,
             'errors': error_tests,
+            'partial_subcategories': partial_subcategory_counts,
             'percentages': {
                 'passed': pct(passed_tests),
                 'failed': pct(failed_tests),
                 'not_supported': pct(not_supported_tests),
+                'partially_inverted': pct(partially_inverted_tests),
                 'non_invertible': pct(non_invertible_tests),
                 'forward_mapping_failed': pct(forward_mapping_failed_tests),
                 'errors': pct(error_tests),
@@ -636,26 +663,54 @@ def generate_test_report(
         f.write("## Summary\n\n")
         f.write("| Status | Count | Percentage |\n")
         f.write("|--------|-------|------------|\n")
-        f.write(f"| Passed | {passed_tests} | {pct(passed_tests)}% |\n")
-        f.write(f"| Failed | {failed_tests} | {pct(failed_tests)}% |\n")
-        f.write(f"| Not supported | {not_supported_tests} | {pct(not_supported_tests)}% |\n")
+        f.write(f"| Fully inverted | {passed_tests} | {pct(passed_tests)}% |\n")
+        f.write(f"| Partially inverted | {partially_inverted_tests} | {pct(partially_inverted_tests)}% |\n")
         f.write(f"| Non-invertible | {non_invertible_tests} | {pct(non_invertible_tests)}% |\n")
+        f.write(f"| Not supported | {not_supported_tests} | {pct(not_supported_tests)}% |\n")
         f.write(f"| Forward mapping failed | {forward_mapping_failed_tests} | {pct(forward_mapping_failed_tests)}% |\n")
+        f.write(f"| Failed | {failed_tests} | {pct(failed_tests)}% |\n")
         f.write(f"| Execution errors | {error_tests} | {pct(error_tests)}% |\n")
+
+        if partially_inverted_tests:
+            f.write("\n### Partially inverted subcategories\n\n")
+            f.write("| Subcategory | Count |\n|---|---|\n")
+            labels = {
+                'columns_lost': 'Columns lost (unmapped columns)',
+                'rows_lost': 'Rows lost (NULL in subject template)',
+                'multiplicity_lost': 'Multiplicity lost (duplicate rows collapsed)',
+                'tables_lost': 'Tables lost (unmapped tables)',
+            }
+            for tag, label in labels.items():
+                count = partial_subcategory_counts[tag]
+                if count:
+                    f.write(f"| {label} | {count} |\n")
 
         f.write("\n## Test details\n\n")
 
-        for status in ['passed', 'failed', 'not_supported', 'non_invertible', 'forward_mapping_failed', 'error']:
+        for status in ['passed', 'partially_inverted', 'non_invertible', 'not_supported', 'failed', 'forward_mapping_failed', 'error']:
             status_tests = [t for t in test_details if t['status'] == status]
             if status_tests:
-                status_label = status.replace('_', ' ').title()
+                status_label_map = {
+                    'passed': 'Fully inverted',
+                    'partially_inverted': 'Partially inverted',
+                    'non_invertible': 'Non-invertible',
+                    'not_supported': 'Not supported',
+                    'failed': 'Failed',
+                    'forward_mapping_failed': 'Forward mapping failed',
+                    'error': 'Execution errors',
+                }
+                status_label = status_label_map[status]
                 f.write(f"\n### {status_label} tests ({len(status_tests)})\n\n")
                 for test in status_tests:
                     f.write(f"- **{test['test_id']}**")
                     if test['purpose']:
                         purpose_text = test['purpose']
                         f.write(f": {purpose_text[:100]}..." if len(purpose_text) > 100 else f": {purpose_text}")
-                    if test['comparison_message'] and status in ['failed', 'non_invertible', 'forward_mapping_failed']:
+                    if status == 'partially_inverted' and test.get('subcategory'):
+                        sub = test['subcategory']
+                        if isinstance(sub, str) and sub.startswith('partial:'):
+                            f.write(f"\n  - Subcategory: {sub[len('partial:'):]}")
+                    if test['comparison_message'] and status in ['failed', 'partially_inverted', 'non_invertible', 'forward_mapping_failed']:
                         comp_msg = test['comparison_message']
                         f.write(f"\n  - {comp_msg[:200]}..." if len(comp_msg) > 200 else f"\n  - {comp_msg}")
                     f.write("\n")
