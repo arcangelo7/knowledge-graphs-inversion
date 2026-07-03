@@ -5,14 +5,16 @@
 import os
 import re
 import subprocess
+import urllib.request
 from urllib.parse import urlparse
 
-DOCKER_IMAGE = "rmlio/rmlmapper-java:v8.0.1"
-JAR_URL = "https://github.com/RMLio/rmlmapper-java/releases/download/v8.1.0/rmlmapper-8.1.0-r380-all.jar"
+RMLMAPPER_VERSION = "8.1.0"
+JAR_FILENAME = "rmlmapper-8.1.0-r380-all.jar"
+JAR_URL = f"https://github.com/RMLio/rmlmapper-java/releases/download/v{RMLMAPPER_VERSION}/{JAR_FILENAME}"
 
 
 def sqlalchemy_to_jdbc(url: str) -> tuple[str, str, str]:
-    parsed = urlparse(url.split("+")[0] + url[url.index("://"):])
+    parsed = urlparse(url.split("+")[0] + url[url.index("://") :])
     host = parsed.hostname
     port = parsed.port
     database = parsed.path.lstrip("/")
@@ -48,14 +50,22 @@ def prepare_rml_mapping(
     return prepared_path
 
 
-def _get_jar_path() -> str | None:
+def _managed_jar_path() -> str:
+    return os.path.join(os.path.dirname(__file__), JAR_FILENAME)
+
+
+def _ensure_managed_jar() -> str:
+    jar_path = _managed_jar_path()
+    if not os.path.isfile(jar_path):
+        urllib.request.urlretrieve(JAR_URL, jar_path)
+    return jar_path
+
+
+def _get_jar_path() -> str:
     env_path = os.environ.get("RMLMAPPER_JAR")
     if env_path and os.path.isfile(env_path):
         return env_path
-    default_path = os.path.join(os.path.dirname(__file__), "rmlmapper.jar")
-    if os.path.isfile(default_path):
-        return default_path
-    return None
+    return _ensure_managed_jar()
 
 
 def _build_args(
@@ -86,26 +96,17 @@ def run(
     timeout: int = 180,
 ) -> int:
     jar_path = _get_jar_path()
-    if jar_path:
-        cmd = ["java", "-jar", jar_path]
-        cmd.extend(_build_args(
-            os.path.abspath(mapping_path), os.path.abspath(output_path),
-            serialization, dsn, username, password,
-        ))
-    else:
-        output_dir = os.path.dirname(os.path.abspath(output_path))
-        output_filename = os.path.basename(output_path)
-        mapping_abs = os.path.abspath(mapping_path)
-        cmd = [
-            "docker", "run", "--rm", "--network", "host",
-            "-v", f"{mapping_abs}:/data/mapping.ttl:ro",
-            "-v", f"{output_dir}:/data/output",
-            DOCKER_IMAGE,
-        ]
-        cmd.extend(_build_args(
-            "/data/mapping.ttl", f"/data/output/{output_filename}",
-            serialization, dsn, username, password,
-        ))
+    cmd = ["java", "-jar", jar_path]
+    cmd.extend(
+        _build_args(
+            os.path.abspath(mapping_path),
+            os.path.abspath(output_path),
+            serialization,
+            dsn,
+            username,
+            password,
+        )
+    )
 
     result = subprocess.run(cmd, capture_output=True, timeout=timeout)
     return result.returncode

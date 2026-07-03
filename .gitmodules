@@ -1,11 +1,12 @@
-[submodule "rml_test_cases_repo"]
-	path = rml_test_cases_repo
-	url = https://github.com/kg-construct/rml-test-cases.git
-	ignore = dirty
 [submodule "KROWN"]
 	path = KROWN
 	url = https://github.com/kg-construct/KROWN.git
 [submodule "r2rml_test_cases"]
 	path = r2rml_test_cases
 	url = https://github.com/kg-construct/r2rml-test-cases-support.git
+	ignore = dirty
+[submodule "rml_io_registry"]
+	path = rml_io_registry
+	url = https://github.com/arcangelo7/rml-io-registry.git
+	branch = add-rdb-core-tests
 	ignore = dirty

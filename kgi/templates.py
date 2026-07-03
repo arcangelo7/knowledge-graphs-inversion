@@ -13,7 +13,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.schema import CreateTable
 from sqlalchemy.sql.sqltypes import Boolean, Date, DateTime, Integer, Numeric, String
 
-from .base import Template
+from kgi.base import Template
 
 
 class RDBTemplate(Template):

@@ -13,7 +13,7 @@ from urllib.parse import ParseResult, unquote, urlparse
 
 import pandas as pd
 
-from .constants import REF_TEMPLATE_REGEX
+from kgi.constants import REF_TEMPLATE_REGEX
 
 
 class IdGenerator:
@@ -41,7 +41,6 @@ class Validator:
             return all([result.scheme, result.netloc])
         except Exception:
             return False
-
 
 
 class Identifier:
@@ -203,17 +202,23 @@ def insert_columns(df: pd.DataFrame, pure=False) -> pd.DataFrame:
 
     # Add columns at specific positions
     df.insert(_col_pos("subject_map_value") + 1, "subject_references", _empty_lists())
-    df.insert(_col_pos("subject_map_value") + 1, "subject_references_template", _none_col())
+    df.insert(
+        _col_pos("subject_map_value") + 1, "subject_references_template", _none_col()
+    )
     df.insert(_col_pos("subject_references") + 1, "subject_reference_count", 0)
     df.insert(
         _col_pos("predicate_map_value") + 1, "predicate_references", _empty_lists()
     )
     df.insert(
-        _col_pos("predicate_map_value") + 1, "predicate_references_template", _none_col()
+        _col_pos("predicate_map_value") + 1,
+        "predicate_references_template",
+        _none_col(),
     )
     df.insert(_col_pos("predicate_references") + 1, "predicate_reference_count", 0)
     df.insert(_col_pos("object_map_value") + 1, "object_references", _empty_lists())
-    df.insert(_col_pos("object_map_value") + 1, "object_references_template", _none_col())
+    df.insert(
+        _col_pos("object_map_value") + 1, "object_references_template", _none_col()
+    )
     df.insert(_col_pos("object_references") + 1, "object_reference_count", 0)
     df.insert(_col_pos("graph_map_value") + 1, "graph_references", _empty_lists())
     df.insert(_col_pos("graph_map_value") + 1, "graph_references_template", _none_col())
@@ -284,11 +289,9 @@ def insert_columns(df: pd.DataFrame, pure=False) -> pd.DataFrame:
                 join_conditions = df.at[index, "object_join_conditions"]
                 if pd.notna(join_conditions):
                     df.at[index, "object_references"] = [
-                        list(
-                            json.loads(
-                                join_conditions.replace("'", '"')
-                            ).values()
-                        )[0]["child_value"]
+                        list(json.loads(join_conditions.replace("'", '"')).values())[0][
+                            "child_value"
+                        ]
                     ]
                     df.at[index, "object_reference_count"] = 1
                 else:

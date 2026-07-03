@@ -14,23 +14,22 @@ r2rml_inversion_test_results
 test_results
 
 # RML test case engine outputs
-rml_test_cases_repo/test-cases/**/*.nt
-rml_test_cases_repo/test-cases/**/*.ttl
-rml_test_cases_repo/test-cases/**/*.log
-rml_test_cases_repo/test-cases/output.*
+rml_io_registry/test-cases/**/*.nt
+rml_io_registry/test-cases/**/*.ttl
+rml_io_registry/test-cases/**/*.log
+rml_io_registry/test-cases/output.*
 inversion.log
-morph_kgc_config_*.ini
 rmlmapper*.jar
 
 # Virtuoso data directory
 virtuoso-data/
 
 # PostgreSQL data directories
+postgresql_data/
+dest_postgresql_data/
 postgresql_r2rml_data/
 dest_postgresql_r2rml_data/
 postgresql_rml_data/
 dest_postgresql_rml_data/
 benchmark_postgresql_data/
 benchmark_virtuoso_data/
-
-CLAUDE.md

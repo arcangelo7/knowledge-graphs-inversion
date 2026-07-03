@@ -15,11 +15,20 @@ import tempfile
 
 from io import BytesIO
 
-from pyoxigraph import BlankNode, DefaultGraph, Literal, NamedNode, Quad, QueryResultsFormat, QuerySolutions, Store
+from pyoxigraph import (
+    BlankNode,
+    DefaultGraph,
+    Literal,
+    NamedNode,
+    Quad,
+    QueryResultsFormat,
+    QuerySolutions,
+    Store,
+)
 from sparqlite import SPARQLClient
 
-from .base import Endpoint
-from .utils import Validator
+from kgi.base import Endpoint
+from kgi.utils import Validator
 
 
 class RemoteEndpoint(Endpoint):
@@ -191,7 +200,11 @@ class VirtuosoEndpoint(RemoteEndpoint):
             try:
                 result = self._client.query(count_query, method="POST")
                 bindings = result["results"]["bindings"]
-                triple_count_in_graph = int(bindings[0][list(bindings[0].keys())[0]]["value"]) if bindings else 0
+                triple_count_in_graph = (
+                    int(bindings[0][list(bindings[0].keys())[0]]["value"])
+                    if bindings
+                    else 0
+                )
                 if triple_count_in_graph == 0:
                     logging.getLogger("kgi").error(
                         "WARNING: No triples were loaded into the graph!"
@@ -242,9 +255,9 @@ class VirtuosoEndpoint(RemoteEndpoint):
 
 
 _NT_LINE = re.compile(
-    r'(<[^>]*>|_:\S+)\s+(<[^>]*>)\s+'
+    r"(<[^>]*>|_:\S+)\s+(<[^>]*>)\s+"
     r'(<[^>]*>|_:\S+|"(?:[^"\\]|\\.)*"(?:@[a-z]+(?:-[a-z0-9]+)*)?(?:\^\^<[^>]*>)?)'
-    r'(?:\s+(<[^>]*>))?\s*\.'
+    r"(?:\s+(<[^>]*>))?\s*\."
 )
 
 
@@ -262,7 +275,9 @@ def _parse_term_object(raw: str) -> NamedNode | BlankNode | Literal:
         return NamedNode(raw[1:-1])
     if raw.startswith("_:"):
         return NamedNode(f"{_BNODE_IRI_PREFIX}{raw[2:]}")
-    match = re.match(r'^"((?:[^"\\]|\\.)*)"(@([a-z]+(?:-[a-z0-9]+)*))?(\^\^<([^>]*)>)?$', raw)
+    match = re.match(
+        r'^"((?:[^"\\]|\\.)*)"(@([a-z]+(?:-[a-z0-9]+)*))?(\^\^<([^>]*)>)?$', raw
+    )
     if not match:
         return Literal(raw)
     value, _, lang, _, datatype = match.groups()

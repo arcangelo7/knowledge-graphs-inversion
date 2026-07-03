@@ -25,7 +25,7 @@ cd knowledge-graphs-inversion
 uv sync
 ```
 
-Conformance tests and benchmarks also require [Docker](https://www.docker.com/) for the PostgreSQL databases, and the git submodules:
+Conformance tests and benchmarks also require [Docker](https://www.docker.com/) for the PostgreSQL databases, Java 21 or newer for RMLMapper v8.1.0, and the git submodules:
 
 ```bash
 git submodule update --init --recursive

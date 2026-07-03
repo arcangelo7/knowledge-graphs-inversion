@@ -2,15 +2,15 @@
 #
 # SPDX-License-Identifier: ISC
 
-from .core import reconstruct
-from .exceptions import (
+from kgi.core import reconstruct
+from kgi.exceptions import (
     KGIError,
     MappingError,
     NoDataError,
     NonInvertibleError,
     UnsupportedMappingError,
 )
-from .models import ReconstructedTable
+from kgi.models import ReconstructedTable
 
 __all__ = [
     "reconstruct",

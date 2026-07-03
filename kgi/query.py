@@ -9,16 +9,16 @@ import logging
 
 import pandas as pd
 
-from .base import Endpoint
-from .constants import (
+from kgi.base import Endpoint
+from kgi.constants import (
     RML_BLANK_NODE,
     RML_CONSTANT,
     RML_PARENT_TRIPLES_MAP,
     RML_REFERENCE,
     RML_TEMPLATE,
 )
-from .triples import QueryTriple, SubjectTriple, extract_from_iri_template
-from .utils import Codex, IdGenerator, Identifier, sparql_to_python_type, url_decode
+from kgi.triples import QueryTriple, SubjectTriple, extract_from_iri_template
+from kgi.utils import Codex, IdGenerator, Identifier, sparql_to_python_type, url_decode
 
 
 class Query:

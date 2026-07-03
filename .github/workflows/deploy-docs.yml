@@ -29,7 +29,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      # actions/checkout v7.0.0
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
       - name: Find latest successful test run
         id: find-run
@@ -41,7 +42,8 @@ jobs:
 
       - name: Download coverage report
         if: steps.find-run.outputs.run-id != ''
-        uses: actions/download-artifact@v8
+        # actions/download-artifact v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: coverage-report
           path: docs/public/coverage
@@ -51,7 +53,8 @@ jobs:
 
       - name: Download coverage badge
         if: steps.find-run.outputs.run-id != ''
-        uses: actions/download-artifact@v8
+        # actions/download-artifact v8.0.1
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: coverage-badge
           path: docs/public/coverage
@@ -59,7 +62,8 @@ jobs:
           github-token: ${{ github.token }}
         continue-on-error: true
 
-      - uses: withastro/action@v6
+      # withastro/action v6.1.1
+      - uses: withastro/action@b7d53628f8b666036b0238aadb0b984a2a489f26
         with:
           path: ./docs
 
@@ -71,4 +75,5 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        # actions/deploy-pages v5.0.0
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128

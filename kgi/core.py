@@ -15,43 +15,44 @@ from morph_kgc.args_parser import load_config_from_argument
 from morph_kgc.mapping.mapping_parser import retrieve_mappings
 from pyoxigraph import BlankNode, Literal, NamedNode, Quad, RdfFormat, Store
 
-from .constants import (
+from kgi.constants import (
+    D2RQ_DATABASE,
+    D2RQ_JDBC_DSN,
+    D2RQ_PASSWORD,
+    D2RQ_USERNAME,
+    JDBC_DRIVERS,
+    RDF_TYPE,
     RML_IRI,
+    RML_OLD_QUERY,
+    RML_QUERY,
     RML_REFERENCE,
+    RML_REFERENCE_FORMULATION,
     RML_SOURCE,
+    RML_SQL2008_QUERY,
+    RML_TABLE_NAME,
     RML_TEMPLATE,
     RR_LITERAL,
+    RR_SQL_QUERY,
     RR_SUBJECT_MAP,
     RR_TERM_TYPE,
+    RR_TRIPLES_MAP,
 )
-from .endpoints import EndpointFactory, RemoteEndpoint, VirtuosoEndpoint
-from .exceptions import (
+from kgi.endpoints import EndpointFactory, RemoteEndpoint, VirtuosoEndpoint
+from kgi.exceptions import (
     MappingError,
     NoDataError,
     NonInvertibleError,
     UnsupportedMappingError,
 )
-from .models import ReconstructedTable
-from .query import retrieve_data
-from .schema import DatabaseSchemaRetriever, apply_schema_ordering, apply_schema_types
-from .templates import RDBTemplate
-from .utils import insert_columns
-
-D2RQ_DATABASE = NamedNode("http://www.wiwiss.fu-berlin.de/suhl/bizer/D2RQ/0.1#Database")
-D2RQ_JDBC_DSN = NamedNode("http://www.wiwiss.fu-berlin.de/suhl/bizer/D2RQ/0.1#jdbcDSN")
-D2RQ_USERNAME = NamedNode("http://www.wiwiss.fu-berlin.de/suhl/bizer/D2RQ/0.1#username")
-D2RQ_PASSWORD = NamedNode("http://www.wiwiss.fu-berlin.de/suhl/bizer/D2RQ/0.1#password")
-
-JDBC_DRIVERS: dict[str, str] = {
-    "postgresql": "postgresql+psycopg2",
-    "mysql": "mysql+pymysql",
-}
-
-RR_SQL_QUERY = NamedNode("http://www.w3.org/ns/r2rml#sqlQuery")
-RML_QUERY_NEW = NamedNode("http://w3id.org/rml/query")
-RML_QUERY_LEGACY = NamedNode("http://semweb.mmlab.be/ns/rml#query")
-RR_TRIPLES_MAP = NamedNode("http://www.w3.org/ns/r2rml#TriplesMap")
-RDF_TYPE = NamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")
+from kgi.models import ReconstructedTable
+from kgi.query import retrieve_data
+from kgi.schema import (
+    DatabaseSchemaRetriever,
+    apply_schema_ordering,
+    apply_schema_types,
+)
+from kgi.templates import RDBTemplate
+from kgi.utils import insert_columns
 
 
 def get_logger() -> logging.Logger:
@@ -97,18 +98,36 @@ def _extract_db_url_from_mapping(store: Store) -> str | None:
 
 
 def _check_for_sql_queries(store: Store) -> bool:
-    for predicate in (RR_SQL_QUERY, RML_QUERY_NEW, RML_QUERY_LEGACY):
+    for predicate in (RR_SQL_QUERY, RML_QUERY, RML_OLD_QUERY):
         if any(store.quads_for_pattern(None, predicate, None)):
             return True
-    return False
+    return any(
+        store.quads_for_pattern(None, RML_REFERENCE_FORMULATION, RML_SQL2008_QUERY)
+    )
+
+
+def _normalize_sql_table_sources(mappings: pd.DataFrame) -> None:
+    # New-vocabulary mappings carry the table name in rml:iterator; morph-kgc
+    # leaves the rule as a generic rml:source instead of the tableName form
+    # the rest of the pipeline expects
+    is_table_source = (
+        (mappings["source_type"] == "RDB")
+        & (mappings["logical_source_type"] == RML_SOURCE)
+        & mappings["iterator"].notna()
+    )
+    if not is_table_source.any():
+        return
+    # strip delimited identifiers like morph-kgc does for rr:tableName values
+    mappings.loc[is_table_source, "logical_source_value"] = mappings.loc[
+        is_table_source, "iterator"
+    ].str.replace(r'^"(.+)"$', r"\1", regex=True)
+    mappings.loc[is_table_source, "logical_source_type"] = RML_TABLE_NAME
 
 
 def _check_for_multiple_subject_maps(store: Store) -> bool:
     for quad in store.quads_for_pattern(None, RDF_TYPE, RR_TRIPLES_MAP):
         triples_map = quad.subject
-        subject_maps = list(
-            store.quads_for_pattern(triples_map, RR_SUBJECT_MAP, None)
-        )
+        subject_maps = list(store.quads_for_pattern(triples_map, RR_SUBJECT_MAP, None))
         if len(subject_maps) > 1:
             return True
     return False
@@ -140,18 +159,30 @@ def _is_column_only_iri(map_type: object, map_value: object, term_type: object) 
         return True
     if map_type == RML_TEMPLATE and term_type == RML_IRI:
         stripped = str(map_value).strip()
-        if stripped.startswith("{") and stripped.endswith("}") and stripped.count("{") == 1:
+        if (
+            stripped.startswith("{")
+            and stripped.endswith("}")
+            and stripped.count("{") == 1
+        ):
             return True
     return False
 
 
 def _check_for_column_iri_term_maps(mappings: pd.DataFrame) -> bool:
     for _, rule in mappings.iterrows():
-        if _is_column_only_iri(rule["subject_map_type"], rule["subject_map_value"], rule["subject_termtype"]):
+        if _is_column_only_iri(
+            rule["subject_map_type"],
+            rule["subject_map_value"],
+            rule["subject_termtype"],
+        ):
             return True
-        if _is_column_only_iri(rule["object_map_type"], rule["object_map_value"], rule["object_termtype"]):
+        if _is_column_only_iri(
+            rule["object_map_type"], rule["object_map_value"], rule["object_termtype"]
+        ):
             return True
-        if _is_column_only_iri(rule["predicate_map_type"], rule["predicate_map_value"], RML_IRI):
+        if _is_column_only_iri(
+            rule["predicate_map_type"], rule["predicate_map_value"], RML_IRI
+        ):
             return True
     return False
 
@@ -240,10 +271,10 @@ def reconstruct(
             raise MappingError(f"Invalid mapping: {e}") from e
         except KeyError as e:
             if str(e) == "'object_map'":
-                raise MappingError(
-                    "Mapping with missing object_map information"
-                ) from e
+                raise MappingError("Mapping with missing object_map information") from e
             raise MappingError(f"Mapping error: {e}") from e
+
+        _normalize_sql_table_sources(mappings)
 
         if _check_for_constant_only_mappings(mappings):
             raise NonInvertibleError(
@@ -274,9 +305,7 @@ def reconstruct(
                 "No RDF input file found, likely due to mapping errors"
             ) from e
         except ValueError as e:
-            raise NonInvertibleError(
-                f"Output RDF contains invalid data: {e}"
-            ) from e
+            raise NonInvertibleError(f"Output RDF contains invalid data: {e}") from e
 
         insert_columns(mappings)
 
@@ -288,9 +317,7 @@ def reconstruct(
 
         results: dict[str, ReconstructedTable] = {}
         for table_name, source_rules in mappings.groupby("logical_source_value"):
-            source_section = source_rules.iloc[0].get(
-                "source_section", "DataSource1"
-            )
+            source_section = source_rules.iloc[0].get("source_section", "DataSource1")
             template_db_url = dest_db_url if dest_db_url else source_db_url
             template = _generate_template(source_rules, template_db_url)
 

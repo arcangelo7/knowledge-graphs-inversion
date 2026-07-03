@@ -41,12 +41,19 @@ def _start_postgres(container_name: str, port: int) -> None:
     subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
     subprocess.run(
         [
-            "docker", "run", "-d",
-            "--name", container_name,
-            "-e", "POSTGRES_USER=r2rml",
-            "-e", "POSTGRES_PASSWORD=r2rml",
-            "-e", "POSTGRES_DB=r2rml",
-            "-p", f"{port}:5432",
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            container_name,
+            "-e",
+            "POSTGRES_USER=r2rml",
+            "-e",
+            "POSTGRES_PASSWORD=r2rml",
+            "-e",
+            "POSTGRES_DB=r2rml",
+            "-p",
+            f"{port}:5432",
             "postgres:13",
         ],
         check=True,
@@ -122,11 +129,19 @@ def run_forward_mapping(
     jdbc_dsn, username, password = rmlmapper.sqlalchemy_to_jdbc(db_url)
     if suite_id == "rml":
         prepared = rmlmapper.prepare_rml_mapping(
-            mapping_path, jdbc_dsn, username, password, tmp_dir,
+            mapping_path,
+            jdbc_dsn,
+            username,
+            password,
+            tmp_dir,
         )
         return rmlmapper.run(prepared, output_path)
     return rmlmapper.run(
-        mapping_path, output_path, dsn=jdbc_dsn, username=username, password=password,
+        mapping_path,
+        output_path,
+        dsn=jdbc_dsn,
+        username=username,
+        password=password,
     )
 
 
@@ -138,7 +153,7 @@ def _collect_test_ids(suite_class: type, base_dir: str) -> list[str]:
 
 
 R2RML_BASE_DIR = os.path.join(PROJECT_ROOT, "r2rml_test_cases")
-RML_BASE_DIR = os.path.join(PROJECT_ROOT, "rml_test_cases_repo")
+RML_BASE_DIR = os.path.join(PROJECT_ROOT, "rml_io_registry")
 
 R2RML_TEST_IDS = _collect_test_ids(R2RMLTestSuite, R2RML_BASE_DIR)
 RML_TEST_IDS = _collect_test_ids(RMLTestSuite, RML_BASE_DIR)

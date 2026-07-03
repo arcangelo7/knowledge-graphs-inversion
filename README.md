@@ -46,7 +46,7 @@ for table_name, table in result.items():
 
 ## Testing
 
-Conformance tests require [Docker](https://www.docker.com/) to run the PostgreSQL databases:
+Conformance tests require [Docker](https://www.docker.com/) to run the PostgreSQL databases and Java 21 or newer for RMLMapper v8.1.0:
 
 ```bash
 uv run pytest -v

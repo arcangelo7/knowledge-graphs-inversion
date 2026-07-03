@@ -9,8 +9,8 @@ import logging
 
 import pandas as pd
 
-from .base import Triple
-from .constants import (
+from kgi.base import Triple
+from kgi.constants import (
     RML_BLANK_NODE,
     RML_CONSTANT,
     RML_DEFAULT_GRAPH,
@@ -20,7 +20,7 @@ from .constants import (
     RML_REFERENCE,
     RML_TEMPLATE,
 )
-from .utils import Codex, IdGenerator, Identifier
+from kgi.utils import Codex, IdGenerator, Identifier
 
 
 def extract_from_iri_template(
@@ -317,9 +317,7 @@ class QueryTriple(Triple):
 
             raw_join_value = self.rule["object_join_conditions"]
             if isinstance(raw_join_value, str):
-                join_conditions = json.loads(
-                    raw_join_value.replace("'", '"')
-                )
+                join_conditions = json.loads(raw_join_value.replace("'", '"'))
             else:
                 join_conditions = {}
             parent_template = object_rule["subject_references_template"]
