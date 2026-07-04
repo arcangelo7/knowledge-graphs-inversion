@@ -121,28 +121,29 @@ The RML test suite comes from a [fork of rml-io-registry](https://github.com/arc
 | Outcome | Count |
 |---|---|
 | Fully inverted | 14 |
-| Partially inverted | 21 |
-| Failed | 1 |
+| Partially inverted | 22 |
 | Non-invertible | 2 |
 | Not supported | 11 |
 | Forward mapping failed | 10 |
 
-### Partially inverted (21)
+### Partially inverted (22)
 
 Sub-categories are counted per tag; a test contributes to every form of loss that applies, so the counts below sum to more than the number of tests.
 
 | Sub-category | Count |
 |---|---|
-| Columns lost (unmapped columns) | 17 |
+| Columns lost (unmapped columns) | 18 |
 | Rows lost (NULL in subject template) | 1 |
 | Multiplicity lost (duplicate rows collapsed) | 4 |
 | Tables lost (unmapped tables) | 1 |
 
 One test (RMLTC0012a) is tagged with three sub-categories simultaneously, mirroring its R2RML counterpart: the `Lives` table has no triples map, `IOUs` has non-unique subject identifiers that collapse duplicates, and the column coverage check also flags unmapped columns.
 
-### Failed (1)
+Test cases sharing an identifier across the two suites are not always equivalent: the RML-Core suite sometimes changed the source data. The seven RMLTC0007 variants use a `student` table with an extra `LastName` column that no term map references. This is the same data as their [RMLTC0007-JSON counterparts](https://github.com/kg-construct/rml-core/tree/main/test-cases) in the RML-Core suite, so they classify as partially inverted (columns lost), whereas the R2RML 0007 tests map every column and are fully inverted.
 
-RMLTC0021a joins a table with itself on the `Sport` column, whose values never appear in the generated RDF: the graph records which students share a sport, but not which sport. The column cannot be reconstructed, and since it is referenced in the join condition the column coverage check does not tag it as unmapped, so the comparison reports a plain failure.
+Another example is 0019b (subject map from a column whose value is not a valid IRI): the RML variant keeps only the invalid row, RMLMapper produces no output and the test classifies as forward mapping failed, while the R2RML variant also contains valid rows for which RMLMapper emits triples, so the inversion is attempted and stops at the non-invertible check on the IRI column term map.
+
+A column can also be lost through a join condition. RMLTC0021a (an RML-Core addition with no R2RML counterpart) joins the `student` table with itself on the `Sport` column, whose values never appear in the generated RDF: the graph records which students share a sport, but not which sport. A join condition equates its child and parent columns, so a join column counts as covered only when the column on the other side is emitted by a term map; here neither side is, so `Sport` is counted as lost.
 
 ### Non-invertible (2)
 

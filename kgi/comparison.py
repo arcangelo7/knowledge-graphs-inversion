@@ -50,22 +50,32 @@ def parse_mapping(mapping_content: str) -> Store:
 
 def extract_columns_from_mapping(mapping_content: str) -> set[str]:
     store = parse_mapping(mapping_content)
-    columns: set[str] = set()
-    for predicate in (
-        RR_COLUMN,
-        RML_OLD_REFERENCE,
-        RML_REFERENCE_NODE,
-        RR_CHILD,
-        RML_CHILD,
-        RR_PARENT,
-        RML_PARENT,
-    ):
+    emitted: set[str] = set()
+    for predicate in (RR_COLUMN, RML_OLD_REFERENCE, RML_REFERENCE_NODE):
         for quad in store.quads_for_pattern(None, predicate, None):
-            columns.add(_term_value(quad.object).strip('"'))
+            emitted.add(_term_value(quad.object).strip('"'))
     for predicate in (RR_TEMPLATE, RML_TEMPLATE_NODE):
         for quad in store.quads_for_pattern(None, predicate, None):
             column_refs = TEMPLATE_COLUMN_REGEX.findall(_term_value(quad.object))
-            columns.update(column_refs)
+            emitted.update(column_refs)
+
+    # A join condition equates child and parent columns, so either side is
+    # recoverable only when the other side is emitted by a term map
+    columns = set(emitted)
+    for child_predicate, parent_predicate in (
+        (RR_CHILD, RR_PARENT),
+        (RML_CHILD, RML_PARENT),
+    ):
+        for quad in store.quads_for_pattern(None, child_predicate, None):
+            parent_term = _first_object(store, quad.subject, parent_predicate)
+            if parent_term is None:
+                continue
+            child = _term_value(quad.object).strip('"')
+            parent = _term_value(parent_term).strip('"')
+            if parent in emitted:
+                columns.add(child)
+            if child in emitted:
+                columns.add(parent)
     return columns
 
 
