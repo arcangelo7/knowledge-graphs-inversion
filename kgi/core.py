@@ -52,7 +52,7 @@ from kgi.schema import (
     apply_schema_types,
 )
 from kgi.templates import RDBTemplate
-from kgi.utils import insert_columns
+from kgi.utils import insert_columns, normalize_sql_identifier
 
 
 def get_logger() -> logging.Logger:
@@ -117,10 +117,9 @@ def _normalize_sql_table_sources(mappings: pd.DataFrame) -> None:
     )
     if not is_table_source.any():
         return
-    # strip delimited identifiers like morph-kgc does for rr:tableName values
     mappings.loc[is_table_source, "logical_source_value"] = mappings.loc[
         is_table_source, "iterator"
-    ].str.replace(r'^"(.+)"$', r"\1", regex=True)
+    ].map(normalize_sql_identifier)
     mappings.loc[is_table_source, "logical_source_type"] = RML_TABLE_NAME
 
 

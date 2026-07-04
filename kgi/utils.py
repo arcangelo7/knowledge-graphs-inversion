@@ -16,6 +16,14 @@ import pandas as pd
 from kgi.constants import REF_TEMPLATE_REGEX
 
 
+def normalize_sql_identifier(identifier: str) -> str:
+    """Resolve a SQL identifier to its stored form: delimited identifiers keep
+    their exact case, undelimited ones are folded to lowercase as PostgreSQL does."""
+    if identifier.startswith('"') and identifier.endswith('"'):
+        return identifier[1:-1]
+    return identifier.lower()
+
+
 class IdGenerator:
     """Generates unique IDs."""
 

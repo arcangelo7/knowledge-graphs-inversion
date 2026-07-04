@@ -29,6 +29,7 @@ from kgi.constants import (
     RR_TEMPLATE,
     TEMPLATE_COLUMN_REGEX,
 )
+from kgi.utils import normalize_sql_identifier
 
 RdfSubject = Union[NamedNode, BlankNode, Triple]
 RdfTerm = Union[NamedNode, BlankNode, Literal, Triple]
@@ -107,13 +108,13 @@ def _encode_outcome(subcategories: set[str]) -> str | None:
 def get_mapped_table_names(mapping_store: Store) -> set[str]:
     tables: set[str] = set()
     for quad in mapping_store.quads_for_pattern(None, RR_TABLE_NAME, None):
-        tables.add(_term_value(quad.object).strip('"'))
+        tables.add(normalize_sql_identifier(_term_value(quad.object)))
     for quad in mapping_store.quads_for_pattern(
         None, RML_REFERENCE_FORMULATION, RML_SQL2008_TABLE
     ):
         iterator = _first_object(mapping_store, quad.subject, RML_ITERATOR)
         if iterator is not None:
-            tables.add(_term_value(iterator).strip('"'))
+            tables.add(normalize_sql_identifier(_term_value(iterator)))
     return tables
 
 
@@ -134,13 +135,16 @@ def _logical_sources_for_table(
 ) -> list[RdfSubject]:
     sources = []
     for quad in mapping_store.quads_for_pattern(None, RR_TABLE_NAME, None):
-        if _term_value(quad.object).strip('"') == table_name:
+        if normalize_sql_identifier(_term_value(quad.object)) == table_name:
             sources.append(quad.subject)
     for quad in mapping_store.quads_for_pattern(
         None, RML_REFERENCE_FORMULATION, RML_SQL2008_TABLE
     ):
         iterator = _first_object(mapping_store, quad.subject, RML_ITERATOR)
-        if iterator is not None and _term_value(iterator).strip('"') == table_name:
+        if (
+            iterator is not None
+            and normalize_sql_identifier(_term_value(iterator)) == table_name
+        ):
             sources.append(quad.subject)
     return sources
 

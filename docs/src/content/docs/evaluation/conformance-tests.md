@@ -7,7 +7,7 @@ title: Conformance tests
 description: Validation against the R2RML and RML test suites
 ---
 
-The algorithm is validated against two test suites: the W3C [R2RML](https://www.w3.org/TR/r2rml/) test suite and the [RML](https://kg-construct.github.io/rml-core/spec/docs/) test suite (PostgreSQL subset). Both are included as git submodules. Forward mapping for both suites is performed with [RMLMapper](https://github.com/RMLio/rmlmapper-java) v8.0.1.
+The algorithm is validated against two test suites: the W3C [R2RML](https://www.w3.org/TR/r2rml/) test suite and the [RML](https://kg-construct.github.io/rml-core/spec/docs/) RDB test cases from a [fork of rml-io-registry](https://github.com/arcangelo7/rml-io-registry/tree/add-rdb-core-tests). Both are included as git submodules. Forward mapping for both suites is performed with [RMLMapper](https://github.com/RMLio/rmlmapper-java) v8.1.0.
 
 ## Defining invertibility
 
@@ -42,7 +42,7 @@ There are two ways to run the conformance tests: from the terminal via pytest, o
 
 ### Terminal
 
-Pytest manages the PostgreSQL containers automatically, so no manual Docker setup is needed beyond having Docker running:
+Pytest manages the PostgreSQL containers automatically. Docker must be running, and Java 21 or newer must be available for RMLMapper. The RMLMapper v8.1.0 jar is downloaded automatically on the first forward mapping run:
 
 ```bash
 uv run pytest -v
@@ -55,7 +55,7 @@ uv run pytest tests/test_conformance.py::test_r2rml_conformance[R2RMLTC0001a] -v
 ```
 
 ```bash
-uv run pytest tests/test_conformance.py::test_rml_conformance[RMLTC0001a] -v
+uv run pytest tests/test_conformance.py::test_rml_conformance[RMLTC0001a-RDB] -v
 ```
 
 To generate an HTML coverage report:
@@ -116,38 +116,45 @@ In nine test cases the forward mapping produces no RDF output, so inversion cann
 
 ## RML test suite
 
-The [RML test suite](https://kg-construct.github.io/rml-test-cases/) contains 60 PostgreSQL test cases.
+The RML test suite comes from a [fork of rml-io-registry](https://github.com/arcangelo7/rml-io-registry/tree/add-rdb-core-tests) and contains 59 RDB test cases.
 
 | Outcome | Count |
 |---|---|
-| Fully inverted | 12 |
-| Partially inverted | 23 |
-| Non-invertible | 4 |
-| Not supported | 9 |
-| Forward mapping failed | 12 |
+| Fully inverted | 14 |
+| Partially inverted | 21 |
+| Failed | 1 |
+| Non-invertible | 2 |
+| Not supported | 11 |
+| Forward mapping failed | 10 |
 
-### Partially inverted (23)
+### Partially inverted (21)
 
-Sub-categories are counted per tag; a test contributes to every form of loss that applies, so the counts below sum to more than the number of tests. Eight tests are double-tagged (`columns_lost` and `tables_lost`).
+Sub-categories are counted per tag; a test contributes to every form of loss that applies, so the counts below sum to more than the number of tests.
 
 | Sub-category | Count |
 |---|---|
-| Columns lost (unmapped columns) | 19 |
-| Tables lost (unmapped tables) | 12 |
+| Columns lost (unmapped columns) | 17 |
+| Rows lost (NULL in subject template) | 1 |
+| Multiplicity lost (duplicate rows collapsed) | 4 |
+| Tables lost (unmapped tables) | 1 |
 
-Eleven of the twelve unmapped-tables cases are inflated by a case-sensitivity issue: the table name in the mapping (e.g. `Patient`) is compared literally against the PostgreSQL catalog name (`patient`), which lowercases unquoted identifiers. With a case-insensitive comparison these eleven would be tagged only as `columns_lost`, because each of them maps only a subset of the table's columns. The single genuine unmapped-table case is RMLTC0012a, where the `Lives` table has no triples map at all.
+One test (RMLTC0012a) is tagged with three sub-categories simultaneously, mirroring its R2RML counterpart: the `Lives` table has no triples map, `IOUs` has non-unique subject identifiers that collapse duplicates, and the column coverage check also flags unmapped columns.
 
-### Non-invertible (4)
+### Failed (1)
+
+RMLTC0021a joins a table with itself on the `Sport` column, whose values never appear in the generated RDF: the graph records which students share a sport, but not which sport. The column cannot be reconstructed, and since it is referenced in the join condition the column coverage check does not tag it as unmapped, so the comparison reports a plain failure.
+
+### Non-invertible (2)
 
 | Reason | Count |
 |---|---|
 | Constant-only mapping | 1 |
-| IRI column term type (ambiguous base IRI resolution) | 3 |
+| IRI column term type (ambiguous base IRI resolution) | 1 |
 
-### Not supported (9)
+### Not supported (11)
 
-All nine use SQL queries as logical sources (`rml:query`), same as the R2RML counterpart (`rr:sqlQuery`).
+All eleven use SQL queries as logical sources (`rml:referenceFormulation rml:SQL2008Query`), same as the R2RML counterpart (`rr:sqlQuery`).
 
-### Forward mapping failed (12)
+### Forward mapping failed (10)
 
-In twelve test cases the forward mapping produces no RDF output, so inversion cannot be attempted.
+All ten are intentional error test cases: the mapping or the data contains the error under test, RMLMapper produces no RDF output, and inversion cannot be attempted.
