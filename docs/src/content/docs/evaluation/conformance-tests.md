@@ -66,7 +66,7 @@ uv run pytest --cov --cov-report=html -v
 
 ### Web dashboard
 
-The dashboard runs through Docker Compose and lets you run individual test cases or the full suite. For each test case it shows the generated SPARQL queries, the reconstructed SQL, and a side-by-side comparison of the original and inverted database content, which is useful when diagnosing why a particular inversion fails.
+The dashboard runs through Docker Compose and lets you run individual test cases or the full suite. For each test case it shows the expected RDF output, the actual RDF output, the mapping, the inversion status, and a side-by-side comparison of the original and inverted database content, which is useful when diagnosing why a particular inversion fails.
 
 ```bash
 docker compose up

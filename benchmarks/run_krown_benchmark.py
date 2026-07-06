@@ -12,10 +12,18 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Literal, cast
 
 import pandas as pd
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, MofNCompleteColumn, TimeElapsedColumn
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    BarColumn,
+    MofNCompleteColumn,
+    TimeElapsedColumn,
+)
 from rich.table import Table
 from sqlalchemy import create_engine, text
 
@@ -24,48 +32,62 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # Suppress all console logging - Rich handles console output
 logging.disable(logging.CRITICAL)
 
-import rmlmapper
-from benchmarks.krown_validator import KrownValidator
-from benchmarks.krown_stats import aggregate_scenario_statistics
-from kgi.core import reconstruct
+import rmlmapper  # noqa: E402
+from benchmarks.krown_validator import KrownValidator  # noqa: E402
+from benchmarks.krown_stats import aggregate_scenario_statistics  # noqa: E402
+from kgi.core import reconstruct  # noqa: E402
+from kgi.models import ReconstructedTable  # noqa: E402
 
-from benchmarks.krown_plots import plot_timing_bar_charts
+from benchmarks.krown_plots import plot_timing_bar_charts  # noqa: E402
 
 console = Console()
 
+SparqlBackend = Literal["virtuoso", "qlever", "pyoxigraph"]
+
 
 class KrownBenchmarkRunner:
-
-    def __init__(self, use_virtuoso: bool = True, validate: bool = False,
-                 cleanup_tables: bool = True, iterations: int = 1):
+    def __init__(
+        self,
+        validate: bool = False,
+        cleanup_tables: bool = True,
+        iterations: int = 1,
+        sparql_backend: SparqlBackend = "virtuoso",
+    ):
         self.project_root = Path(__file__).parent.parent
         self.krown_dir = self.project_root / "KROWN"
-        self.use_virtuoso = use_virtuoso
+        self.sparql_backend = sparql_backend
         self.validate = validate
         self.cleanup_tables = cleanup_tables
         self.iterations = iterations
         self.validator: KrownValidator | None = None
 
         self.db_config = {
-            'host': os.environ['BENCHMARK_DB_HOST'],
-            'port': os.environ['BENCHMARK_DB_PORT'],
-            'user': os.environ['BENCHMARK_DB_USER'],
-            'password': os.environ['BENCHMARK_DB_PASSWORD'],
-            'database': os.environ['BENCHMARK_DB_NAME']
+            "host": os.environ["BENCHMARK_DB_HOST"],
+            "port": os.environ["BENCHMARK_DB_PORT"],
+            "user": os.environ["BENCHMARK_DB_USER"],
+            "password": os.environ["BENCHMARK_DB_PASSWORD"],
+            "database": os.environ["BENCHMARK_DB_NAME"],
         }
 
-        self.virtuoso_config = {
-            'host': 'localhost',
-            'port': '8890'
+        self.virtuoso_config = {"host": "localhost", "port": "8890"}
+        self.qlever_config = {
+            "host": "localhost",
+            "port": (
+                os.environ["QLEVER_PORT"] if "QLEVER_PORT" in os.environ else "7019"
+            ),
         }
 
     def get_connection_string(self) -> str:
-        return (f"postgresql://{self.db_config['user']}:{self.db_config['password']}@"
-                f"{self.db_config['host']}:{self.db_config['port']}/{self.db_config['database']}")
+        return (
+            f"postgresql://{self.db_config['user']}:{self.db_config['password']}@"
+            f"{self.db_config['host']}:{self.db_config['port']}/{self.db_config['database']}"
+        )
 
     def run_krown_data_generation(self) -> bool:
         data_generator_dir = self.krown_dir / "data-generator"
-        config_file = Path(__file__).parent / "krown" / "config" / "kg-inversion-benchmark.json"
+        config_file = (
+            Path(__file__).parent / "krown" / "config" / "kg-inversion-benchmark.json"
+        )
 
         if not data_generator_dir.exists():
             console.print("[red]KROWN data generator not found[/red]")
@@ -78,7 +100,7 @@ class KrownBenchmarkRunner:
                     ["make", "build"],
                     cwd=data_generator_dir,
                     capture_output=True,
-                    text=True
+                    text=True,
                 )
             except Exception:
                 pass
@@ -86,7 +108,9 @@ class KrownBenchmarkRunner:
         cmd = [str(exgentool_path), "generate", f"--scenario={config_file}"]
 
         try:
-            subprocess.run(cmd, cwd=data_generator_dir, capture_output=True, text=True, check=True)
+            subprocess.run(
+                cmd, cwd=data_generator_dir, capture_output=True, text=True, check=True
+            )
             return True
         except (subprocess.CalledProcessError, FileNotFoundError):
             return False
@@ -108,7 +132,7 @@ class KrownBenchmarkRunner:
         scenario_name = scenario_path.name
 
         metadata_file = scenario_path / "metadata.json"
-        with open(metadata_file, 'r') as f:
+        with open(metadata_file, "r") as f:
             metadata = json.load(f)
 
         shared_dir = scenario_path / "data" / "shared"
@@ -117,7 +141,9 @@ class KrownBenchmarkRunner:
         try:
             self.execute_load_rdb_step(metadata, shared_dir, scenario_name)
             morph_kgc_time = self.execute_forward_mapping_step(metadata, shared_dir)
-            inversion_results, inversion_time = self.execute_inversion_step(metadata, shared_dir, scenario_name)
+            inversion_results, inversion_time = self.execute_inversion_step(
+                metadata, shared_dir, scenario_name
+            )
 
             validation_results = None
             if self.validate:
@@ -126,27 +152,30 @@ class KrownBenchmarkRunner:
             end_time = time.time()
             total_time = end_time - start_time
 
-            inversion_overhead_percentage = (inversion_time / morph_kgc_time * 100) if morph_kgc_time > 0 else 0
+            inversion_overhead_percentage = (
+                (inversion_time / morph_kgc_time * 100) if morph_kgc_time > 0 else 0
+            )
 
             mapping_file = shared_dir / "mapping.r2rml.ttl"
             data_file = shared_dir / "data.csv"
 
-            with open(mapping_file, 'r') as f:
+            with open(mapping_file, "r") as f:
                 mapping_content = f.read()
 
-            tm_count = mapping_content.count('rr:TriplesMap')
-            pom_count = mapping_content.count('rr:predicateObjectMap')
-            inv_count = len(inversion_results) if isinstance(inversion_results, dict) else 0
+            tm_count = mapping_content.count("rr:TriplesMap")
+            pom_count = mapping_content.count("rr:predicateObjectMap")
+            inv_count = len(inversion_results)
 
             return {
                 "status": "completed",
                 "scenario_name": scenario_name,
+                "sparql_backend": self.sparql_backend,
                 "execution_time": total_time,
                 "timing_breakdown": {
                     "morph_kgc_time": morph_kgc_time,
                     "inversion_time": inversion_time,
                     "inversion_overhead_percentage": inversion_overhead_percentage,
-                    "total_time": total_time
+                    "total_time": total_time,
                 },
                 "mapping_file": str(mapping_file),
                 "data_file": str(data_file),
@@ -155,7 +184,7 @@ class KrownBenchmarkRunner:
                 "triples_maps_count": tm_count,
                 "predicate_object_maps_count": pom_count,
                 "inversion_count": inv_count,
-                "validation_results": validation_results
+                "validation_results": validation_results,
             }
 
         except Exception as e:
@@ -163,12 +192,14 @@ class KrownBenchmarkRunner:
             return {
                 "status": "failed",
                 "scenario_name": scenario_name,
+                "sparql_backend": self.sparql_backend,
                 "execution_time": end_time - start_time,
-                "error": str(e)
+                "error": str(e),
             }
 
-    def execute_load_rdb_step(self, metadata: dict, shared_dir: Path,
-                              scenario_name: str | None = None) -> None:
+    def execute_load_rdb_step(
+        self, metadata: dict, shared_dir: Path, scenario_name: str | None = None
+    ) -> None:
         load_step = None
         for step in metadata["steps"]:
             if step["command"] == "load":
@@ -190,9 +221,9 @@ class KrownBenchmarkRunner:
 
         if self.validate and scenario_name:
             original_table_name = f"{scenario_name}_original_{table_name}"
-            df.to_sql(original_table_name, engine, if_exists='replace', index=False)
+            df.to_sql(original_table_name, engine, if_exists="replace", index=False)
 
-        df.to_sql(table_name, engine, if_exists='replace', index=False)
+        df.to_sql(table_name, engine, if_exists="replace", index=False)
         engine.dispose()
 
     def execute_forward_mapping_step(self, metadata: dict, shared_dir: Path) -> float:
@@ -215,8 +246,11 @@ class KrownBenchmarkRunner:
         jdbc_dsn, username, password = rmlmapper.sqlalchemy_to_jdbc(sa_url)
 
         rc = rmlmapper.run(
-            mapping_file, output_file,
-            dsn=jdbc_dsn, username=username, password=password,
+            mapping_file,
+            output_file,
+            dsn=jdbc_dsn,
+            username=username,
+            password=password,
         )
 
         if rc != 0:
@@ -227,8 +261,9 @@ class KrownBenchmarkRunner:
 
         return time.time() - start_time
 
-    def execute_inversion_step(self, metadata: dict, shared_dir: Path,
-                               scenario_name: str) -> tuple[dict, float]:
+    def execute_inversion_step(
+        self, metadata: dict, shared_dir: Path, scenario_name: str
+    ) -> tuple[list[ReconstructedTable], float]:
         start_time = time.time()
 
         mapping_step = None
@@ -241,13 +276,17 @@ class KrownBenchmarkRunner:
             raise ValueError("No mapping step found in metadata for fallback")
 
         endpoint_url = None
-        if self.use_virtuoso:
+        if self.sparql_backend == "virtuoso":
             endpoint_url = f"http://{self.virtuoso_config['host']}:{self.virtuoso_config['port']}/sparql"
+        elif self.sparql_backend == "qlever":
+            endpoint_url = (
+                f"http://{self.qlever_config['host']}:{self.qlever_config['port']}"
+            )
 
         mapping_file = shared_dir / "mapping.r2rml.ttl"
         rdf_file = shared_dir / "out.nt"
         conn_string = self.get_connection_string()
-        source_db_url = conn_string.replace('postgresql://', 'postgresql+psycopg2://')
+        source_db_url = conn_string.replace("postgresql://", "postgresql+psycopg2://")
 
         original_cwd = os.getcwd()
         try:
@@ -257,8 +296,9 @@ class KrownBenchmarkRunner:
                 rdf_graph=str(rdf_file),
                 source_db_url=source_db_url,
                 sparql_endpoint=endpoint_url,
-                use_virtuoso=self.use_virtuoso,
-                virtuoso_container='kgi-virtuoso',
+                use_virtuoso=self.sparql_backend == "virtuoso",
+                use_qlever=self.sparql_backend == "qlever",
+                virtuoso_container="kgi-virtuoso",
             )
             return inversion_results, time.time() - start_time
         finally:
@@ -276,19 +316,24 @@ class KrownBenchmarkRunner:
             "benchmark_type": "KROWN",
             "framework": "Knowledge Graph Inversion",
             "environment": "Docker",
+            "sparql_backend": self.sparql_backend,
             "iterations": self.iterations,
             "total_scenarios": len(results),
-            "completed_scenarios": len([r for r in results if r["status"] == "completed"]),
+            "completed_scenarios": len(
+                [r for r in results if r["status"] == "completed"]
+            ),
             "failed_scenarios": len([r for r in results if r["status"] == "failed"]),
-            "results": results
+            "results": results,
         }
 
-        with open(results_file, 'w') as f:
+        with open(results_file, "w") as f:
             json.dump(benchmark_data, f, indent=2)
 
         return results_file
 
-    def save_aggregated_results(self, scenario_runs: dict[str, list[dict]]) -> tuple[Path, Path]:
+    def save_aggregated_results(
+        self, scenario_runs: dict[str, list[dict]]
+    ) -> tuple[Path, Path]:
         results_dir = Path(__file__).parent / "krown" / "results"
         results_dir.mkdir(exist_ok=True, parents=True)
 
@@ -300,13 +345,12 @@ class KrownBenchmarkRunner:
             "benchmark_type": "KROWN",
             "framework": "Knowledge Graph Inversion",
             "environment": "Docker",
+            "sparql_backend": self.sparql_backend,
             "iterations": self.iterations,
-            "scenarios": {
-                name: runs for name, runs in scenario_runs.items()
-            }
+            "scenarios": {name: runs for name, runs in scenario_runs.items()},
         }
 
-        with open(raw_file, 'w') as f:
+        with open(raw_file, "w") as f:
             json.dump(raw_data, f, indent=2)
 
         stats_file = results_dir / f"krown_benchmark_results_stats_{timestamp}.json"
@@ -315,8 +359,9 @@ class KrownBenchmarkRunner:
             "benchmark_type": "KROWN",
             "framework": "Knowledge Graph Inversion",
             "environment": "Docker",
+            "sparql_backend": self.sparql_backend,
             "iterations": self.iterations,
-            "scenarios": {}
+            "scenarios": {},
         }
 
         for scenario_name, runs in scenario_runs.items():
@@ -324,10 +369,10 @@ class KrownBenchmarkRunner:
             if completed_runs:
                 stats_data["scenarios"][scenario_name] = {
                     "raw_runs": runs,
-                    "statistics": aggregate_scenario_statistics(completed_runs)
+                    "statistics": aggregate_scenario_statistics(completed_runs),
                 }
 
-        with open(stats_file, 'w') as f:
+        with open(stats_file, "w") as f:
             json.dump(stats_data, f, indent=2)
 
         return raw_file, stats_file
@@ -340,7 +385,7 @@ class KrownBenchmarkRunner:
             "total_scenarios": 0,
             "passed": 0,
             "failed": 0,
-            "scenario_results": []
+            "scenario_results": [],
         }
 
         for result in results:
@@ -356,7 +401,9 @@ class KrownBenchmarkRunner:
 
         if validation_summary["total_scenarios"] > 0:
             validation_summary["validation_rate"] = (
-                validation_summary["passed"] / validation_summary["total_scenarios"] * 100
+                validation_summary["passed"]
+                / validation_summary["total_scenarios"]
+                * 100
             )
         else:
             validation_summary["validation_rate"] = 0
@@ -367,7 +414,7 @@ class KrownBenchmarkRunner:
         completed = [r for r in results if r["status"] == "completed"]
         failed = [r for r in results if r["status"] == "failed"]
 
-        table = Table(title="Benchmark results")
+        table = Table(title=f"Benchmark results ({self.sparql_backend})")
         table.add_column("Scenario")
         table.add_column("Time", justify="right")
         table.add_column("Morph-KGC", justify="right")
@@ -381,7 +428,9 @@ class KrownBenchmarkRunner:
             t = r["timing_breakdown"]
             val_str = ""
             if self.validate and "validation_results" in r:
-                val_str = "PASS" if r["validation_results"]["validation_passed"] else "FAIL"
+                val_str = (
+                    "PASS" if r["validation_results"]["validation_passed"] else "FAIL"
+                )
             row = [
                 r["scenario_name"],
                 f"{r['execution_time']:.2f}s",
@@ -395,17 +444,27 @@ class KrownBenchmarkRunner:
             table.add_row(*row)
 
         for r in failed:
-            row = [r["scenario_name"], f"{r['execution_time']:.2f}s", "[red]FAILED[/red]",
-                   "", "", ""]
+            row = [
+                r["scenario_name"],
+                f"{r['execution_time']:.2f}s",
+                "[red]FAILED[/red]",
+                "",
+                "",
+                "",
+            ]
             if self.validate:
                 row.append("")
             table.add_row(*row)
 
         console.print(table)
-        console.print(f"Completed: {len(completed)}/{len(results)}, Failed: {len(failed)}")
+        console.print(
+            f"Completed: {len(completed)}/{len(results)}, Failed: {len(failed)}"
+        )
 
     def print_aggregated_summary(self, scenario_runs: dict[str, list[dict]]) -> None:
-        table = Table(title=f"Benchmark results ({self.iterations} iterations)")
+        table = Table(
+            title=f"Benchmark results ({self.sparql_backend}, {self.iterations} iterations)"
+        )
         table.add_column("Scenario")
         table.add_column("Runs", justify="right")
         table.add_column("Exec time", justify="right")
@@ -432,8 +491,9 @@ class KrownBenchmarkRunner:
                     f"{overhead_stats['mean']:.1f}% +/- {overhead_stats['std']:.1f}%",
                 )
             else:
-                table.add_row(scenario_name, f"0/{len(runs)}", "[red]ALL FAILED[/red]",
-                              "", "", "")
+                table.add_row(
+                    scenario_name, f"0/{len(runs)}", "[red]ALL FAILED[/red]", "", "", ""
+                )
 
         console.print(table)
 
@@ -446,14 +506,11 @@ class KrownBenchmarkRunner:
             return self.validator.validate_inversion(
                 original_table=original_table,
                 inverted_table=inverted_table,
-                scenario_name=scenario_name
+                scenario_name=scenario_name,
             )
 
         except Exception as e:
-            return {
-                "validation_passed": False,
-                "error": str(e)
-            }
+            return {"validation_passed": False, "error": str(e)}
 
     def cleanup(self) -> None:
         if self.cleanup_tables:
@@ -467,9 +524,9 @@ class KrownBenchmarkRunner:
 
         try:
             with engine.connect() as conn:
-                result = conn.execute(text(
-                    "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
-                ))
+                result = conn.execute(
+                    text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
+                )
                 tables = [row[0] for row in result]
 
                 for table_name in tables:
@@ -482,13 +539,13 @@ class KrownBenchmarkRunner:
             engine.dispose()
 
     def generate_plots(self, stats_file: Path) -> None:
-        with open(stats_file, 'r') as f:
+        with open(stats_file, "r") as f:
             stats_data = json.load(f)
 
         plot_timing_bar_charts(stats_data, stats_file.parent)
 
     def run_benchmark(self) -> int:
-        console.print("Starting KROWN benchmark")
+        console.print(f"Starting KROWN benchmark ({self.sparql_backend})")
 
         try:
             if self.validate:
@@ -496,7 +553,9 @@ class KrownBenchmarkRunner:
                 self.validator = KrownValidator(conn_string)
 
             if not self.run_krown_data_generation():
-                console.print("[yellow]Data generation failed, continuing with existing data[/yellow]")
+                console.print(
+                    "[yellow]Data generation failed, continuing with existing data[/yellow]"
+                )
 
             scenarios = self.find_krown_scenarios()
             if not scenarios:
@@ -526,14 +585,20 @@ class KrownBenchmarkRunner:
                 if self.validate and self.validator:
                     validation_summary = self.generate_validation_summary(results)
                     if validation_summary:
-                        validation_file = results_file.parent / f"validation_{results_file.name}"
-                        self.validator.save_validation_report(validation_summary, validation_file)
+                        validation_file = (
+                            results_file.parent / f"validation_{results_file.name}"
+                        )
+                        self.validator.save_validation_report(
+                            validation_summary, validation_file
+                        )
                         self.validator.print_summary(validation_summary)
 
                 console.print(f"Results saved to {results_file}")
 
             else:
-                scenario_runs: dict[str, list[dict]] = {scenario.name: [] for scenario in scenarios}
+                scenario_runs: dict[str, list[dict]] = {
+                    scenario.name: [] for scenario in scenarios
+                }
 
                 with Progress(
                     SpinnerColumn(),
@@ -546,13 +611,18 @@ class KrownBenchmarkRunner:
                     iter_task = progress.add_task("Iterations", total=self.iterations)
 
                     for iteration in range(1, self.iterations + 1):
-                        progress.update(iter_task, description=f"Iteration {iteration}/{self.iterations}")
+                        progress.update(
+                            iter_task,
+                            description=f"Iteration {iteration}/{self.iterations}",
+                        )
                         scenario_task = progress.add_task(
-                            f"  Scenarios", total=len(scenarios)
+                            "  Scenarios", total=len(scenarios)
                         )
 
                         for scenario_path in scenarios:
-                            progress.update(scenario_task, description=f"  {scenario_path.name}")
+                            progress.update(
+                                scenario_task, description=f"  {scenario_path.name}"
+                            )
                             result = self.execute_krown_scenario(scenario_path)
                             scenario_runs[scenario_path.name].append(result)
                             progress.advance(scenario_task)
@@ -570,8 +640,10 @@ class KrownBenchmarkRunner:
                     self.generate_plots(stats_file)
                     console.print(f"Plots saved to {stats_file.parent}")
                 except Exception:
-                    console.print(f"[yellow]Failed to generate plots. Try manually: "
-                                  f"uv run python -m benchmarks.krown_plots {stats_file}[/yellow]")
+                    console.print(
+                        f"[yellow]Failed to generate plots. Try manually: "
+                        f"uv run python -m benchmarks.krown_plots {stats_file}[/yellow]"
+                    )
 
             console.print("Benchmark completed")
             return 0
@@ -608,47 +680,51 @@ Docker Usage:
   docker compose -f docker-compose.benchmark.yml down -v
 
 Command Line Options (passed to container):
-  docker compose -f docker-compose.benchmark.yml run benchmark --no-virtuoso
-  docker compose -f docker-compose.benchmark.yml run benchmark --iterations 10
+  docker compose -f docker-compose.benchmark.yml run benchmark benchmark --sparql-backend pyoxigraph
+  docker compose -f docker-compose.benchmark.yml run benchmark benchmark --sparql-backend qlever
+  docker compose -f docker-compose.benchmark.yml run benchmark benchmark --iterations 10
 
 Notes:
   # When using --iterations > 1, plots are automatically generated
   # Results and plots are saved to benchmarks/krown/results/
-        """
+        """,
     )
 
     parser.add_argument(
-        "--no-virtuoso",
-        action="store_true",
-        help="Disable Virtuoso and use in-memory RDF processing"
+        "--sparql-backend",
+        choices=["virtuoso", "qlever", "pyoxigraph"],
+        default="virtuoso",
+        help="SPARQL backend for RDF queries (default: virtuoso)",
     )
 
     parser.add_argument(
         "--validate",
         action="store_true",
-        help="Validate that inverted data matches original input data"
+        help="Validate that inverted data matches original input data",
     )
 
     parser.add_argument(
         "--no-cleanup",
         action="store_true",
-        help="Keep database tables after benchmark for manual inspection (default: cleanup all tables)"
+        help="Keep database tables after benchmark for manual inspection (default: cleanup all tables)",
     )
 
     parser.add_argument(
         "--iterations",
         type=int,
         default=1,
-        help="Number of times to run each scenario (default: 1). Use multiple iterations for statistical analysis."
+        help="Number of times to run each scenario (default: 1). Use multiple iterations for statistical analysis.",
     )
 
     args = parser.parse_args()
 
+    sparql_backend = cast(SparqlBackend, args.sparql_backend)
+
     runner = KrownBenchmarkRunner(
-        use_virtuoso=not args.no_virtuoso,
         validate=args.validate,
         cleanup_tables=not args.no_cleanup,
-        iterations=args.iterations
+        iterations=args.iterations,
+        sparql_backend=sparql_backend,
     )
     return runner.run_benchmark()
 

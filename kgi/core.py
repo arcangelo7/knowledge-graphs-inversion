@@ -37,7 +37,13 @@ from kgi.constants import (
     RR_TERM_TYPE,
     RR_TRIPLES_MAP,
 )
-from kgi.endpoints import EndpointFactory, RemoteEndpoint, VirtuosoEndpoint
+from kgi.base import Endpoint
+from kgi.endpoints import (
+    EndpointFactory,
+    QLeverEndpoint,
+    RemoteEndpoint,
+    VirtuosoEndpoint,
+)
 from kgi.exceptions import (
     MappingError,
     NoDataError,
@@ -237,8 +243,9 @@ def reconstruct(
     dest_db_url: str | None = None,
     sparql_endpoint: str | None = None,
     use_virtuoso: bool = False,
+    use_qlever: bool = False,
     virtuoso_container: str = "virtuoso-kgi",
-) -> dict[str, ReconstructedTable]:
+) -> list[ReconstructedTable]:
     logger = get_logger()
     mapping_path = str(mapping)
     rdf_graph_str = str(rdf_graph)
@@ -261,6 +268,7 @@ def reconstruct(
             logger.info(f"Extracted source database URL from mapping: {extracted_url}")
 
     config_file = _build_morph_config(mapping, rdf_graph_str, source_db_url)
+    endpoint: Endpoint | None = None
     try:
         config = load_config_from_argument(config_file)
 
@@ -293,6 +301,11 @@ def reconstruct(
                         rdf_file_to_load=rdf_graph_str,
                         container_name=virtuoso_container,
                     )
+                elif use_qlever:
+                    endpoint = QLeverEndpoint(
+                        sparql_endpoint,
+                        rdf_file_to_load=rdf_graph_str,
+                    )
                 else:
                     endpoint = RemoteEndpoint(
                         sparql_endpoint, rdf_file_to_load=rdf_graph_str
@@ -314,20 +327,19 @@ def reconstruct(
 
         mappings = mappings[mappings["logical_source_type"] != RML_SOURCE]
 
-        results: dict[str, ReconstructedTable] = {}
-        for table_name, source_rules in mappings.groupby("logical_source_value"):
+        results: list[ReconstructedTable] = []
+        for table_name_value, source_rules in mappings.groupby("logical_source_value"):
+            table_name = str(table_name_value)
             source_section = source_rules.iloc[0].get("source_section", "DataSource1")
             template_db_url = dest_db_url if dest_db_url else source_db_url
             template = _generate_template(source_rules, template_db_url)
 
-            source_data, sparql_query = retrieve_data(
+            source_data, _ = retrieve_data(
                 mappings, source_rules, endpoint, decode_columns=True
             )
 
             if source_data is None:
-                results[table_name] = ReconstructedTable(
-                    sql="", sparql_query="", data=pd.DataFrame()
-                )
+                results.append(ReconstructedTable(name=table_name, data=pd.DataFrame()))
                 logger.warning(f"No data generated for {table_name}")
                 continue
 
@@ -338,12 +350,8 @@ def reconstruct(
                     source_data = apply_schema_types(source_data, table_schema)
                     source_data = apply_schema_ordering(source_data, table_schema)
 
-            filled_source = template.fill_data(source_data, table_name)
-            results[table_name] = ReconstructedTable(
-                sql=filled_source,
-                sparql_query=sparql_query or "",
-                data=source_data,
-            )
+            template.fill_data(source_data, table_name)
+            results.append(ReconstructedTable(name=table_name, data=source_data))
 
         for retriever in schema_retrievers.values():
             retriever.dispose()
@@ -353,4 +361,6 @@ def reconstruct(
 
         return results
     finally:
+        if endpoint is not None:
+            endpoint.close()
         os.unlink(config_file)

@@ -16,7 +16,7 @@ start_virtuoso() {
     
     mkdir -p "$VIRTUOSO_DATA_DIR"
     
-    cat > "$VIRTUOSO_DATA_DIR/virtuoso.ini" << 'VEOF'
+    cat > "$VIRTUOSO_DATA_DIR/virtuoso.ini" << VEOF
 [Database]
 DatabaseFile = virtuoso.db
 ErrorLogFile = virtuoso.log
@@ -60,14 +60,14 @@ RdfFreeTextRulesSize = 100
 IndexTreeMaps = 64
 MaxMemPoolSize = 200000000
 MacSpotlight = 0
-MaxQueryMem = 2G
+MaxQueryMem = ${VIRTUOSO_MAX_QUERY_MEM:-16G}
 VectorSize = 1000
 MaxVectorSize = 1000000
 AdjustVectorSize = 0
-ThreadsPerQuery = 4
-AsyncQueueMaxThreads = 10
-NumberOfBuffers = 10000
-MaxDirtyBuffers = 7500
+ThreadsPerQuery = ${VIRTUOSO_THREADS_PER_QUERY:-4}
+AsyncQueueMaxThreads = ${VIRTUOSO_ASYNC_QUEUE_MAX_THREADS:-10}
+NumberOfBuffers = ${VIRTUOSO_NUMBER_OF_BUFFERS:-10000}
+MaxDirtyBuffers = ${VIRTUOSO_MAX_DIRTY_BUFFERS:-7500}
 
 [HTTPServer]
 ServerPort = 8890
@@ -116,7 +116,6 @@ DynamicLocal = 0
 DefaultHost = localhost:8890
 
 [SPARQL]
-ResultSetMaxRows = 10000
 MaxConstructTriples = 10000
 ;MaxQueryCostEstimationTime = 400
 ;MaxQueryExecutionTime = 60
@@ -156,9 +155,36 @@ EOF
 
 shutdown() {
     echo "Shutting down services..."
-    pkill -f virtuoso-t || true
-    pkill -f python || true
+    if command -v pkill >/dev/null 2>&1; then
+        pkill -f virtuoso-t || true
+        pkill -f qlever-server || true
+        pkill -f python || true
+    fi
     exit 0
+}
+
+benchmark_sparql_backend() {
+    local backend="virtuoso"
+    local next_is_backend=0
+
+    for arg in "$@"; do
+        if [ "$next_is_backend" = "1" ]; then
+            backend="$arg"
+            next_is_backend=0
+            continue
+        fi
+
+        case "$arg" in
+            "--sparql-backend")
+                next_is_backend=1
+                ;;
+            "--sparql-backend="*)
+                backend="${arg#*=}"
+                ;;
+        esac
+    done
+
+    printf '%s\n' "$backend"
 }
 
 trap shutdown SIGTERM SIGINT
@@ -169,7 +195,9 @@ case "${1:-app}" in
         wait
         ;;
     "benchmark")
-        start_virtuoso
+        if [ "$(benchmark_sparql_backend "${@:2}")" = "virtuoso" ]; then
+            start_virtuoso
+        fi
         echo "Starting benchmark..."
         cd /app
         exec uv run python benchmarks/run_krown_benchmark.py "${@:2}"

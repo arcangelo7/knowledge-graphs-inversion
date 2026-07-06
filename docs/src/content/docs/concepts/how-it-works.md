@@ -157,4 +157,4 @@ R2RML allows assigning generated triples to named graphs through `rr:graphMap`, 
 
 ## Output generation
 
-Once the SPARQL query returns results, the algorithm passes the resulting data through two optional refinement steps: schema type application (casting columns to their original SQL types when a database schema is available) and column ordering (matching the original column sequence). The data is then written out as SQL statements (CREATE TABLE + INSERT) that recreate the original tables.
+Once the SPARQL query returns results, the algorithm passes the resulting data through two optional refinement steps: schema type application (casting columns to their original SQL types when a database schema is available) and column ordering (matching the original column sequence). The data is then materialized in the target database when a destination URL is provided, and the returned result contains the reconstructed rows.

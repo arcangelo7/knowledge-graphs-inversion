@@ -19,7 +19,7 @@ git submodule update --init --recursive
 
 ## Running benchmarks
 
-Benchmarks run through a dedicated Docker Compose file that spins up PostgreSQL and (optionally) a [Virtuoso](https://virtuoso.openlinksw.com/) SPARQL endpoint:
+Benchmarks run through a dedicated Docker Compose file that spins up PostgreSQL and a selectable SPARQL backend. The default backend is [Virtuoso](https://virtuoso.openlinksw.com/):
 
 ```bash
 docker compose -f docker-compose.benchmark.yml up
@@ -33,12 +33,23 @@ For statistically meaningful results, run multiple iterations. The framework com
 docker compose -f docker-compose.benchmark.yml run benchmark benchmark --iterations 10
 ```
 
-### Without Virtuoso
+### QLever backend
 
-To skip the Virtuoso endpoint and query RDF files directly in memory with [pyoxigraph](https://pyoxigraph.readthedocs.io/):
+To compare Virtuoso with [QLever](https://docs.qlever.dev/), run the same KROWN scenarios with the QLever backend:
 
 ```bash
-docker compose -f docker-compose.benchmark.yml run benchmark benchmark --no-virtuoso
+docker compose -f docker-compose.benchmark.yml run benchmark benchmark --sparql-backend qlever --iterations 10
+```
+
+QLever builds a temporary index from each generated RDF file and starts a local endpoint for that scenario.
+The Docker benchmark gives both engines an explicit high-memory profile by default. Tune `VIRTUOSO_MAX_QUERY_MEM`, `QLEVER_MEMORY_FOR_QUERIES`, `QLEVER_CACHE_MAX_SIZE`, and `QLEVER_NUM_THREADS` in `docker-compose.benchmark.yml` for local experiments.
+
+### pyoxigraph backend
+
+To query RDF files directly in memory with [pyoxigraph](https://pyoxigraph.readthedocs.io/):
+
+```bash
+docker compose -f docker-compose.benchmark.yml run benchmark benchmark --sparql-backend pyoxigraph
 ```
 
 ### Stopping services

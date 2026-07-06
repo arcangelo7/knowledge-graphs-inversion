@@ -9,11 +9,11 @@ from __future__ import annotations
 import pandas as pd
 import sqlalchemy
 from sqlalchemy import Column, MetaData, Table
-from sqlalchemy.dialects import postgresql
-from sqlalchemy.schema import CreateTable
 from sqlalchemy.sql.sqltypes import Boolean, Date, DateTime, Integer, Numeric, String
 
 from kgi.base import Template
+
+_INSERT_CHUNK_SIZE = 10_000
 
 
 class RDBTemplate(Template):
@@ -30,8 +30,8 @@ class RDBTemplate(Template):
         """RDB template structure is determined by database schema."""
         return "RDB template: structure will be determined by the database schema"
 
-    def fill_data(self, data: pd.DataFrame, source_name: str) -> str:
-        """Fill template with data and create SQL statements."""
+    def fill_data(self, data: pd.DataFrame, source_name: str) -> None:
+        """Materialize reconstructed data in the target database."""
         table_name = source_name
         engine = self.create_engine()
         table = self._get_sqla_table(data, table_name)
@@ -44,15 +44,14 @@ class RDBTemplate(Template):
                     lambda x: str(x) if x is not None else None
                 )
 
-        insert_stmt = postgresql.insert(table).values(data.to_dict(orient="records"))
-
         if data.empty:
             # Create only table structure if DataFrame is empty
             with engine.begin() as connection:
                 inspector = sqlalchemy.inspect(engine)
                 if not inspector.has_table(table_name):
                     table.create(connection)
-            return str(CreateTable(table).compile(engine))
+            engine.dispose()
+            return
 
         if not self._is_sql_query(table_name):
             with engine.begin() as connection:
@@ -96,20 +95,11 @@ class RDBTemplate(Template):
                     # Create table if it doesn't exist
                     table.create(connection)
 
-                # Generate INSERT statements
-                connection.execute(insert_stmt)
-
-        # Generate full query for logging purposes
-        create_table_query = str(CreateTable(table).compile(engine))
-        insert_query = str(
-            insert_stmt.compile(
-                dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
-            )
-        )
-        full_query = f"{create_table_query};{insert_query};"
+                for start in range(0, len(data), _INSERT_CHUNK_SIZE):
+                    chunk = data.iloc[start : start + _INSERT_CHUNK_SIZE]
+                    connection.execute(table.insert(), chunk.to_dict(orient="records"))
 
         engine.dispose()
-        return full_query
 
     def _is_sql_query(self, table_name: str) -> bool:
         """Check if table_name contains SQL keywords."""

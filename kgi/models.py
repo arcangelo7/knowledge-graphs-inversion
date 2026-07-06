@@ -9,6 +9,5 @@ import pandas as pd
 
 @dataclass
 class ReconstructedTable:
-    sql: str
-    sparql_query: str
+    name: str
     data: pd.DataFrame

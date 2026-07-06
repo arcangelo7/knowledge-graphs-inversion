@@ -20,17 +20,13 @@ result = kgi.reconstruct(
 )
 ```
 
-The function returns a dictionary keyed by source table name. Each value is a `ReconstructedTable` with three attributes:
+The function returns a list of `ReconstructedTable` objects. Each object has a `name` attribute with the source table name and a `data` attribute containing a pandas DataFrame with the reconstructed rows.
 
-- `sparql_query`: the SPARQL query that was executed against the RDF graph to extract the data.
-- `sql`: the SQL statements (CREATE TABLE + INSERT) that reproduce the original table.
-- `data`: a pandas DataFrame with the reconstructed rows.
+The rows are materialized automatically when `dest_db_url` is provided.
 
 ```python
-for table_name, table in result.items():
-    print(f"--- {table_name} ---")
-    print(table.sparql_query)
-    print(table.sql)
+for table in result:
+    print(f"--- {table.name} ---")
     print(table.data)
 ```
 

@@ -5,13 +5,23 @@
 FROM python:3.12-slim
 
 RUN apt-get update && apt-get install -y \
+    ca-certificates \
     git \
+    gpg \
     wget \
     postgresql-client \
     openjdk-21-jre-headless \
     libncurses6 \
     libtinfo6 \
     && rm -rf /var/lib/apt/lists/*
+
+RUN wget -qO - https://packages.qlever.dev/pub.asc | \
+    gpg --dearmor -o /usr/share/keyrings/qlever.gpg && \
+    . /etc/os-release && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/qlever.gpg] https://packages.qlever.dev/ ${UBUNTU_CODENAME:-$VERSION_CODENAME} main" > /etc/apt/sources.list.d/qlever.list && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends curl qlever-bin qlever-control && \
+    rm -rf /var/lib/apt/lists/*
 
 RUN cd /tmp && \
     wget https://github.com/openlink/virtuoso-opensource/releases/download/v7.2.15/virtuoso-opensource.x86_64-generic_glibc25-linux-gnu.tar.gz && \
@@ -44,7 +54,7 @@ RUN git submodule update --init --recursive || true
 COPY entrypoint.sh /scripts/entrypoint.sh
 RUN chmod +x /scripts/entrypoint.sh
 
-EXPOSE 5000 8890 1111
+EXPOSE 5000 8890 1111 7019
 
 ENV EMBEDDED_VIRTUOSO=true
 ENV VIRTUOSO_DATA_DIR=/opt/virtuoso-data

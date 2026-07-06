@@ -7,7 +7,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13-blue.svg)](https://www.python.org/)
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
 
-Given an RDF graph and the [R2RML](https://www.w3.org/TR/r2rml/) or [RML](https://kg-construct.github.io/rml-core/spec/docs/) mapping that produced it, this tool reconstructs the original relational data. It parses the mapping document, generates SPARQL queries that reverse each mapping rule, and writes the results back as SQL statements.
+Given an RDF graph and the [R2RML](https://www.w3.org/TR/r2rml/) or [RML](https://kg-construct.github.io/rml-core/spec/docs/) mapping that produced it, this tool reconstructs the original relational data. It parses the mapping document, generates SPARQL queries that reverse each mapping rule, and materializes the reconstructed rows in a relational database when a destination URL is provided.
 
 Full documentation at [arcangelo7.github.io/knowledge-graphs-inversion](https://arcangelo7.github.io/knowledge-graphs-inversion/).
 
@@ -34,15 +34,15 @@ result = kgi.reconstruct(
 )
 ```
 
-The result is a dictionary mapping each table name to a `ReconstructedTable` with three attributes: `sql` (the CREATE TABLE and INSERT statements), `sparql_query` (the SPARQL query used to extract the data), and `data` (a pandas DataFrame with the reconstructed rows).
+The result is a list of `ReconstructedTable` objects. Each object has a `name` attribute with the source table name and a `data` attribute containing a pandas DataFrame with the reconstructed rows. The rows are materialized automatically when `dest_db_url` is provided.
 
 ```python
-for table_name, table in result.items():
-    print(table.sql)
+for table in result:
+    print(table.name)
     print(table.data)
 ```
 
-`source_db_url` is optional and used to read the original column types and ordering. When using RML mappings with [D2RQ](http://d2rq.org/) database definitions, the connection info is extracted automatically from the mapping itself, no need to pass `source_db_url` at all. `dest_db_url` is optional and sets the target database for the generated SQL.
+`source_db_url` is optional and used to read the original column types and ordering. When using RML mappings with [D2RQ](http://d2rq.org/) database definitions, the connection info is extracted automatically from the mapping itself, no need to pass `source_db_url` at all. `dest_db_url` is optional and sets the target database for materialized rows.
 
 ## Testing
 
