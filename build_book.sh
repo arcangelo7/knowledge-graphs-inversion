@@ -6,5 +6,7 @@
 
 set -euo pipefail
 
-uv run jupyter-book clean docs
-uv run jupyter-book build docs
+cd "$(dirname "$0")/docs"
+
+uv run jupyter-book clean --html --site --logs --temp -y
+uv run jupyter-book build --html --strict

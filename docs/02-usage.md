@@ -101,5 +101,5 @@ The exceptions are:
 |---|---|
 | `UnsupportedMappingError` | The mapping uses SQL queries as logical tables, which the algorithm does not handle. |
 | `MappingError` | The mapping document is syntactically invalid or violates the R2RML specification. |
-| `NonInvertibleError` | The mapping is valid but the transformation is not reversible. See [limitations](limitations). |
+| `NonInvertibleError` | The mapping is valid but the transformation is not reversible. See [limitations](04-limitations.md). |
 | `NoDataError` | The SPARQL queries returned no results, or the RDF input file does not exist. |
