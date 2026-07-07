@@ -8,7 +8,6 @@ import os
 import pathlib
 import re
 import tempfile
-from typing import Literal as TypeLiteral
 from urllib.parse import quote_plus
 
 import pandas as pd
@@ -39,10 +38,7 @@ from kgi.constants import (
     RR_TRIPLES_MAP,
 )
 from kgi.base import Endpoint
-from kgi.endpoints import (
-    EndpointFactory,
-    QLeverEndpoint,
-)
+from kgi.endpoints import EndpointFactory
 from kgi.exceptions import (
     MappingError,
     NoDataError,
@@ -62,10 +58,6 @@ from kgi.utils import (
     normalize_sql_identifier,
     signature_value as _signature_value,
 )
-
-
-SparqlBackend = TypeLiteral["pyoxigraph", "qlever"]
-DEFAULT_QLEVER_ENDPOINT = "http://localhost:7019"
 
 
 def get_logger() -> logging.Logger:
@@ -310,8 +302,6 @@ def reconstruct(
     rdf_graph: str | pathlib.Path,
     source_db_url: str | None = None,
     dest_db_url: str | None = None,
-    sparql_endpoint: str | None = None,
-    backend: SparqlBackend = "pyoxigraph",
 ) -> list[ReconstructedTable]:
     logger = get_logger()
     mapping_path = str(mapping)
@@ -368,17 +358,8 @@ def reconstruct(
         if source_db_url:
             schema_retrievers["DataSource1"] = DatabaseSchemaRetriever(source_db_url)
 
-        if backend not in ("pyoxigraph", "qlever"):
-            raise ValueError(f"Unsupported SPARQL backend: {backend}")
-
         try:
-            if backend == "pyoxigraph":
-                endpoint = EndpointFactory.create_from_url(rdf_graph_str)
-            else:
-                endpoint = QLeverEndpoint(
-                    sparql_endpoint or DEFAULT_QLEVER_ENDPOINT,
-                    rdf_file_to_load=rdf_graph_str,
-                )
+            endpoint = EndpointFactory.create_from_url(rdf_graph_str)
         except (FileNotFoundError, OSError) as e:
             raise NoDataError(
                 "No RDF input file found, likely due to mapping errors"

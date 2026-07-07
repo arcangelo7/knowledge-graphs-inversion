@@ -9,7 +9,6 @@ set -e
 shutdown() {
     echo "Shutting down services..."
     if command -v pkill >/dev/null 2>&1; then
-        pkill -f qlever-server || true
         pkill -f python || true
     fi
     exit 0

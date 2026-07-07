@@ -16,10 +16,10 @@ Initialize the KROWN submodule once:
 git submodule update --init --recursive
 ```
 
-Run the benchmark with QLever and validation:
+Run the benchmark with validation:
 
 ```bash
-docker compose -f docker-compose.benchmark.yml run --rm benchmark benchmark --sparql-backend qlever --iterations 10 --validate
+docker compose -f docker-compose.benchmark.yml run --rm benchmark benchmark --iterations 10 --validate
 ```
 
 Stop benchmark services:
@@ -28,10 +28,10 @@ Stop benchmark services:
 docker compose -f docker-compose.benchmark.yml down --remove-orphans
 ```
 
-## QLever run with ten iterations (2026-07-07)
+## PyOxyGraph run with ten iterations (2026-07-07)
 
 | Scenario | Runs | Rows | Execution time | RMLMapper | Inversion | Inversion overhead | Outcome |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| `mappings_2_3` | 10/10 | 1,000 | 2.30s +/- 0.02s | 1.17s +/- 0.02s | 0.91s +/- 0.05s | 77.4% +/- 5.0% | PARTIAL (expected) |
-| `mappings_3_5` | 10/10 | 10,000 | 5.05s +/- 0.08s | 2.53s +/- 0.04s | 1.81s +/- 0.05s | 71.4% +/- 2.2% | PARTIAL (expected) |
-| `mappings_5_8` | 10/10 | 50,000 | 35.13s +/- 1.03s | 22.27s +/- 1.14s | 7.37s +/- 0.15s | 33.2% +/- 1.6% | PARTIAL (expected) |
+| `mappings_2_3` | 10/10 | 1,000 | 2.22s +/- 0.28s | 1.18s +/- 0.03s | 0.83s +/- 0.31s | 71.1% +/- 27.6% | PARTIAL (expected) |
+| `mappings_3_5` | 10/10 | 10,000 | 4.49s +/- 0.39s | 2.58s +/- 0.09s | 1.01s +/- 0.06s | 39.1% +/- 2.0% | PARTIAL (expected) |
+| `mappings_5_8` | 10/10 | 50,000 | 33.86s +/- 1.35s | 21.91s +/- 1.07s | 6.30s +/- 0.26s | 28.8% +/- 1.9% | PARTIAL (expected) |

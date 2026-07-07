@@ -13,7 +13,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal
 
 import pandas as pd
 from rdflib import Graph, Namespace
@@ -46,9 +46,9 @@ from benchmarks.krown_plots import plot_timing_bar_charts  # noqa: E402
 
 console = Console()
 
-SparqlBackend = Literal["qlever", "pyoxigraph"]
 ExpectedOutcome = Literal["partial"]
 R2RML = Namespace("http://www.w3.org/ns/r2rml#")
+SPARQL_ENGINE = "pyoxigraph"
 
 
 def expected_outcome(scenario_name: str) -> ExpectedOutcome:
@@ -100,7 +100,6 @@ class KrownBenchmarkRunner:
         validate: bool = False,
         cleanup_tables: bool = True,
         iterations: int = 1,
-        sparql_backend: SparqlBackend = "pyoxigraph",
     ):
         self.project_root = Path(__file__).parent.parent
         self.krown_dir = self.project_root / "KROWN"
@@ -109,7 +108,6 @@ class KrownBenchmarkRunner:
             Path(__file__).parent / "krown" / "config" / "kg-inversion-benchmark.json"
         )
         self.scenarios_root = Path(__file__).parent / "krown" / "scenarios"
-        self.sparql_backend: SparqlBackend = sparql_backend
         self.validate = validate
         self.cleanup_tables = cleanup_tables
         self.iterations = iterations
@@ -121,13 +119,6 @@ class KrownBenchmarkRunner:
             "user": os.environ["BENCHMARK_DB_USER"],
             "password": os.environ["BENCHMARK_DB_PASSWORD"],
             "database": os.environ["BENCHMARK_DB_NAME"],
-        }
-
-        self.qlever_config = {
-            "host": "localhost",
-            "port": (
-                os.environ["QLEVER_PORT"] if "QLEVER_PORT" in os.environ else "7019"
-            ),
         }
 
     def get_connection_string(self) -> str:
@@ -145,11 +136,6 @@ class KrownBenchmarkRunner:
         if not self.scenarios_root.exists():
             return []
         return sorted(p.parent for p in self.scenarios_root.rglob("metadata.json"))
-
-    def sparql_load_method(self) -> str:
-        if self.sparql_backend == "qlever":
-            return "qlever_index"
-        return "local_file_parse"
 
     @staticmethod
     def mapping_component_counts(mapping_file: Path) -> tuple[int, int]:
@@ -224,8 +210,6 @@ class KrownBenchmarkRunner:
             return {
                 "status": "completed",
                 "scenario_name": scenario_name,
-                "sparql_backend": self.sparql_backend,
-                "sparql_load_method": self.sparql_load_method(),
                 "execution_time": total_time,
                 "timing_breakdown": {
                     "rmlmapper_time": rmlmapper_time,
@@ -249,8 +233,6 @@ class KrownBenchmarkRunner:
                 "status": "failed",
                 "failure_kind": "non_invertible",
                 "scenario_name": scenario_name,
-                "sparql_backend": self.sparql_backend,
-                "sparql_load_method": self.sparql_load_method(),
                 "execution_time": end_time - start_time,
                 "error": str(e),
             }
@@ -260,8 +242,6 @@ class KrownBenchmarkRunner:
                 "status": "failed",
                 "failure_kind": "runtime_error",
                 "scenario_name": scenario_name,
-                "sparql_backend": self.sparql_backend,
-                "sparql_load_method": self.sparql_load_method(),
                 "execution_time": end_time - start_time,
                 "error": str(e),
             }
@@ -356,12 +336,6 @@ class KrownBenchmarkRunner:
         self.clear_loaded_tables(metadata)
         start_time = time.time()
 
-        endpoint_url = None
-        if self.sparql_backend == "qlever":
-            endpoint_url = (
-                f"http://{self.qlever_config['host']}:{self.qlever_config['port']}"
-            )
-
         mapping_file = shared_dir / "mapping.r2rml.ttl"
         rdf_file = shared_dir / "out.nt"
         conn_string = self.get_connection_string()
@@ -374,8 +348,6 @@ class KrownBenchmarkRunner:
                 mapping=str(mapping_file),
                 rdf_graph=str(rdf_file),
                 source_db_url=source_db_url,
-                sparql_endpoint=endpoint_url,
-                backend=self.sparql_backend,
             )
             return inversion_results, time.time() - start_time
         finally:
@@ -417,8 +389,7 @@ class KrownBenchmarkRunner:
             "benchmark_type": "KROWN",
             "framework": "Knowledge Graph Inversion",
             "environment": "Docker",
-            "sparql_backend": self.sparql_backend,
-            "sparql_load_method": self.sparql_load_method(),
+            "sparql_engine": SPARQL_ENGINE,
             "iterations": self.iterations,
             "total_scenarios": len(results),
             "completed_scenarios": len(
@@ -450,8 +421,7 @@ class KrownBenchmarkRunner:
             "benchmark_type": "KROWN",
             "framework": "Knowledge Graph Inversion",
             "environment": "Docker",
-            "sparql_backend": self.sparql_backend,
-            "sparql_load_method": self.sparql_load_method(),
+            "sparql_engine": SPARQL_ENGINE,
             "iterations": self.iterations,
             "scenarios": {name: runs for name, runs in scenario_runs.items()},
         }
@@ -465,8 +435,7 @@ class KrownBenchmarkRunner:
             "benchmark_type": "KROWN",
             "framework": "Knowledge Graph Inversion",
             "environment": "Docker",
-            "sparql_backend": self.sparql_backend,
-            "sparql_load_method": self.sparql_load_method(),
+            "sparql_engine": SPARQL_ENGINE,
             "iterations": self.iterations,
             "scenarios": {},
         }
@@ -521,7 +490,7 @@ class KrownBenchmarkRunner:
         completed = [r for r in results if r["status"] == "completed"]
         failed = [r for r in results if r["status"] == "failed"]
 
-        table = Table(title=f"Benchmark results ({self.sparql_backend})")
+        table = Table(title=f"Benchmark results ({SPARQL_ENGINE})")
         table.add_column("Scenario")
         table.add_column("Time", justify="right")
         table.add_column("RMLMapper", justify="right")
@@ -570,7 +539,7 @@ class KrownBenchmarkRunner:
 
     def print_aggregated_summary(self, scenario_runs: dict[str, list[dict]]) -> None:
         table = Table(
-            title=f"Benchmark results ({self.sparql_backend}, {self.iterations} iterations)"
+            title=f"Benchmark results ({SPARQL_ENGINE}, {self.iterations} iterations)"
         )
         table.add_column("Scenario")
         table.add_column("Runs", justify="right")
@@ -658,7 +627,7 @@ class KrownBenchmarkRunner:
         plot_timing_bar_charts(stats_data, stats_file.parent)
 
     def run_benchmark(self) -> int:
-        console.print(f"Starting KROWN benchmark ({self.sparql_backend})")
+        console.print(f"Starting KROWN benchmark ({SPARQL_ENGINE})")
 
         try:
             if self.validate:
@@ -807,21 +776,13 @@ Docker Usage:
   docker compose -f docker-compose.benchmark.yml down -v --remove-orphans
 
 Command Line Options (passed to container):
-  docker compose -f docker-compose.benchmark.yml run --rm benchmark benchmark --sparql-backend pyoxigraph
-  docker compose -f docker-compose.benchmark.yml run --rm benchmark benchmark --sparql-backend qlever
+  docker compose -f docker-compose.benchmark.yml run --rm benchmark benchmark
   docker compose -f docker-compose.benchmark.yml run --rm benchmark benchmark --iterations 10
 
 Notes:
   # When using --iterations > 1, plots are automatically generated
   # Results and plots are saved to benchmarks/krown/results/
         """,
-    )
-
-    parser.add_argument(
-        "--sparql-backend",
-        choices=["qlever", "pyoxigraph"],
-        default="pyoxigraph",
-        help="SPARQL backend for RDF queries (default: pyoxigraph)",
     )
 
     parser.add_argument(
@@ -845,13 +806,10 @@ Notes:
 
     args = parser.parse_args()
 
-    sparql_backend = cast(SparqlBackend, args.sparql_backend)
-
     runner = KrownBenchmarkRunner(
         validate=args.validate,
         cleanup_tables=not args.no_cleanup,
         iterations=args.iterations,
-        sparql_backend=sparql_backend,
     )
     return runner.run_benchmark()
 

@@ -99,7 +99,7 @@ When a term map uses `rr:column` (or a template with a single placeholder and no
 
 ### Performance improvements
 
-Replaced SPARQLWrapper with sparqlite (https://opencitations.github.io/sparqlite/architecture/benchmarks/) and rdflib with pyoxigraph for RDF parsing and SPARQL queries on local store. pyoxigraph enforces RFC 3986 compliance when constructing `NamedNode` instances, while rdflib's `URIRef` silently accepted malformed IRIs without any validation.
+Replaced SPARQLWrapper and rdflib with pyoxigraph for RDF parsing and SPARQL queries on the local store. pyoxigraph enforces RFC 3986 compliance when constructing `NamedNode` instances, while rdflib's `URIRef` silently accepted malformed IRIs without any validation.
 
 ## Test results (2026-03-22)
 

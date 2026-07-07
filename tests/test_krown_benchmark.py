@@ -49,7 +49,7 @@ def test_loader_creates_primary_key_for_source_table(tmp_path) -> None:
 
 def test_runner_discovers_scenario_dirs_with_metadata(monkeypatch, tmp_path) -> None:
     _set_benchmark_env(monkeypatch)
-    runner = KrownBenchmarkRunner(sparql_backend="pyoxigraph")
+    runner = KrownBenchmarkRunner()
     runner.scenarios_root = tmp_path
     scenario_root = tmp_path / "RMLMapper" / "postgresql"
 
@@ -65,19 +65,11 @@ def test_runner_discovers_scenario_dirs_with_metadata(monkeypatch, tmp_path) -> 
     ]
 
 
-def test_runner_defaults_to_pyoxigraph(monkeypatch) -> None:
+def test_runner_initializes(monkeypatch) -> None:
     _set_benchmark_env(monkeypatch)
     runner = KrownBenchmarkRunner()
 
-    assert runner.sparql_backend == "pyoxigraph"
-    assert runner.sparql_load_method() == "local_file_parse"
-
-
-def test_runner_uses_qlever_load_method(monkeypatch) -> None:
-    _set_benchmark_env(monkeypatch)
-    runner = KrownBenchmarkRunner(sparql_backend="qlever")
-
-    assert runner.sparql_load_method() == "qlever_index"
+    assert runner.iterations == 1
 
 
 def test_expected_outcome_by_scenario_family() -> None:
@@ -96,7 +88,7 @@ def test_expected_outcome_by_scenario_family() -> None:
 
 def test_outcome_matches_expectation_without_validation(monkeypatch) -> None:
     _set_benchmark_env(monkeypatch)
-    runner = KrownBenchmarkRunner(sparql_backend="pyoxigraph")
+    runner = KrownBenchmarkRunner()
 
     completed_partial = {"scenario_name": "mappings_2_3", "status": "completed"}
     failed_partial = {
@@ -117,7 +109,7 @@ def test_outcome_matches_expectation_without_validation(monkeypatch) -> None:
 
 def test_outcome_matches_expectation_with_validation(monkeypatch) -> None:
     _set_benchmark_env(monkeypatch)
-    runner = KrownBenchmarkRunner(validate=True, sparql_backend="pyoxigraph")
+    runner = KrownBenchmarkRunner(validate=True)
 
     partial_with_id_loss = {
         "scenario_name": "mappings_2_3",

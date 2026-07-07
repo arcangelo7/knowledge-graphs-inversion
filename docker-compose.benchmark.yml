@@ -35,14 +35,6 @@ services:
       - BENCHMARK_DB_USER=r2rml
       - BENCHMARK_DB_PASSWORD=r2rml
       - BENCHMARK_DB_NAME=r2rml
-      - QLEVER_PORT=7019
-      - QLEVER_MEMORY_FOR_QUERIES=16G
-      - QLEVER_CACHE_MAX_SIZE=4G
-      - QLEVER_CACHE_MAX_SIZE_SINGLE_ENTRY=2G
-      - QLEVER_NUM_THREADS=4
-      - QLEVER_QUERY_TIMEOUT=120s
-      - QLEVER_INDEX_STXXL_MEMORY=512M
-      - QLEVER_PARSER_BUFFER_SIZE=64M
     depends_on:
       benchmark_postgresql:
         condition: service_healthy
