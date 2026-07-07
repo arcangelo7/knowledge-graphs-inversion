@@ -163,30 +163,6 @@ shutdown() {
     exit 0
 }
 
-benchmark_sparql_backend() {
-    local backend="virtuoso"
-    local next_is_backend=0
-
-    for arg in "$@"; do
-        if [ "$next_is_backend" = "1" ]; then
-            backend="$arg"
-            next_is_backend=0
-            continue
-        fi
-
-        case "$arg" in
-            "--sparql-backend")
-                next_is_backend=1
-                ;;
-            "--sparql-backend="*)
-                backend="${arg#*=}"
-                ;;
-        esac
-    done
-
-    printf '%s\n' "$backend"
-}
-
 trap shutdown SIGTERM SIGINT
 
 case "${1:-app}" in
@@ -195,9 +171,6 @@ case "${1:-app}" in
         wait
         ;;
     "benchmark")
-        if [ "$(benchmark_sparql_backend "${@:2}")" = "virtuoso" ]; then
-            start_virtuoso
-        fi
         echo "Starting benchmark..."
         cd /app
         exec uv run python benchmarks/run_krown_benchmark.py "${@:2}"

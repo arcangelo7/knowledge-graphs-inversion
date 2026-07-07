@@ -64,6 +64,7 @@ keep_trailing_newline = true
 [dependency-groups]
 dev = [
     "genbadge[coverage]>=1.1.3",
+    "jsonschema>=4.26.0",
     "matplotlib>=3.10.8",
     "numpy>=2.3.0",
     "pyright>=1.1.408",
@@ -76,6 +77,29 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.pyright]
+include = [
+    "app.py",
+    "benchmarks",
+    "database_connection.py",
+    "kgi",
+    "rmlmapper.py",
+    "test_suites.py",
+    "tests",
+]
+
+[tool.ruff]
+include = [
+    "app.py",
+    "benchmarks/**/*.py",
+    "database_connection.py",
+    "kgi/**/*.py",
+    "pyproject.toml",
+    "rmlmapper.py",
+    "test_suites.py",
+    "tests/**/*.py",
+]
 
 [tool.coverage.run]
 source = ["kgi"]

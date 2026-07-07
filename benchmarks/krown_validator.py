@@ -14,7 +14,6 @@ console = Console()
 
 
 class KrownValidator:
-
     def __init__(self, connection_string: str):
         self.connection_string = connection_string
         self.engine: Engine = create_engine(connection_string)
@@ -27,16 +26,19 @@ class KrownValidator:
         self,
         original_table: str,
         inverted_table: str,
-        scenario_name: str
+        scenario_name: str,
+        expected_lost_columns: list[str] | None = None,
     ) -> dict:
+        expected_lost = set(expected_lost_columns or [])
         result: dict = {
             "scenario": scenario_name,
             "original_table": original_table,
             "inverted_table": inverted_table,
             "validation_passed": False,
+            "lost_columns": [],
             "errors": [],
             "warnings": [],
-            "metrics": {}
+            "metrics": {},
         }
 
         try:
@@ -59,28 +61,42 @@ class KrownValidator:
 
             missing_cols = original_cols - inverted_cols
             extra_cols = inverted_cols - original_cols
+            unexpected_missing = missing_cols - expected_lost
+            result["lost_columns"] = sorted(missing_cols)
 
-            if missing_cols:
-                result["errors"].append(f"Missing columns in inverted table: {missing_cols}")
+            if unexpected_missing:
+                result["errors"].append(
+                    f"Missing columns in inverted table: {unexpected_missing}"
+                )
 
             if extra_cols:
-                result["errors"].append(f"Extra columns in inverted table: {extra_cols}")
+                result["errors"].append(
+                    f"Extra columns in inverted table: {extra_cols}"
+                )
 
-            if not missing_cols and not extra_cols:
-                inverted_df = inverted_df[original_df.columns]
+            if not unexpected_missing and not extra_cols:
+                comparison_columns = [
+                    col for col in original_df.columns if col not in missing_cols
+                ]
+                original_df = original_df[comparison_columns]
+                inverted_df = inverted_df[comparison_columns]
 
-                original_sorted = original_df.sort_values(
-                    by=original_df.columns.tolist()
+                original_sorted = original_df.sort_values(  # type: ignore[call-overload]
+                    by=comparison_columns
                 ).reset_index(drop=True)
 
                 inverted_sorted = inverted_df.sort_values(  # type: ignore[call-overload]
-                    by=inverted_df.columns.tolist()
+                    by=comparison_columns
                 ).reset_index(drop=True)
 
                 for col in original_sorted.columns:
                     if pd.api.types.is_numeric_dtype(original_sorted[col]):
-                        original_sorted[col] = pd.to_numeric(original_sorted[col], errors='coerce')
-                        inverted_sorted[col] = pd.to_numeric(inverted_sorted[col], errors='coerce')
+                        original_sorted[col] = pd.to_numeric(
+                            original_sorted[col], errors="coerce"
+                        )
+                        inverted_sorted[col] = pd.to_numeric(
+                            inverted_sorted[col], errors="coerce"
+                        )
 
                 try:
                     pd.testing.assert_frame_equal(
@@ -89,12 +105,14 @@ class KrownValidator:
                         check_dtype=False,
                         check_exact=False,
                         rtol=1e-5,
-                        atol=1e-8
+                        atol=1e-8,
                     )
                     result["validation_passed"] = True
 
                 except AssertionError as e:
-                    differences = self._find_differences(original_sorted, inverted_sorted)
+                    differences = self._find_differences(
+                        original_sorted, inverted_sorted
+                    )
                     result["errors"].append(f"Data mismatch: {str(e)}")
                     result["differences"] = differences
 
@@ -115,28 +133,29 @@ class KrownValidator:
                     continue
 
                 if pd.isna(val1) or pd.isna(val2):
-                    differences.append({
-                        "row": idx,
-                        "column": col,
-                        "original": val1,
-                        "inverted": val2
-                    })
+                    differences.append(
+                        {"row": idx, "column": col, "original": val1, "inverted": val2}
+                    )
                 elif val1 != val2:
                     try:
                         if abs(float(val1) - float(val2)) > 1e-5:
-                            differences.append({
+                            differences.append(
+                                {
+                                    "row": idx,
+                                    "column": col,
+                                    "original": val1,
+                                    "inverted": val2,
+                                }
+                            )
+                    except (TypeError, ValueError):
+                        differences.append(
+                            {
                                 "row": idx,
                                 "column": col,
                                 "original": val1,
-                                "inverted": val2
-                            })
-                    except (TypeError, ValueError):
-                        differences.append({
-                            "row": idx,
-                            "column": col,
-                            "original": val1,
-                            "inverted": val2
-                        })
+                                "inverted": val2,
+                            }
+                        )
 
         return differences[:10]
 
@@ -150,14 +169,14 @@ class KrownValidator:
             return {
                 "scenario": scenario_name,
                 "validation_passed": False,
-                "errors": [f"Original table '{original_table}' not found"]
+                "errors": [f"Original table '{original_table}' not found"],
             }
 
         if inverted_table not in all_tables:
             return {
                 "scenario": scenario_name,
                 "validation_passed": False,
-                "errors": [f"Inverted table '{inverted_table}' not found"]
+                "errors": [f"Inverted table '{inverted_table}' not found"],
             }
 
         return self.validate_inversion(original_table, inverted_table, scenario_name)
@@ -167,7 +186,7 @@ class KrownValidator:
             "total_scenarios": len(scenarios),
             "passed": 0,
             "failed": 0,
-            "scenario_results": []
+            "scenario_results": [],
         }
 
         for scenario in scenarios:
@@ -181,13 +200,14 @@ class KrownValidator:
 
         results["validation_rate"] = (
             results["passed"] / results["total_scenarios"] * 100
-            if results["total_scenarios"] > 0 else 0
+            if results["total_scenarios"] > 0
+            else 0
         )
 
         return results
 
     def save_validation_report(self, results: dict, output_path: Path) -> None:
-        with open(output_path, 'w') as f:
+        with open(output_path, "w") as f:
             json.dump(results, f, indent=2, default=str)
 
     def print_summary(self, results: dict) -> None:
@@ -196,12 +216,12 @@ class KrownValidator:
             f"passed ({results['validation_rate']:.2f}%)"
         )
 
-        if results['failed'] > 0:
+        if results["failed"] > 0:
             console.print("Failed scenarios:")
-            for result in results['scenario_results']:
-                if not result['validation_passed']:
+            for result in results["scenario_results"]:
+                if not result["validation_passed"]:
                     console.print(f"  - {result['scenario']}")
-                    for error in result['errors'][:1]:
+                    for error in result["errors"][:1]:
                         console.print(f"    {error}")
 
     def cleanup_tables(self, keep_tables: list[str] | None = None) -> None:

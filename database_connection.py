@@ -10,7 +10,9 @@ from sqlalchemy.engine import Engine
 def hex_encode_binary_columns(df: pd.DataFrame) -> pd.DataFrame:
     for col in df.columns:
         df[col] = df[col].apply(
-            lambda v: bytes(v).hex().upper() if isinstance(v, (bytes, memoryview)) else v
+            lambda v: (
+                bytes(v).hex().upper() if isinstance(v, (bytes, memoryview)) else v
+            )
         )
     return df
 
@@ -18,10 +20,10 @@ def hex_encode_binary_columns(df: pd.DataFrame) -> pd.DataFrame:
 class DatabaseConnection:
     def __init__(self):
         self._connection_strings = {
-            'postgresql_r2rml': 'postgresql://r2rml:r2rml@postgresql_r2rml:5432/r2rml',
-            'dest_postgresql_r2rml': 'postgresql://r2rml:r2rml@dest_postgresql_r2rml:5432/r2rml',
-            'postgresql_rml': 'postgresql://r2rml:r2rml@postgresql_rml:5432/r2rml',
-            'dest_postgresql_rml': 'postgresql://r2rml:r2rml@dest_postgresql_rml:5432/r2rml',
+            "postgresql_r2rml": "postgresql://r2rml:r2rml@postgresql_r2rml:5432/r2rml",
+            "dest_postgresql_r2rml": "postgresql://r2rml:r2rml@dest_postgresql_r2rml:5432/r2rml",
+            "postgresql_rml": "postgresql://r2rml:r2rml@postgresql_rml:5432/r2rml",
+            "dest_postgresql_rml": "postgresql://r2rml:r2rml@dest_postgresql_rml:5432/r2rml",
         }
 
     def get_connection_string(self, database_system: str) -> str:
@@ -31,8 +33,8 @@ class DatabaseConnection:
         connection_string = self.get_connection_string(database_system)
         engine = create_engine(connection_string)
         try:
-            with open(sql_script_path, 'r') as f:
-                statements = f.read().split(';')
+            with open(sql_script_path, "r") as f:
+                statements = f.read().split(";")
             with engine.begin() as conn:
                 for statement in statements:
                     if statement.strip():
@@ -51,7 +53,9 @@ class DatabaseConnection:
         finally:
             engine.dispose()
 
-    def get_database_content(self, database_system: str) -> dict[str, dict[str, list[str]]]:
+    def get_database_content(
+        self, database_system: str
+    ) -> dict[str, dict[str, list[str]]]:
         connection_string = self.get_connection_string(database_system)
         engine = create_engine(connection_string)
         try:
@@ -66,7 +70,9 @@ class DatabaseConnection:
         finally:
             engine.dispose()
 
-    def _get_table_content(self, engine: Engine, table_name: str) -> dict[str, list[str]] | None:
+    def _get_table_content(
+        self, engine: Engine, table_name: str
+    ) -> dict[str, list[str]] | None:
         with engine.connect() as connection:
             content_query = f'SELECT * FROM "{table_name}";'
             datatype_query = f"""
@@ -81,6 +87,6 @@ class DatabaseConnection:
             content = content.where(pd.notnull(content), None)
             hex_encode_binary_columns(content)
             return {
-                'columns': content.columns.tolist(),
-                'data': content.values.tolist()
+                "columns": content.columns.tolist(),
+                "data": content.values.tolist(),
             }

@@ -14,8 +14,7 @@ from typing import Dict, List, Tuple, Any
 
 
 def calculate_mean_confidence_interval(
-    data: np.ndarray,
-    confidence: float = 0.95
+    data: np.ndarray, confidence: float = 0.95
 ) -> Tuple[float, float, float]:
     """Calculate mean and its confidence interval using t-Student distribution.
 
@@ -105,7 +104,7 @@ def calculate_timing_statistics(values: List[float]) -> Dict[str, Any]:
         "ci_95_lower": ci_lower,
         "ci_95_upper": ci_upper,
         "outliers": outliers,
-        "n": len(data)
+        "n": len(data),
     }
 
 
@@ -122,19 +121,23 @@ def aggregate_scenario_statistics(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
     execution_times = [r["execution_time"] for r in runs]
 
     timing_breakdown = [r["timing_breakdown"] for r in runs]
-    morph_times = [tb["morph_kgc_time"] for tb in timing_breakdown]
+    rmlmapper_times = [tb["rmlmapper_time"] for tb in timing_breakdown]
     inversion_times = [tb["inversion_time"] for tb in timing_breakdown]
-    overhead_percentages = [tb["inversion_overhead_percentage"] for tb in timing_breakdown]
+    overhead_percentages = [
+        tb["inversion_overhead_percentage"] for tb in timing_breakdown
+    ]
 
     # Calculate statistics for each metric
     stats = {
         "execution_time": calculate_timing_statistics(execution_times),
-        "morph_kgc_time": calculate_timing_statistics(morph_times),
+        "rmlmapper_time": calculate_timing_statistics(rmlmapper_times),
         "inversion_time": calculate_timing_statistics(inversion_times),
-        "inversion_overhead_percentage": calculate_timing_statistics(overhead_percentages),
+        "inversion_overhead_percentage": calculate_timing_statistics(
+            overhead_percentages
+        ),
         "n_runs": len(runs),
         "completed_runs": len([r for r in runs if r["status"] == "completed"]),
-        "failed_runs": len([r for r in runs if r["status"] == "failed"])
+        "failed_runs": len([r for r in runs if r["status"] == "failed"]),
     }
 
     # Include metadata from first successful run
@@ -144,7 +147,7 @@ def aggregate_scenario_statistics(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
             "triples_maps_count": first_success["triples_maps_count"],
             "predicate_object_maps_count": first_success["predicate_object_maps_count"],
             "mapping_size_bytes": first_success["mapping_size_bytes"],
-            "data_size_bytes": first_success["data_size_bytes"]
+            "data_size_bytes": first_success["data_size_bytes"],
         }
 
     return stats

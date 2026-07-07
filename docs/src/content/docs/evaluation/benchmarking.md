@@ -4,82 +4,70 @@
 # SPDX-License-Identifier: ISC
 
 title: Benchmarking
-description: Performance evaluation with the KROWN benchmark framework.
+description: Performance evaluation with KROWN Mappings scenarios.
 ---
 
-The project integrates the [KROWN benchmark framework](https://github.com/kg-construct/KROWN) to measure inversion performance across different data scales and mapping complexities. KROWN generates synthetic relational data and mappings, runs the inversion, and collects execution times.
+The project measures inversion performance on scenarios produced by the [KROWN](https://github.com/kg-construct/KROWN) data generator. The runner invokes KROWN's `exgentool`, loads the relational data into PostgreSQL, materializes RDF with RMLMapper, runs the inversion, and collects execution times.
 
 ## Setup
 
-Initialize the submodule:
+The benchmark requires the KROWN submodule:
 
 ```bash
 git submodule update --init --recursive
 ```
 
+## Scenario class
+
+- `mappings_2_3`: 2 TriplesMaps, 3 PredicateObjectMaps, 1K rows.
+- `mappings_3_5`: 3 TriplesMaps, 5 PredicateObjectMaps, 10K rows.
+- `mappings_5_8`: 5 TriplesMaps, 8 PredicateObjectMaps, 50K rows.
+
+In these scenarios, triples map `i` uses subject template `http://ex.com/table/{p_i}`, while all triples maps repeat the same PredicateObjectMaps over `p1..pM`. The source table also contains an `id` column, but the KROWN `Mappings` generator does not reference it in the generated mapping. The expected reconstruction is therefore partial: KGI should recover the mapped property columns and lose only `id`.
+
+The `Mappings` scenarios with `tms >= poms` are excluded because at least one column is used only to build a subject IRI and never appears as an object value. Since those subject-only columns all use the same IRI shape and the same outgoing predicates, the RDF graph does not identify which source column each subject came from.
+
 ## Running benchmarks
 
-Benchmarks run through a dedicated Docker Compose file that spins up PostgreSQL and a selectable SPARQL backend. The default backend is [Virtuoso](https://virtuoso.openlinksw.com/):
+Benchmarks run through a dedicated Docker Compose file that starts PostgreSQL and a selectable SPARQL backend. The default backend is [Virtuoso](https://virtuoso.openlinksw.com/):
 
 ```bash
 docker compose -f docker-compose.benchmark.yml up
 ```
 
-### Multiple iterations
-
-For statistically meaningful results, run multiple iterations. The framework computes mean, median, standard deviation, confidence intervals, and generates box plots:
+For multiple iterations:
 
 ```bash
-docker compose -f docker-compose.benchmark.yml run benchmark benchmark --iterations 10
+docker compose -f docker-compose.benchmark.yml run --rm benchmark benchmark --iterations 10
 ```
 
-### QLever backend
-
-To compare Virtuoso with [QLever](https://docs.qlever.dev/), run the same KROWN scenarios with the QLever backend:
+To compare with [QLever](https://docs.qlever.dev/):
 
 ```bash
-docker compose -f docker-compose.benchmark.yml run benchmark benchmark --sparql-backend qlever --iterations 10
+docker compose -f docker-compose.benchmark.yml run --rm benchmark benchmark --sparql-backend qlever --iterations 10
 ```
 
-QLever builds a temporary index from each generated RDF file and starts a local endpoint for that scenario.
-The Docker benchmark gives both engines an explicit high-memory profile by default. Tune `VIRTUOSO_MAX_QUERY_MEM`, `QLEVER_MEMORY_FOR_QUERIES`, `QLEVER_CACHE_MAX_SIZE`, and `QLEVER_NUM_THREADS` in `docker-compose.benchmark.yml` for local experiments.
+QLever builds a temporary index from each generated RDF file and starts a local endpoint for that scenario. Virtuoso uses a temporary database directory per inversion, bulk-loads the generated RDF file, and removes the directory after the scenario. The benchmark path does not use SPARQL Update to insert or clear RDF data.
 
-### pyoxigraph backend
-
-To query RDF files directly in memory with [pyoxigraph](https://pyoxigraph.readthedocs.io/):
+To stop services:
 
 ```bash
-docker compose -f docker-compose.benchmark.yml run benchmark benchmark --sparql-backend pyoxigraph
-```
-
-### Stopping services
-
-```bash
-docker compose -f docker-compose.benchmark.yml down
+docker compose -f docker-compose.benchmark.yml down --remove-orphans
 ```
 
 ## Results
 
 Benchmark output goes to `benchmarks/krown/results/` and includes:
 
-- Execution times per scenario (JSON)
-- Statistical summaries when running multiple iterations
-- Box plot visualizations (PNG) for time distributions
-- Data and mapping file sizes
-- Counts of triples maps and predicate-object maps per scenario
+- Execution times and outcome classification per scenario.
+- Statistical summaries when running multiple iterations.
+- Box plot visualizations for time distributions.
+- Data and mapping file sizes.
+- Counts of TriplesMaps and PredicateObjectMaps per scenario.
 
-## What gets measured
+Validation expects every completed scenario to lose only the `id` column:
 
-Each benchmark scenario consists of a generated relational database, an R2RML mapping, and the RDF graph produced by the forward transformation. The benchmark measures the time to parse the mapping, generate the SPARQL queries, execute them against the RDF graph, and reconstruct the relational output. The forward transformation time ([Morph-KGC](https://morph-kgc.readthedocs.io/)) is measured separately to isolate the inversion overhead.
-
-Scenarios scale along two axes: the number of rows in the source tables and the complexity of the mapping (number of triples maps and predicate-object maps).
-
-## Latest results
-
-Results from 100 iterations with Virtuoso as the SPARQL endpoint, on three scenarios of increasing complexity. The scenario name indicates the number of triples maps and predicate-object maps per triples map (e.g., 3x2 = 3 triples maps with 2 predicate-object maps each):
-
-| Scenario | Triples | Morph-KGC | Inversion | Total |
-|---|---|---|---|---|
-| 3x2 | 6,000 | 0.89 ± 0.06s | 7.33 ± 3.98s | 8.31 ± 4.02s |
-| 5x3 | 150,000 | 1.22 ± 0.06s | 3.05 ± 0.23s | 4.61 ± 0.27s |
-| 8x5 | 2,000,000 | 5.63 ± 0.71s | 22.68 ± 4.23s | 30.73 ± 4.24s |
+```bash
+docker compose -f docker-compose.benchmark.yml run --rm benchmark benchmark --iterations 10 --validate
+docker compose -f docker-compose.benchmark.yml run --rm benchmark benchmark --sparql-backend qlever --iterations 10 --validate
+```

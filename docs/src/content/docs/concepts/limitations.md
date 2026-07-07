@@ -29,14 +29,18 @@ If a mapping selects only some columns from a table, the unmapped columns have n
 
 When a subject template maps multiple source rows to the same IRI, those rows collapse into a single RDF subject. Duplicate triples merge, and the original row count is lost. For example, a table with two identical rows `(Bob, Smith, 30)` mapped through a template `http://example.com/{fname};{lname}` produces one subject with one set of triples.
 
+## Indistinguishable subject templates
+
+When several triples maps for the same source table use compatible subject templates and emit the same predicate-object patterns, a subject-only column may not be recoverable. For example, if one triples map uses `http://example.com/{p4}` as its subject and no triple elsewhere exposes `p4`, the graph may contain several subjects with the same observable literals and no RDF-level discriminator that identifies which one represents `p4`.
+
 ## NULL values in subject templates
 
 R2RML specifies that if any column referenced by the subject template contains NULL, the entire row generates no triples. Since the row is absent from the RDF graph, there is nothing to reconstruct it from.
 
 ## Concatenated template placeholders
 
-The extraction logic relies on literal separators between placeholders to determine where one value ends and the next begins. Templates like `{FirstName}{LastName}` with no separator between them are ambiguous: given the string `JohnSmith`, there is no way to determine the boundary.
+When a value must be extracted only from a template, the extraction logic relies on literal separators between placeholders to determine where one value ends and the next begins. Templates like `{FirstName}{LastName}` with no separator between them are ambiguous: given the string `JohnSmith`, there is no way to determine the boundary. If those columns are also available through object maps, KGI uses the object values instead of relying on the ambiguous subject template.
 
 ## Blank nodes
 
-R2RML requires templates for blank node generation, so the same string extraction applies. When querying a local RDF file, the algorithm parses it directly and preserves the original blank node identifiers, making template inversion possible. When querying a remote triple store, blank node inversion does not work: triple stores replace blank node identifiers with internal opaque labels during loading.
+R2RML requires templates for blank node generation, so the same string extraction applies when the blank node label still preserves the generated value. When querying a local RDF file, the algorithm parses it directly and can use the original blank node labels. When querying a remote triple store, blank node labels are not stable: stores may replace or encode them internally. If the same columns are already available through object maps, KGI uses those values instead of relying on the blank node label.

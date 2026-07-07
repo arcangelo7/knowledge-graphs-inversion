@@ -23,6 +23,19 @@ from kgi.constants import (
 from kgi.utils import Codex, IdGenerator, Identifier
 
 
+def _same_value_filter(left_var: str, right_var: str) -> str:
+    return (
+        f"FILTER(!BOUND(?{left_var}) || STR(?{left_var}) = STR(?{right_var}) "
+        f"|| ENCODE_FOR_URI(STR(?{left_var})) = STR(?{right_var}) "
+        f"|| STR(?{left_var}) = ENCODE_FOR_URI(STR(?{right_var})))"
+    )
+
+
+def _has_adjacent_template_captures(references_template: str) -> bool:
+    parts = references_template.split("([^/]*)")
+    return any(part == "" for part in parts[1:-1])
+
+
 def extract_from_iri_template(
     template_value: str,
     references_template: str,
@@ -66,6 +79,8 @@ def extract_from_iri_template(
             lines.append(
                 f"BIND(STRAFTER(STR(?{current_slice}), '{current_pre_string}') as ?{target})"
             )
+            if already_bound:
+                lines.append(_same_value_filter(current_reference, target))
         else:
             next_pre_string = current_post_string.split("(", 1)[0]
             next_slice = codex.get_id(
@@ -84,6 +99,8 @@ def extract_from_iri_template(
             lines.append(
                 f"BIND(STRBEFORE(STR(?{next_slice}), '{next_pre_string}') AS ?{target})"
             )
+            if already_bound:
+                lines.append(_same_value_filter(current_reference, target))
             current_slice = next_slice
 
         evaluated_template = current_post_string
@@ -403,14 +420,6 @@ class SubjectTriple(QueryTriple):
         self, id_generator: IdGenerator, codex: Codex, all_mapping_rules: pd.DataFrame
     ) -> str | None:  # pyright: ignore[reportUnusedParameter]
         """Generate SPARQL pattern for subject extraction."""
-        all_already_bound = all(
-            (Identifier.generate_plain_identifier(self.rule, str(ref)) or str(ref))
-            in codex.codex
-            for ref in self.rule["subject_references"]
-        )
-        if all_already_bound:
-            return None
-
         subject_map_type = self.rule["subject_map_type"]
         subject_term_type = self.rule["subject_termtype"]
 
@@ -420,6 +429,19 @@ class SubjectTriple(QueryTriple):
             return None
 
         if subject_map_type == RML_TEMPLATE:
+            all_already_bound = all(
+                (Identifier.generate_plain_identifier(self.rule, str(ref)) or str(ref))
+                in codex.codex
+                for ref in self.rule["subject_references"]
+            )
+            if all_already_bound:
+                if subject_term_type == RML_BLANK_NODE:
+                    return None
+                if _has_adjacent_template_captures(
+                    str(self.rule["subject_references_template"])
+                ):
+                    return None
+
             if subject_term_type == RML_IRI:
                 return self._generate_iri_template(codex, id_generator)
             elif subject_term_type == RML_BLANK_NODE:
@@ -447,10 +469,15 @@ class SubjectTriple(QueryTriple):
         subject_map_value = str(self.rule["subject_map_value"])
         subject_references_template = str(self.rule["subject_references_template"])
         subject_reference = codex.get_id(subject_map_value)
+        normalized_subject_reference = codex.get_id(
+            f"{subject_map_value}_blank_node_label"
+        )
 
-        lines = []
+        lines = [
+            f"BIND(REPLACE(REPLACE(STR(?{subject_reference}), '^urn:bnode:', ''), '^_:', '') AS ?{normalized_subject_reference})"
+        ]
         evaluated_template = subject_references_template
-        current_slice_reference = subject_reference
+        current_slice_reference = normalized_subject_reference
 
         for reference in self.rule["subject_references"]:
             current_pre_string = evaluated_template.split("(", 1)[0]
@@ -473,10 +500,18 @@ class SubjectTriple(QueryTriple):
 
             unescaped_current_pre_string = current_pre_string.replace("\\", "")
             if current_post_string == "":
-                if not already_bound:
-                    lines.append(
-                        f"BIND(STRAFTER(STR(?{current_slice_reference}), '{unescaped_current_pre_string}') as ?{current_reference})"
+                target = (
+                    current_reference
+                    if not already_bound
+                    else codex.get_id(
+                        f"{reference_identifier}_temp_{id_generator.get_id()}"
                     )
+                )
+                lines.append(
+                    f"BIND(STRAFTER(STR(?{current_slice_reference}), '{unescaped_current_pre_string}') as ?{target})"
+                )
+                if already_bound:
+                    lines.append(_same_value_filter(current_reference, target))
             else:
                 unescaped_next_pre_string = current_post_string.split("(", 1)[
                     0
@@ -494,6 +529,8 @@ class SubjectTriple(QueryTriple):
                 )
                 if not already_bound:
                     lines.append(f"BIND(?{temp_reference} as ?{current_reference})")
+                else:
+                    lines.append(_same_value_filter(current_reference, temp_reference))
                 current_slice_reference = next_slice_reference
 
             evaluated_template = current_post_string

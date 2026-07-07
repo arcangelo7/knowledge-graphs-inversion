@@ -212,6 +212,78 @@ def _check_for_constant_only_mappings(mappings: pd.DataFrame) -> bool:
         return False
 
 
+def _reference_set(value: object) -> set[str]:
+    if not isinstance(value, list):
+        return set()
+    return {str(item) for item in value}
+
+
+def _signature_value(value: object) -> str:
+    if isinstance(value, list):
+        return repr(tuple(str(item) for item in value))
+    if value is None or value is pd.NA or value is pd.NaT:
+        return ""
+    if isinstance(value, float) and pd.isna(value):
+        return ""
+    return str(value)
+
+
+def _subject_signature(subject_rules: pd.DataFrame) -> frozenset[tuple[str, ...]]:
+    signature_columns = [
+        "predicate_map_type",
+        "predicate_map_value",
+        "object_map_type",
+        "object_map_value",
+        "object_termtype",
+        "graph_map_type",
+        "graph_map_value",
+    ]
+    signature = []
+    for _, rule in subject_rules.iterrows():
+        signature.append(
+            tuple(_signature_value(rule.get(column)) for column in signature_columns)
+        )
+    return frozenset(signature)
+
+
+def _check_for_ambiguous_subject_templates(mappings: pd.DataFrame) -> None:
+    for table_name, source_rules in mappings.groupby("logical_source_value"):
+        observed_refs: set[str] = set()
+        for _, rule in source_rules.iterrows():
+            observed_refs.update(_reference_set(rule["predicate_references"]))
+            observed_refs.update(_reference_set(rule["object_references"]))
+            observed_refs.update(_reference_set(rule["graph_references"]))
+
+        subject_infos: list[tuple[str, frozenset[tuple[str, ...]], set[str]]] = []
+        for _, subject_rules in source_rules.groupby("subject_map_value", dropna=False):
+            first_rule = subject_rules.iloc[0]
+            if first_rule["subject_map_type"] != RML_TEMPLATE:
+                continue
+            subject_refs = _reference_set(first_rule["subject_references"])
+            subject_infos.append(
+                (
+                    _signature_value(first_rule["subject_references_template"]),
+                    _subject_signature(subject_rules),
+                    subject_refs - observed_refs,
+                )
+            )
+
+        buckets: dict[tuple[str, frozenset[tuple[str, ...]]], list[set[str]]] = {}
+        for template, signature, subject_only_refs in subject_infos:
+            buckets.setdefault((template, signature), []).append(subject_only_refs)
+
+        for subject_only_refs in buckets.values():
+            if len(subject_only_refs) <= 1:
+                continue
+            ambiguous_refs = sorted(set().union(*subject_only_refs))
+            if ambiguous_refs:
+                columns = ", ".join(ambiguous_refs)
+                raise NonInvertibleError(
+                    f"Subject templates for table '{table_name}' contain columns "
+                    f"that are not observable outside indistinguishable subjects: {columns}"
+                )
+
+
 def _build_morph_config(
     mapping: str | pathlib.Path,
     rdf_graph: str,
@@ -269,6 +341,7 @@ def reconstruct(
 
     config_file = _build_morph_config(mapping, rdf_graph_str, source_db_url)
     endpoint: Endpoint | None = None
+    schema_retrievers: dict[str, DatabaseSchemaRetriever] = {}
     try:
         config = load_config_from_argument(config_file)
 
@@ -292,6 +365,13 @@ def reconstruct(
             raise NonInvertibleError(
                 "Term map uses rr:column with IRI term type - base IRI resolution makes inversion ambiguous"
             )
+
+        insert_columns(mappings)
+        mappings = mappings[mappings["logical_source_type"] != RML_SOURCE]
+        _check_for_ambiguous_subject_templates(mappings)
+
+        if source_db_url:
+            schema_retrievers["DataSource1"] = DatabaseSchemaRetriever(source_db_url)
 
         try:
             if sparql_endpoint:
@@ -319,14 +399,6 @@ def reconstruct(
         except ValueError as e:
             raise NonInvertibleError(f"Output RDF contains invalid data: {e}") from e
 
-        insert_columns(mappings)
-
-        schema_retrievers: dict[str, DatabaseSchemaRetriever] = {}
-        if source_db_url:
-            schema_retrievers["DataSource1"] = DatabaseSchemaRetriever(source_db_url)
-
-        mappings = mappings[mappings["logical_source_type"] != RML_SOURCE]
-
         results: list[ReconstructedTable] = []
         for table_name_value, source_rules in mappings.groupby("logical_source_value"):
             table_name = str(table_name_value)
@@ -353,9 +425,6 @@ def reconstruct(
             template.fill_data(source_data, table_name)
             results.append(ReconstructedTable(name=table_name, data=source_data))
 
-        for retriever in schema_retrievers.values():
-            retriever.dispose()
-
         if not results:
             raise NoDataError("No data was generated during reconstruction")
 
@@ -363,4 +432,6 @@ def reconstruct(
     finally:
         if endpoint is not None:
             endpoint.close()
+        for retriever in schema_retrievers.values():
+            retriever.dispose()
         os.unlink(config_file)

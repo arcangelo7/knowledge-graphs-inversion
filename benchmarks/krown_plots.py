@@ -12,7 +12,6 @@ including box plots with confidence intervals and outlier detection.
 
 import argparse
 import json
-import re
 from pathlib import Path
 from typing import Dict, Any
 from collections import Counter
@@ -29,7 +28,7 @@ def load_statistics(stats_file: Path) -> Dict[str, Any]:
     Returns:
         Dictionary with benchmark statistics
     """
-    with open(stats_file, 'r') as f:
+    with open(stats_file, "r") as f:
         return json.load(f)
 
 
@@ -37,21 +36,19 @@ def _humanize_scenario_name(scenario: str) -> str:
     """Convert scenario name to human-readable format.
 
     Examples:
-        mappings_3_2 -> 3×2
-        mappings_5_3 -> 5×3
-        mappings_8_5 -> 8×5
+        raw_1000_6_50 -> 1000 rows × 6 cols
+        mappings_3_2 -> 3 TMs × 2 POMs
     """
-    match = re.search(r'(\d+)_(\d+)', scenario)
-    if match:
-        return f"{match.group(1)}×{match.group(2)}"
+    parts = scenario.split("_")
+    if parts[0] == "raw" and len(parts) == 4:
+        return f"{parts[1]} rows × {parts[2]} cols"
+    if parts[0] == "mappings" and len(parts) == 3:
+        return f"{parts[1]} TMs × {parts[2]} POMs"
     return scenario
 
 
-def plot_timing_bar_charts(
-    stats_data: Dict[str, Any],
-    output_dir: Path
-):
-    """Generate separate box plots with statistics for each timing metric.
+def plot_timing_bar_charts(stats_data: Dict[str, Any], output_dir: Path):
+    """Generate box plots per scenario family for each timing metric.
 
     Args:
         stats_data: Dictionary with aggregated statistics
@@ -60,14 +57,29 @@ def plot_timing_bar_charts(
     scenarios_data = stats_data["scenarios"]
     iterations = stats_data["iterations"]
 
-    # Use actual scenario names from data, sorted alphabetically
+    families: Dict[str, Dict[str, Any]] = {}
+    for scenario_name in sorted(scenarios_data.keys()):
+        family = scenario_name.split("_", 1)[0]
+        families.setdefault(family, {})[scenario_name] = scenarios_data[scenario_name]
+
+    for family, family_scenarios in families.items():
+        _plot_family_timing_charts(family, family_scenarios, iterations, output_dir)
+
+
+def _plot_family_timing_charts(
+    family: str,
+    scenarios_data: Dict[str, Any],
+    iterations: int,
+    output_dir: Path,
+):
+    """Generate separate box plots with statistics for each timing metric."""
     scenarios = sorted(scenarios_data.keys())
 
     metrics = [
         ("execution_time", "Total execution time", "s"),
-        ("morph_kgc_time", "Morph-KGC time", "s"),
+        ("rmlmapper_time", "RMLMapper time", "s"),
         ("inversion_time", "Inversion time", "s"),
-        ("inversion_overhead_percentage", "Inversion overhead", "%")
+        ("inversion_overhead_percentage", "Inversion overhead", "%"),
     ]
 
     for metric_key, metric_label, unit in metrics:
@@ -110,7 +122,7 @@ def plot_timing_bar_charts(
             ci_uppers.append(metric_stats["ci_95_upper"])
 
             # Store statistics for this scenario
-            outliers = metric_stats['outliers']
+            outliers = metric_stats["outliers"]
             outliers_str = None
             if outliers:
                 # Group outliers by rounded value, reducing precision if too many unique values
@@ -130,21 +142,27 @@ def plot_timing_bar_charts(
 
                 # Format output based on precision used
                 if decimals == 1:
-                    outliers_str = ", ".join([
-                        f"{val:.1f} (×{count})" if count > 1 else f"{val:.1f}"
-                        for val, count in sorted(outlier_counts.items())
-                    ])
+                    outliers_str = ", ".join(
+                        [
+                            f"{val:.1f} (×{count})" if count > 1 else f"{val:.1f}"
+                            for val, count in sorted(outlier_counts.items())
+                        ]
+                    )
                 else:
-                    outliers_str = ", ".join([
-                        f"{int(val)} (×{count})" if count > 1 else f"{int(val)}"
-                        for val, count in sorted(outlier_counts.items())
-                    ])
+                    outliers_str = ", ".join(
+                        [
+                            f"{int(val)} (×{count})" if count > 1 else f"{int(val)}"
+                            for val, count in sorted(outlier_counts.items())
+                        ]
+                    )
 
-            scenario_stats_data.append({
-                'label': human_label,
-                'stats': metric_stats,
-                'outliers_str': outliers_str
-            })
+            scenario_stats_data.append(
+                {
+                    "label": human_label,
+                    "stats": metric_stats,
+                    "outliers_str": outliers_str,
+                }
+            )
 
         # Create box plot
         ax_plot.boxplot(
@@ -153,43 +171,72 @@ def plot_timing_bar_charts(
             patch_artist=True,
             showmeans=True,
             meanline=False,
-            medianprops=dict(color='darkblue', linewidth=2.5),
-            meanprops=dict(marker='D', markerfacecolor='red',
-                          markeredgecolor='black', markersize=8),
-            boxprops=dict(facecolor='lightblue', alpha=0.7),
+            medianprops=dict(color="darkblue", linewidth=2.5),
+            meanprops=dict(
+                marker="D", markerfacecolor="red", markeredgecolor="black", markersize=8
+            ),
+            boxprops=dict(facecolor="lightblue", alpha=0.7),
             whiskerprops=dict(linewidth=1.5),
             capprops=dict(linewidth=1.5),
-            flierprops=dict(marker='o', markerfacecolor='none',
-                           markeredgecolor='black', markersize=5)
+            flierprops=dict(
+                marker="o",
+                markerfacecolor="none",
+                markeredgecolor="black",
+                markersize=5,
+            ),
         )
 
         # Add confidence interval error bars
         x_positions = np.arange(1, len(means) + 1)
         ci_errors = [
             np.array(means) - np.array(ci_lowers),
-            np.array(ci_uppers) - np.array(means)
+            np.array(ci_uppers) - np.array(means),
         ]
 
         ax_plot.errorbar(
-            x_positions, means, yerr=ci_errors,
-            fmt='none', ecolor='darkgreen', capsize=8, capthick=2,
-            linewidth=2.5, alpha=0.8, label='95% CI'
+            x_positions,
+            means,
+            yerr=ci_errors,
+            fmt="none",
+            ecolor="darkgreen",
+            capsize=8,
+            capthick=2,
+            linewidth=2.5,
+            alpha=0.8,
+            label="95% CI",
         )
 
         # Add legend
-        ax_plot.plot([], [], color='darkblue', linewidth=2.5, label='Median')
-        ax_plot.plot([], [], marker='D', color='red', linestyle='None',
-                    markeredgecolor='black', markersize=8, label='Mean')
-        ax_plot.plot([], [], marker='o', markerfacecolor='none',
-                    markeredgecolor='black', linestyle='None',
-                    markersize=5, label='Outliers')
-        ax_plot.legend(loc='upper left', frameon=True, fontsize=13)
+        ax_plot.plot([], [], color="darkblue", linewidth=2.5, label="Median")
+        ax_plot.plot(
+            [],
+            [],
+            marker="D",
+            color="red",
+            linestyle="None",
+            markeredgecolor="black",
+            markersize=8,
+            label="Mean",
+        )
+        ax_plot.plot(
+            [],
+            [],
+            marker="o",
+            markerfacecolor="none",
+            markeredgecolor="black",
+            linestyle="None",
+            markersize=5,
+            label="Outliers",
+        )
+        ax_plot.legend(loc="upper left", frameon=True, fontsize=13)
 
-        ax_plot.set_ylabel(f'{metric_label} ({unit})', fontsize=15)
-        ax_plot.set_title(f'{metric_label} distribution', fontsize=16, fontweight='bold')
-        ax_plot.set_xlabel('Scenario', fontsize=15)
-        ax_plot.grid(True, alpha=0.3, axis='y')
-        ax_plot.set_xticklabels(labels, rotation=45, ha='right')
+        ax_plot.set_ylabel(f"{metric_label} ({unit})", fontsize=15)
+        ax_plot.set_title(
+            f"{metric_label} distribution", fontsize=16, fontweight="bold"
+        )
+        ax_plot.set_xlabel("Scenario", fontsize=15)
+        ax_plot.grid(True, alpha=0.3, axis="y")
+        ax_plot.set_xticklabels(labels, rotation=45, ha="right")
 
         # Create statistics panel below the plot
         # Add statistics title and data in columns
@@ -197,23 +244,33 @@ def plot_timing_bar_charts(
 
         # Create a grid for statistics columns
         ax_stats = fig.add_subplot(gs[1, 0])
-        ax_stats.axis('off')
+        ax_stats.axis("off")
 
         # Add title for statistics section
-        stats_title = f'{metric_label} - Statistics'
-        ax_stats.text(0.5, 0.95, stats_title, transform=ax_stats.transAxes,
-                     fontsize=16, fontweight='bold', ha='center', va='top')
+        stats_title = f"{metric_label} - Statistics"
+        ax_stats.text(
+            0.5,
+            0.95,
+            stats_title,
+            transform=ax_stats.transAxes,
+            fontsize=16,
+            fontweight="bold",
+            ha="center",
+            va="top",
+        )
 
         # Arrange scenario statistics in columns
         # Position and alignment for each column: (x_position, horizontal_alignment)
         if n_scenarios == 3:
-            positions = [(0.02, 'left'), (0.5, 'center'), (0.98, 'right')]
+            positions = [(0.02, "left"), (0.5, "center"), (0.98, "right")]
         elif n_scenarios == 2:
-            positions = [(0.02, 'left'), (0.98, 'right')]
+            positions = [(0.02, "left"), (0.98, "right")]
         else:
             # Fallback for other numbers of scenarios
-            positions = [(i / (n_scenarios - 1) if n_scenarios > 1 else 0.5, 'left')
-                        for i in range(n_scenarios)]
+            positions = [
+                (i / (n_scenarios - 1) if n_scenarios > 1 else 0.5, "left")
+                for i in range(n_scenarios)
+            ]
 
         for idx, scenario_data in enumerate(scenario_stats_data):
             x_pos, h_align = positions[idx]
@@ -224,56 +281,64 @@ def plot_timing_bar_charts(
             stats_lines.append(f"Mean: {scenario_data['stats']['mean']:.1f} {unit}")
             stats_lines.append(f"Median: {scenario_data['stats']['median']:.1f} {unit}")
             stats_lines.append(f"Std Dev: {scenario_data['stats']['std']:.1f} {unit}")
-            stats_lines.append(f"95% CI: [{scenario_data['stats']['ci_95_lower']:.1f}, "
-                             f"{scenario_data['stats']['ci_95_upper']:.1f}]")
+            stats_lines.append(
+                f"95% CI: [{scenario_data['stats']['ci_95_lower']:.1f}, "
+                f"{scenario_data['stats']['ci_95_upper']:.1f}]"
+            )
             stats_lines.append(f"Q1: {scenario_data['stats']['q1']:.1f} {unit}")
             stats_lines.append(f"Q3: {scenario_data['stats']['q3']:.1f} {unit}")
             stats_lines.append(f"Min: {scenario_data['stats']['min']:.1f} {unit}")
             stats_lines.append(f"Max: {scenario_data['stats']['max']:.1f} {unit}")
-            if scenario_data['outliers_str']:
+            if scenario_data["outliers_str"]:
                 stats_lines.append(f"Outliers: {scenario_data['outliers_str']}")
 
             stats_text = "\n".join(stats_lines)
-            ax_stats.text(x_pos, 0.80, stats_text, transform=ax_stats.transAxes,
-                         fontsize=14, verticalalignment='top', ha=h_align,
-                         fontfamily='monospace')
+            ax_stats.text(
+                x_pos,
+                0.80,
+                stats_text,
+                transform=ax_stats.transAxes,
+                fontsize=14,
+                verticalalignment="top",
+                ha=h_align,
+                fontfamily="monospace",
+            )
 
         # Add overall title
         fig.suptitle(
-            f'{metric_label} (N={iterations} iterations)',
-            fontsize=17, fontweight='bold'
+            f"{metric_label} ({family} scenarios, N={iterations} iterations)",
+            fontsize=17,
+            fontweight="bold",
         )
 
-        fig.tight_layout(rect=[0, 0, 1, 0.96])
+        fig.tight_layout(rect=(0, 0, 1, 0.96))
 
         # Save individual plot
-        filename = f"{metric_key}_boxplot.png"
+        filename = f"{metric_key}_boxplot_{family}.png"
         out = output_dir / filename
-        fig.savefig(out, dpi=300, bbox_inches='tight', pad_inches=0.3)
+        fig.savefig(out, dpi=300, bbox_inches="tight", pad_inches=0.3)
         plt.close(fig)
         print(f"Saved: {out}")
-
-
 
 
 def main():
     """Main entry point for plot generation."""
     parser = argparse.ArgumentParser(
         description="Generate plots from KROWN benchmark statistics",
-        formatter_class=argparse.RawDescriptionHelpFormatter
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
     parser.add_argument(
         "stats_file",
         type=Path,
-        help="Path to statistics JSON file (e.g., krown_benchmark_stats_*.json)"
+        help="Path to statistics JSON file (e.g., krown_benchmark_stats_*.json)",
     )
 
     parser.add_argument(
         "--output-dir",
         type=Path,
         default=None,
-        help="Output directory for plots (default: same as stats file)"
+        help="Output directory for plots (default: same as stats file)",
     )
 
     args = parser.parse_args()
@@ -299,4 +364,5 @@ def main():
 
 if __name__ == "__main__":
     import sys
+
     sys.exit(main())

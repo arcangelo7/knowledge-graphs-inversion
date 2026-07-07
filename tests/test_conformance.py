@@ -51,7 +51,7 @@ def _run_conformance_test(
             pytest.skip("Forward mapping produced no RDF output (error test case)")
 
     try:
-        result = reconstruct(
+        reconstruct(
             mapping=mapping_path,
             rdf_graph=output_path,
             source_db_url=source_db,
@@ -71,7 +71,9 @@ def _run_conformance_test(
         mapping_content = f.read()
 
     databases_equal, message, comparison_status = compare_databases(
-        source_content, dest_content, mapping_content,
+        source_content,
+        dest_content,
+        mapping_content,
     )
 
     if comparison_status and comparison_status.startswith("partial:"):
@@ -83,10 +85,14 @@ def _run_conformance_test(
 @pytest.mark.parametrize("test_id", R2RML_TEST_IDS)
 def test_r2rml_conformance(test_id: str, r2rml_suite: object) -> None:
     with tempfile.TemporaryDirectory() as tmp_dir:
-        _run_conformance_test(test_id, r2rml_suite, SOURCE_R2RML_DB, DEST_R2RML_DB, tmp_dir)
+        _run_conformance_test(
+            test_id, r2rml_suite, SOURCE_R2RML_DB, DEST_R2RML_DB, tmp_dir
+        )
 
 
 @pytest.mark.parametrize("test_id", RML_TEST_IDS)
 def test_rml_conformance(test_id: str, rml_suite: object) -> None:
     with tempfile.TemporaryDirectory() as tmp_dir:
-        _run_conformance_test(test_id, rml_suite, SOURCE_R2RML_DB, DEST_R2RML_DB, tmp_dir)
+        _run_conformance_test(
+            test_id, rml_suite, SOURCE_R2RML_DB, DEST_R2RML_DB, tmp_dir
+        )
