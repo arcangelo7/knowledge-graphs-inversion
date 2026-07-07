@@ -64,17 +64,19 @@ result = kgi.reconstruct(
 )
 ```
 
-## Querying a remote SPARQL endpoint
+## Choosing the SPARQL backend
 
-By default, the function reads RDF from the local file specified by `rdf_graph`. To query a remote endpoint instead:
+By default, the function reads RDF from the local file specified by `rdf_graph` and queries it with PyOxyGraph. This is the recommended choice for small RDF graphs. For larger graphs with many triples, use QLever:
 
 ```python
 result = kgi.reconstruct(
     mapping="mapping.ttl",
     rdf_graph="output.nq",
-    sparql_endpoint="http://localhost:8890/sparql",
+    backend="qlever",
 )
 ```
+
+QLever builds a temporary index for the RDF file, starts a local endpoint, runs the generated SPARQL queries, and removes the temporary files on close. The default endpoint URL is `http://localhost:7019`; pass `sparql_endpoint` only when that port must change.
 
 ## Error handling
 

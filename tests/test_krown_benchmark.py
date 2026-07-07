@@ -65,6 +65,21 @@ def test_runner_discovers_scenario_dirs_with_metadata(monkeypatch, tmp_path) -> 
     ]
 
 
+def test_runner_defaults_to_pyoxigraph(monkeypatch) -> None:
+    _set_benchmark_env(monkeypatch)
+    runner = KrownBenchmarkRunner()
+
+    assert runner.sparql_backend == "pyoxigraph"
+    assert runner.sparql_load_method() == "local_file_parse"
+
+
+def test_runner_uses_qlever_load_method(monkeypatch) -> None:
+    _set_benchmark_env(monkeypatch)
+    runner = KrownBenchmarkRunner(sparql_backend="qlever")
+
+    assert runner.sparql_load_method() == "qlever_index"
+
+
 def test_expected_outcome_by_scenario_family() -> None:
     assert expected_outcome("mappings_2_3") == "partial"
     assert expected_outcome("mappings_3_5") == "partial"

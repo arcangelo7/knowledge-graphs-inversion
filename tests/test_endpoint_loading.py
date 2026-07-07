@@ -2,7 +2,6 @@
 #
 # SPDX-License-Identifier: ISC
 
-import os
 import subprocess
 
 import pytest
@@ -96,36 +95,3 @@ def test_qlever_endpoint_loads_by_index_without_sparql_update(
         endpoint.close()
 
     assert _FakeSparqlClient.updates == []
-
-
-def test_virtuoso_endpoint_uses_temporary_bulk_load_without_sparql_update(
-    monkeypatch, tmp_path
-) -> None:
-    rdf_file = tmp_path / "data.nt"
-    rdf_file.write_text('<http://example.com/s> <http://example.com/p> "o" .\n')
-    sql_commands: list[str] = []
-
-    _patch_processes(monkeypatch)
-    real_exists = os.path.exists
-    monkeypatch.setattr(
-        endpoints.os.path,
-        "exists",
-        lambda path: (
-            path == "/opt/virtuoso-opensource/bin/virtuoso-t" or real_exists(path)
-        ),
-    )
-    monkeypatch.setattr(
-        endpoints.VirtuosoEndpoint,
-        "_execute_sql",
-        lambda self, sql_command: sql_commands.append(sql_command) or "",
-    )
-
-    endpoint = endpoints.VirtuosoEndpoint("http://localhost:8890/sparql", str(rdf_file))
-    endpoint.close()
-
-    assert _FakeSparqlClient.updates == []
-    assert [command for command in sql_commands if "CLEAR GRAPH" in command] == []
-    assert [command for command in sql_commands if command.startswith("ld_dir(")] == [
-        f"ld_dir('{endpoint._work_path}', 'temp_bulk_load.nq.gz', "
-        "'http://localhost:8890/DAV/ignored')"
-    ]

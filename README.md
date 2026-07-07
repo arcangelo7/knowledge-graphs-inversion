@@ -44,6 +44,16 @@ for table in result:
 
 `source_db_url` is optional and used to read the original column types and ordering. When using RML mappings with [D2RQ](http://d2rq.org/) database definitions, the connection info is extracted automatically from the mapping itself, no need to pass `source_db_url` at all. `dest_db_url` is optional and sets the target database for materialized rows.
 
+Local RDF queries use PyOxyGraph by default. It is the recommended choice for small RDF graphs. For larger graphs with many triples, pass `backend="qlever"` to query through a temporary QLever index:
+
+```python
+result = kgi.reconstruct(
+    mapping="mapping.ttl",
+    rdf_graph="output.nq",
+    backend="qlever",
+)
+```
+
 ## Testing
 
 Conformance tests require [Docker](https://www.docker.com/) to run the PostgreSQL databases and Java 21 or newer for RMLMapper v8.1.0:

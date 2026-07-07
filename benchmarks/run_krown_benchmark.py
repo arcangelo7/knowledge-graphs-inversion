@@ -46,7 +46,7 @@ from benchmarks.krown_plots import plot_timing_bar_charts  # noqa: E402
 
 console = Console()
 
-SparqlBackend = Literal["virtuoso", "qlever", "pyoxigraph"]
+SparqlBackend = Literal["qlever", "pyoxigraph"]
 ExpectedOutcome = Literal["partial"]
 R2RML = Namespace("http://www.w3.org/ns/r2rml#")
 
@@ -100,7 +100,7 @@ class KrownBenchmarkRunner:
         validate: bool = False,
         cleanup_tables: bool = True,
         iterations: int = 1,
-        sparql_backend: SparqlBackend = "virtuoso",
+        sparql_backend: SparqlBackend = "pyoxigraph",
     ):
         self.project_root = Path(__file__).parent.parent
         self.krown_dir = self.project_root / "KROWN"
@@ -109,7 +109,7 @@ class KrownBenchmarkRunner:
             Path(__file__).parent / "krown" / "config" / "kg-inversion-benchmark.json"
         )
         self.scenarios_root = Path(__file__).parent / "krown" / "scenarios"
-        self.sparql_backend = sparql_backend
+        self.sparql_backend: SparqlBackend = sparql_backend
         self.validate = validate
         self.cleanup_tables = cleanup_tables
         self.iterations = iterations
@@ -123,7 +123,6 @@ class KrownBenchmarkRunner:
             "database": os.environ["BENCHMARK_DB_NAME"],
         }
 
-        self.virtuoso_config = {"host": "localhost", "port": "8890"}
         self.qlever_config = {
             "host": "localhost",
             "port": (
@@ -150,8 +149,6 @@ class KrownBenchmarkRunner:
     def sparql_load_method(self) -> str:
         if self.sparql_backend == "qlever":
             return "qlever_index"
-        if self.sparql_backend == "virtuoso":
-            return "virtuoso_temporary_bulk_load"
         return "local_file_parse"
 
     @staticmethod
@@ -360,9 +357,7 @@ class KrownBenchmarkRunner:
         start_time = time.time()
 
         endpoint_url = None
-        if self.sparql_backend == "virtuoso":
-            endpoint_url = f"http://{self.virtuoso_config['host']}:{self.virtuoso_config['port']}/sparql"
-        elif self.sparql_backend == "qlever":
+        if self.sparql_backend == "qlever":
             endpoint_url = (
                 f"http://{self.qlever_config['host']}:{self.qlever_config['port']}"
             )
@@ -380,9 +375,7 @@ class KrownBenchmarkRunner:
                 rdf_graph=str(rdf_file),
                 source_db_url=source_db_url,
                 sparql_endpoint=endpoint_url,
-                use_virtuoso=self.sparql_backend == "virtuoso",
-                use_qlever=self.sparql_backend == "qlever",
-                virtuoso_container="kgi-virtuoso",
+                backend=self.sparql_backend,
             )
             return inversion_results, time.time() - start_time
         finally:
@@ -826,9 +819,9 @@ Notes:
 
     parser.add_argument(
         "--sparql-backend",
-        choices=["virtuoso", "qlever", "pyoxigraph"],
-        default="virtuoso",
-        help="SPARQL backend for RDF queries (default: virtuoso)",
+        choices=["qlever", "pyoxigraph"],
+        default="pyoxigraph",
+        help="SPARQL backend for RDF queries (default: pyoxigraph)",
     )
 
     parser.add_argument(

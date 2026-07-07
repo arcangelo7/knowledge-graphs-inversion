@@ -4,7 +4,6 @@
 
 """SPARQL endpoint implementations."""
 
-import gzip
 import json
 import logging
 import os
@@ -34,73 +33,21 @@ from pyoxigraph import (
 from sparqlite import SPARQLClient
 
 from kgi.base import Endpoint
-from kgi.utils import Validator
 
 
 def _qlever_setting(name: str, default: str) -> str:
     return os.environ[name] if name in os.environ else default
 
 
-def _virtuoso_setting(name: str, default: str) -> str:
-    return os.environ[name] if name in os.environ else default
-
-
 class RemoteEndpoint(Endpoint):
-    """Remote SPARQL endpoint implementation."""
+    """Remote SPARQL query client."""
 
-    def __init__(self, url: str, rdf_file_to_load: str | None = None):
+    def __init__(self, url: str):
         self._client = SPARQLClient(url)
         self.endpoint_url = url
-        self.rdf_file_path = rdf_file_to_load
-        self._graph_uri = None
-
-        if rdf_file_to_load:
-            self._graph_uri = f"http://temp/graph/{os.path.basename(rdf_file_to_load)}"
-            self._load_data()
-
-    def _load_data(self):
-        """Load RDF data into the SPARQL endpoint using INSERT DATA."""
-        assert self.rdf_file_path is not None
-        self._client.update(f"CLEAR GRAPH <{self._graph_uri}>")
-
-        with open(self.rdf_file_path, "r", encoding="utf-8") as f:
-            chunk_size = 1000
-            triples = []
-
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    triples.append(line)
-
-                    if len(triples) >= chunk_size:
-                        self._insert_triples(triples)
-                        triples = []
-
-            if triples:
-                self._insert_triples(triples)
-
-    def _insert_triples(self, triples):
-        """Insert a batch of triples into the SPARQL endpoint."""
-        insert_query = f"INSERT DATA {{\n  GRAPH <{self._graph_uri}> {{\n"
-        for triple in triples:
-            if triple.endswith("."):
-                triple = triple[:-1].strip()
-            insert_query += f"    {triple} .\n"
-        insert_query += "  }\n}"
-
-        self._client.update(insert_query)
 
     def query(self, query: str):
         """Execute a SPARQL query and return JSON string."""
-        if self._graph_uri:
-            modified_query = query.replace(
-                "WHERE {", f"WHERE {{ GRAPH <{self._graph_uri}> {{"
-            )
-            bracket_count = modified_query.count("{") - modified_query.count("}")
-            if bracket_count > 0:
-                modified_query += "}" * bracket_count
-            query = modified_query
-
         result = self._client.query(query, method="POST")
         return json.dumps(result)
 
@@ -108,12 +55,7 @@ class RemoteEndpoint(Endpoint):
         return f"RemoteEndpoint({self.endpoint_url})"
 
     def close(self) -> None:
-        try:
-            if self._graph_uri is not None:
-                self._client.update(f"CLEAR GRAPH <{self._graph_uri}>")
-                self._graph_uri = None
-        finally:
-            self._client.close()
+        self._client.close()
 
     def __del__(self):
         if hasattr(self, "_client"):
@@ -121,316 +63,6 @@ class RemoteEndpoint(Endpoint):
                 self.close()
             except Exception:
                 pass
-
-
-class VirtuosoEndpoint(RemoteEndpoint):
-    """Virtuoso-specific endpoint that uses bulk loading for better performance."""
-
-    def __init__(
-        self,
-        url: str,
-        rdf_file_to_load: str | None = None,
-        container_name: str = "virtuoso-kgi",
-    ):
-        self.container_name = container_name
-        self.endpoint_url = url
-        self.rdf_file_path = rdf_file_to_load
-        self._graph_uri = None
-        self._client: SPARQLClient | None = None
-        self._work_dir = tempfile.TemporaryDirectory(prefix="kgi_virtuoso_")
-        self._server_process: subprocess.Popen[str] | None = None
-        self._server_log: TextIO | None = None
-        self._closed = False
-
-        parsed_url = urlparse(url)
-        if parsed_url.port is None:
-            raise ValueError("Virtuoso endpoint URL must include a port")
-
-        self.http_port = parsed_url.port
-        self.sql_port = int(_virtuoso_setting("VIRTUOSO_SQL_PORT", "1111"))
-        self.dba_password = _virtuoso_setting("DBA_PASSWORD", "dba")
-        self.max_query_mem = _virtuoso_setting("VIRTUOSO_MAX_QUERY_MEM", "16G")
-        self.threads_per_query = _virtuoso_setting("VIRTUOSO_THREADS_PER_QUERY", "4")
-        self.async_queue_max_threads = _virtuoso_setting(
-            "VIRTUOSO_ASYNC_QUEUE_MAX_THREADS", "10"
-        )
-        self.number_of_buffers = _virtuoso_setting(
-            "VIRTUOSO_NUMBER_OF_BUFFERS", "10000"
-        )
-        self.max_dirty_buffers = _virtuoso_setting("VIRTUOSO_MAX_DIRTY_BUFFERS", "7500")
-        self.startup_timeout = int(_virtuoso_setting("VIRTUOSO_STARTUP_TIMEOUT", "60"))
-
-        if rdf_file_to_load:
-            self.rdf_file_path = rdf_file_to_load
-            self._graph_uri = f"http://temp/graph/{os.path.basename(rdf_file_to_load)}"
-
-        self._write_config()
-        self._start_server()
-        self._client = SPARQLClient(url)
-
-        if rdf_file_to_load:
-            self._bulk_load_data()
-
-    @property
-    def _work_path(self) -> str:
-        return self._work_dir.name
-
-    def _write_config(self) -> None:
-        config = f"""
-[Database]
-DatabaseFile = virtuoso.db
-ErrorLogFile = virtuoso.log
-LockFile = virtuoso.lck
-TransactionFile = virtuoso.trx
-xa_persistent_file = virtuoso.pxa
-ErrorLogLevel = 7
-FileExtend = 200
-MaxCheckpointRemap = 2000
-Striping = 0
-TempStorage = TempDatabase
-
-[TempDatabase]
-DatabaseFile = virtuoso-temp.db
-TransactionFile = virtuoso-temp.trx
-MaxCheckpointRemap = 2000
-Striping = 0
-
-[Parameters]
-ServerPort = {self.sql_port}
-LiteMode = 0
-DisableUnixSocket = 1
-DisableTcpSocket = 0
-MaxClientConnections = 10
-CheckpointInterval = 60
-O_DIRECT = 0
-CaseMode = 2
-MaxStaticCursorRows = 5000
-CheckpointAuditTrail = 0
-AllowOSCalls = 0
-SchedulerInterval = 10
-DirsAllowed = ., {self._work_path}
-ThreadCleanupInterval = 1
-ThreadThreshold = 10
-ResourcesCleanupInterval = 1
-FreeTextBatchSize = 100000
-SingleCPU = 0
-VADInstallDir = /opt/virtuoso-opensource/share/virtuoso/vad/
-PrefixResultNames = 0
-RdfFreeTextRulesSize = 100
-IndexTreeMaps = 64
-MaxMemPoolSize = 200000000
-MaxQueryMem = {self.max_query_mem}
-VectorSize = 1000
-MaxVectorSize = 1000000
-AdjustVectorSize = 0
-ThreadsPerQuery = {self.threads_per_query}
-AsyncQueueMaxThreads = {self.async_queue_max_threads}
-NumberOfBuffers = {self.number_of_buffers}
-MaxDirtyBuffers = {self.max_dirty_buffers}
-
-[HTTPServer]
-ServerPort = {self.http_port}
-ServerRoot = /opt/virtuoso-opensource/share/virtuoso/vsp
-MaxClientConnections = 10
-DavRoot = DAV
-EnabledDavVSP = 0
-HTTPProxyEnabled = 0
-TempASPXDir = 0
-DefaultMailServer = localhost:25
-MaxKeepAlives = 10
-KeepAliveTimeout = 10
-MaxCachedProxyConnections = 10
-ProxyConnectionCacheTimeout = 15
-HTTPThreadSize = 280000
-HttpPrintWarningsInOutput = 0
-Charset = UTF-8
-MaintenancePage = atomic.html
-EnabledGzipContent = 1
-
-[Client]
-SQL_PREFETCH_ROWS = 100
-SQL_PREFETCH_BYTES = 16000
-SQL_QUERY_TIMEOUT = 0
-SQL_TXN_TIMEOUT = 0
-
-[SPARQL]
-MaxConstructTriples = 10000
-DefaultQuery = SELECT (COUNT(*) AS ?triples) WHERE {{?s ?p ?o}}
-DeferInferenceRulesInit = 0
-MaxMemInUse = 0
-
-[Plugins]
-LoadPath = /opt/virtuoso-opensource/lib/virtuoso/hosting
-""".lstrip()
-        with open(
-            os.path.join(self._work_path, "virtuoso.ini"), "w", encoding="utf-8"
-        ) as f:
-            f.write(config)
-
-    def _start_server(self) -> None:
-        virtuoso_path = "/opt/virtuoso-opensource/bin/virtuoso-t"
-        if not os.path.exists(virtuoso_path):
-            raise RuntimeError(f"virtuoso-t not found at {virtuoso_path}")
-
-        log_path = os.path.join(self._work_path, "virtuoso.log")
-        self._server_log = open(log_path, "w", encoding="utf-8")
-        self._server_process = subprocess.Popen(
-            [
-                virtuoso_path,
-                "+foreground",
-                "+wait",
-                "+configfile",
-                os.path.join(self._work_path, "virtuoso.ini"),
-            ],
-            cwd=self._work_path,
-            stdout=self._server_log,
-            stderr=subprocess.STDOUT,
-            text=True,
-            start_new_session=True,
-        )
-        self._wait_until_ready()
-        self._configure_permissions()
-
-    def _wait_until_ready(self) -> None:
-        assert self._server_process is not None
-        deadline = time.monotonic() + self.startup_timeout
-        while time.monotonic() < deadline:
-            if self._server_process.poll() is not None:
-                raise RuntimeError(
-                    f"Virtuoso server exited during startup\n{self._virtuoso_log_tail()}"
-                )
-            try:
-                with urlopen(self.endpoint_url, timeout=1):
-                    return
-            except HTTPError:
-                return
-            except (TimeoutError, URLError):
-                time.sleep(0.5)
-
-        raise RuntimeError(
-            f"Virtuoso server did not start within {self.startup_timeout}s\n"
-            f"{self._virtuoso_log_tail()}"
-        )
-
-    def _configure_permissions(self) -> None:
-        self._execute_sql("DB.DBA.RDF_DEFAULT_USER_PERMS_SET('nobody', 7)")
-
-    def _virtuoso_log_tail(self, max_chars: int = 4000) -> str:
-        if self._server_log is not None:
-            self._server_log.flush()
-        log_path = os.path.join(self._work_path, "virtuoso.log")
-        if not os.path.exists(log_path):
-            return ""
-        size = os.path.getsize(log_path)
-        with open(log_path, encoding="utf-8") as f:
-            f.seek(max(size - max_chars, 0))
-            return f.read()
-
-    def _bulk_load_data(self):
-        """Load RDF data using Virtuoso bulk loading instead of INSERT queries."""
-        assert self.rdf_file_path is not None
-        assert self._client is not None
-
-        temp_nq_file = None
-        temp_nq_gz_file = None
-
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w", suffix=".nq", delete=False, encoding="utf-8"
-            ) as temp_nq:
-                temp_nq_file = temp_nq.name
-
-                with open(self.rdf_file_path, "r", encoding="utf-8") as f:
-                    for line in f:
-                        line = line.strip()
-                        if line and not line.startswith("#"):
-                            if line.endswith("."):
-                                line = line[:-1].strip()
-                            temp_nq.write(f"{line} <{self._graph_uri}> .\n")
-
-            temp_nq_gz_file = temp_nq_file + ".gz"
-            with open(temp_nq_file, "rb") as f_in:
-                with gzip.open(temp_nq_gz_file, "wb") as f_out:
-                    shutil.copyfileobj(f_in, f_out)
-
-            bulk_load_file = os.path.join(self._work_path, "temp_bulk_load.nq.gz")
-            shutil.copy2(temp_nq_gz_file, bulk_load_file)
-
-            register_sql = (
-                f"ld_dir('{self._work_path}', 'temp_bulk_load.nq.gz', "
-                f"'http://localhost:{self.http_port}/DAV/ignored')"
-            )
-            self._execute_sql(register_sql)
-
-            self._execute_sql("rdf_loader_run()")
-
-            count_query = (
-                f"SELECT COUNT(*) WHERE {{ GRAPH <{self._graph_uri}> {{ ?s ?p ?o }} }}"
-            )
-            result = self._client.query(count_query, method="POST")
-            bindings = result["results"]["bindings"]
-            triple_count_in_graph = (
-                int(bindings[0][list(bindings[0].keys())[0]]["value"])
-                if bindings
-                else 0
-            )
-            if triple_count_in_graph == 0:
-                raise RuntimeError("No triples were loaded into the graph")
-
-        finally:
-            for temp_file in [
-                temp_nq_file,
-                temp_nq_gz_file,
-                os.path.join(self._work_path, "temp_bulk_load.nq.gz"),
-            ]:
-                if temp_file and os.path.exists(temp_file):
-                    os.remove(temp_file)
-
-    def _execute_sql(self, sql_command):
-        """Execute SQL command using local isql."""
-        # Use local isql command
-        isql_path = "/opt/virtuoso-opensource/bin/isql"
-
-        if not os.path.exists(isql_path):
-            logging.getLogger("kgi").error(f"isql not found at {isql_path}")
-            raise RuntimeError(f"isql not found at {isql_path}")
-
-        cmd = [
-            isql_path,
-            f"localhost:{self.sql_port}",
-            "dba",
-            self.dba_password,
-            f"exec={sql_command}",
-        ]
-
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        if result.returncode != 0:
-            raise RuntimeError(f"SQL execution failed: {result.stderr}")
-        return result.stdout
-
-    def close(self) -> None:
-        if self._closed:
-            return
-        if self._client is not None:
-            self._client.close()
-        if self._server_process is not None and self._server_process.poll() is None:
-            process_group_id = os.getpgid(self._server_process.pid)
-            os.killpg(process_group_id, signal.SIGTERM)
-            try:
-                self._server_process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                os.killpg(process_group_id, signal.SIGKILL)
-                self._server_process.wait()
-        if self._server_log is not None:
-            self._server_log.close()
-        self._closed = True
-        self._work_dir.cleanup()
-
-    def __del__(self):
-        try:
-            self.close()
-        except Exception:
-            pass
 
 
 class QLeverEndpoint(RemoteEndpoint):
@@ -443,7 +75,6 @@ class QLeverEndpoint(RemoteEndpoint):
         self.name = name
         self.endpoint_url = url
         self.rdf_file_path = rdf_file_to_load
-        self._graph_uri = None
         self._client = SPARQLClient(url)
         self._work_dir = tempfile.TemporaryDirectory(prefix="kgi_qlever_")
         self._server_process: subprocess.Popen[str] | None = None
@@ -728,8 +359,5 @@ class EndpointFactory:
 
     @classmethod
     def create_from_url(cls, url: str):
-        """Create an endpoint from a URL or file path."""
-        if Validator.url(url):
-            return RemoteEndpoint(url)
-        else:
-            return LocalSparqlGraphStore(url)
+        """Create a local endpoint from a file path."""
+        return LocalSparqlGraphStore(url)
