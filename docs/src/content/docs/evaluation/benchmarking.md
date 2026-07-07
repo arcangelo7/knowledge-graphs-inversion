@@ -71,3 +71,11 @@ Validation expects every completed scenario to lose only the `id` column:
 docker compose -f docker-compose.benchmark.yml run --rm benchmark benchmark --iterations 10 --validate
 docker compose -f docker-compose.benchmark.yml run --rm benchmark benchmark --sparql-backend qlever --iterations 10 --validate
 ```
+
+### Latest run with Virtuoso and ten iterations
+
+| Scenario | Runs | Rows | Execution time | RMLMapper | Inversion | Inversion overhead | Outcome |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `mappings_2_3` | 10/10 | 1,000 | 3.60s +/- 0.17s | 1.20s +/- 0.06s | 2.15s +/- 0.06s | 179.9% +/- 8.7% | PARTIAL (expected) |
+| `mappings_3_5` | 10/10 | 10,000 | 9.05s +/- 0.23s | 2.59s +/- 0.10s | 5.74s +/- 0.14s | 222.1% +/- 5.1% | PARTIAL (expected) |
+| `mappings_5_8` | 10/10 | 50,000 | 708.30s +/- 188.44s | 22.20s +/- 1.18s | 680.45s +/- 188.63s | 3078.9% +/- 883.0% | PARTIAL (expected) |

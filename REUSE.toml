@@ -16,6 +16,7 @@ path = [
     "docs/package.json",
     "docs/package-lock.json",
     "docs/public/favicon.svg",
+    "docs/public/benchmark/**",
     "benchmarks/krown/config/**",
     "CHANGELOG.md",
     "README.md",
