@@ -1,11 +1,11 @@
----
-# SPDX-FileCopyrightText: 2026 Arcangelo Massari <arcangelo.massari@unibo.it>
-#
-# SPDX-License-Identifier: ISC
+<!--
+SPDX-FileCopyrightText: 2026 Arcangelo Massari <arcangelo.massari@unibo.it>
 
-title: Limitations
-description: What can and cannot be inverted.
----
+SPDX-License-Identifier: ISC
+-->
+
+(limitations)=
+# Limitations
 
 [R2RML](https://www.w3.org/TR/r2rml/) and [RML](https://kg-construct.github.io/rml-core/spec/docs/) mapping inversion is feasible in many cases, but certain mapping patterns make it structurally impossible to reconstruct the original data. These are not algorithmic shortcomings: they reflect information loss that occurs during the forward RDF transformation. The limitations below apply equally to both mapping languages.
 

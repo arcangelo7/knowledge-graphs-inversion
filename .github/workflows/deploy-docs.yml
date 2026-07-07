@@ -9,6 +9,10 @@ on:
     branches: [master]
     paths:
       - 'docs/**'
+      - 'build_book.sh'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '.github/workflows/deploy-docs.yml'
   workflow_run:
     workflows: ["Run tests"]
     types:
@@ -32,6 +36,22 @@ jobs:
       # actions/checkout v7.0.0
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
 
+      - name: Install uv
+        # astral-sh/setup-uv v8.3.0
+        uses: astral-sh/setup-uv@d31148d669074a8d0a63714ba94f3201e7020bc3
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Install Python
+        run: uv python install
+
+      - name: Install dependencies
+        run: uv sync --locked --dev
+
+      - name: Build documentation
+        run: uv run jupyter-book build docs
+
       - name: Find latest successful test run
         id: find-run
         run: |
@@ -40,13 +60,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
+      - name: Prepare coverage directory
+        run: mkdir -p docs/_build/html/coverage
+
       - name: Download coverage report
         if: steps.find-run.outputs.run-id != ''
         # actions/download-artifact v8.0.1
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: coverage-report
-          path: docs/public/coverage
+          path: docs/_build/html/coverage
           run-id: ${{ steps.find-run.outputs.run-id }}
           github-token: ${{ github.token }}
         continue-on-error: true
@@ -57,15 +80,16 @@ jobs:
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: coverage-badge
-          path: docs/public/coverage
+          path: docs/_build/html/coverage
           run-id: ${{ steps.find-run.outputs.run-id }}
           github-token: ${{ github.token }}
         continue-on-error: true
 
-      # withastro/action v6.1.1
-      - uses: withastro/action@b7d53628f8b666036b0238aadb0b984a2a489f26
+      - name: Upload Pages artifact
+        # actions/upload-pages-artifact v5.0.0
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9
         with:
-          path: ./docs
+          path: docs/_build/html
 
   deploy:
     needs: build

@@ -1,15 +1,14 @@
----
-# SPDX-FileCopyrightText: 2026 Arcangelo Massari <arcangelo.massari@unibo.it>
-#
-# SPDX-License-Identifier: ISC
+<!--
+SPDX-FileCopyrightText: 2026 Arcangelo Massari <arcangelo.massari@unibo.it>
 
-title: Installation
-description: How to install and set up the tool.
----
+SPDX-License-Identifier: ISC
+-->
+
+# Installation
 
 The tool requires Python 3.11, 3.12, or 3.13.
 
-## Installation
+## Install the package
 
 Clone the repository and install with [uv](https://docs.astral.sh/uv/):
 

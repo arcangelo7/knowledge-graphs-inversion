@@ -1,11 +1,10 @@
----
-# SPDX-FileCopyrightText: 2026 Arcangelo Massari <arcangelo.massari@unibo.it>
-#
-# SPDX-License-Identifier: ISC
+<!--
+SPDX-FileCopyrightText: 2026 Arcangelo Massari <arcangelo.massari@unibo.it>
 
-title: Usage
-description: How to use the tool as a Python library.
----
+SPDX-License-Identifier: ISC
+-->
+
+# Usage
 
 The tool exposes a single entry point: the `reconstruct()` function. It takes an R2RML or RML mapping file and an RDF graph, runs the inversion, and returns the reconstructed data.
 
@@ -102,5 +101,5 @@ The exceptions are:
 |---|---|
 | `UnsupportedMappingError` | The mapping uses SQL queries as logical tables, which the algorithm does not handle. |
 | `MappingError` | The mapping document is syntactically invalid or violates the R2RML specification. |
-| `NonInvertibleError` | The mapping is valid but the transformation is not reversible. See [limitations](/knowledge-graphs-inversion/concepts/limitations/). |
+| `NonInvertibleError` | The mapping is valid but the transformation is not reversible. See [limitations](limitations). |
 | `NoDataError` | The SPARQL queries returned no results, or the RDF input file does not exist. |

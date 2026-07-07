@@ -1,11 +1,10 @@
----
-# SPDX-FileCopyrightText: 2026 Arcangelo Massari <arcangelo.massari@unibo.it>
-#
-# SPDX-License-Identifier: ISC
+<!--
+SPDX-FileCopyrightText: 2026 Arcangelo Massari <arcangelo.massari@unibo.it>
 
-title: How inversion works
-description: The algorithm behind mapping inversion.
----
+SPDX-License-Identifier: ISC
+-->
+
+# How inversion works
 
 The starting point is a relational database table, an [R2RML](https://www.w3.org/TR/r2rml/) or [RML](https://kg-construct.github.io/rml-core/spec/docs/) mapping that was used to transform the table into RDF, and the resulting RDF graph. The goal is to reconstruct the original relational data from the RDF graph using only the mapping document, without access to the original database.
 

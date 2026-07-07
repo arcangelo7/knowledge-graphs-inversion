@@ -1,11 +1,10 @@
----
-# SPDX-FileCopyrightText: 2026 Arcangelo Massari <arcangelo.massari@unibo.it>
-#
-# SPDX-License-Identifier: ISC
+<!--
+SPDX-FileCopyrightText: 2026 Arcangelo Massari <arcangelo.massari@unibo.it>
 
-title: Benchmarking
-description: Performance evaluation with KROWN Mappings scenarios.
----
+SPDX-License-Identifier: ISC
+-->
+
+# Benchmarking
 
 The project measures inversion performance on scenarios produced by the [KROWN](https://github.com/kg-construct/KROWN) data generator. The runner invokes KROWN's `exgentool`, loads the relational data into PostgreSQL, materializes RDF with RMLMapper, runs the inversion, and collects execution times.
 

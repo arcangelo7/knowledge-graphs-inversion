@@ -2,6 +2,8 @@ __pycache__
 .coverage
 htmlcov/
 individual-logs/
+docs/_build/
+.vscode/
 
 # Benchmark results and generated data
 benchmarks/*/results/

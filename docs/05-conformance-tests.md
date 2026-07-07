@@ -1,11 +1,10 @@
----
-# SPDX-FileCopyrightText: 2026 Arcangelo Massari <arcangelo.massari@unibo.it>
-#
-# SPDX-License-Identifier: ISC
+<!--
+SPDX-FileCopyrightText: 2026 Arcangelo Massari <arcangelo.massari@unibo.it>
 
-title: Conformance tests
-description: Validation against the R2RML and RML test suites
----
+SPDX-License-Identifier: ISC
+-->
+
+# Conformance tests
 
 The algorithm is validated against two test suites: the W3C [R2RML](https://www.w3.org/TR/r2rml/) test suite and the [RML](https://kg-construct.github.io/rml-core/spec/docs/) RDB test cases from a [fork of rml-io-registry](https://github.com/arcangelo7/rml-io-registry/tree/add-rdb-core-tests). Both are included as git submodules. Forward mapping for both suites is performed with [RMLMapper](https://github.com/RMLio/rmlmapper-java) v8.1.0.
 
