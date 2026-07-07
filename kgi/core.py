@@ -58,7 +58,11 @@ from kgi.schema import (
     apply_schema_types,
 )
 from kgi.templates import RDBTemplate
-from kgi.utils import insert_columns, normalize_sql_identifier
+from kgi.utils import (
+    insert_columns,
+    normalize_sql_identifier,
+    signature_value as _signature_value,
+)
 
 
 def get_logger() -> logging.Logger:
@@ -218,16 +222,6 @@ def _reference_set(value: object) -> set[str]:
     return {str(item) for item in value}
 
 
-def _signature_value(value: object) -> str:
-    if isinstance(value, list):
-        return repr(tuple(str(item) for item in value))
-    if value is None or value is pd.NA or value is pd.NaT:
-        return ""
-    if isinstance(value, float) and pd.isna(value):
-        return ""
-    return str(value)
-
-
 def _subject_signature(subject_rules: pd.DataFrame) -> frozenset[tuple[str, ...]]:
     signature_columns = [
         "predicate_map_type",
@@ -241,7 +235,7 @@ def _subject_signature(subject_rules: pd.DataFrame) -> frozenset[tuple[str, ...]
     signature = []
     for _, rule in subject_rules.iterrows():
         signature.append(
-            tuple(_signature_value(rule.get(column)) for column in signature_columns)
+            tuple(_signature_value(rule[column]) for column in signature_columns)
         )
     return frozenset(signature)
 

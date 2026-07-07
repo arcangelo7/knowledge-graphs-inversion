@@ -192,6 +192,16 @@ def url_decode(url):
         return url
 
 
+def signature_value(value: object) -> str:
+    if isinstance(value, list):
+        return repr(tuple(str(item) for item in value))
+    if value is None or value is pd.NA or value is pd.NaT:
+        return ""
+    if isinstance(value, float) and pd.isna(value):
+        return ""
+    return str(value)
+
+
 def insert_columns(df: pd.DataFrame, pure=False) -> pd.DataFrame:
     """Insert reference columns into mapping rules DataFrame."""
     if pure:

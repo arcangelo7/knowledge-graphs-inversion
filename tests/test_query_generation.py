@@ -14,7 +14,7 @@ from kgi.constants import (
 )
 from kgi.core import _check_for_ambiguous_subject_templates
 from kgi.exceptions import NonInvertibleError
-from kgi.query import Query
+from kgi.query import Query, _select_query_source_rules
 from kgi.triples import QueryTriple, SubjectTriple
 from kgi.utils import Codex, IdGenerator, insert_columns
 
@@ -32,6 +32,9 @@ def _rule(subject_column: str, object_column: str) -> dict[str, object]:
         "object_map_type": RML_REFERENCE,
         "object_map_value": object_column,
         "object_termtype": RML_LITERAL,
+        "lang_datatype": None,
+        "lang_datatype_map_type": None,
+        "lang_datatype_map_value": None,
         "object_join_conditions": None,
         "graph_map_type": None,
         "graph_map_value": None,
@@ -121,3 +124,43 @@ def test_ambiguous_subject_only_columns_are_non_invertible() -> None:
         "Subject templates for table 'data' contain columns that are not "
         "observable outside indistinguishable subjects: p2"
     )
+
+
+def test_redundant_subject_groups_use_single_query_group() -> None:
+    mappings = pd.DataFrame(
+        [
+            _predicate_rule(subject_column, object_column)
+            for subject_column in ["p1", "p2", "p3", "p4", "p5"]
+            for object_column in ["p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8"]
+        ]
+    )
+    insert_columns(mappings)
+
+    query_source_rules = _select_query_source_rules(mappings)
+    query = Query(
+        [QueryTriple(rule) for _, rule in query_source_rules.iterrows()]
+        + [
+            SubjectTriple(subject_rules.iloc[0])
+            for _, subject_rules in query_source_rules.groupby(
+                "subject_map_value", dropna=False
+            )
+        ]
+    )
+    generated = query.generate(mappings)
+
+    assert generated is not None
+    assert len(query_source_rules) == 8
+    assert query_source_rules["subject_map_value"].unique().tolist() == [
+        "http://example.com/table/{p1}"
+    ]
+    assert (
+        generated.count(" ."),
+        generated.count("FILTER("),
+        generated.count("BIND("),
+    ) == (8, 2, 1)
+
+
+def _predicate_rule(subject_column: str, object_column: str) -> dict[str, object]:
+    rule = _rule(subject_column, object_column)
+    rule["predicate_map_value"] = f"http://example.com/{object_column}"
+    return rule

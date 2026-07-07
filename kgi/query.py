@@ -18,7 +18,37 @@ from kgi.constants import (
     RML_TEMPLATE,
 )
 from kgi.triples import QueryTriple, SubjectTriple, extract_from_iri_template
-from kgi.utils import Codex, IdGenerator, Identifier, sparql_to_python_type, url_decode
+from kgi.utils import (
+    Codex,
+    IdGenerator,
+    Identifier,
+    signature_value,
+    sparql_to_python_type,
+    url_decode,
+)
+
+GROUP_SIGNATURE_COLUMNS = [
+    "predicate_map_type",
+    "predicate_map_value",
+    "predicate_references_template",
+    "predicate_references",
+    "predicate_reference_count",
+    "object_map_type",
+    "object_map_value",
+    "object_references_template",
+    "object_references",
+    "object_reference_count",
+    "object_termtype",
+    "lang_datatype",
+    "lang_datatype_map_type",
+    "lang_datatype_map_value",
+    "graph_map_type",
+    "graph_map_value",
+    "graph_references_template",
+    "graph_references",
+    "graph_reference_count",
+    "object_join_conditions",
+]
 
 
 class Query:
@@ -236,6 +266,51 @@ def _json_sparql_to_dataframe(json_result: str) -> pd.DataFrame:
     return pd.DataFrame(data, columns=columns)
 
 
+def _subject_group_signature(subject_rules: pd.DataFrame) -> frozenset[tuple[str, ...]]:
+    signature = []
+    for _, rule in subject_rules.iterrows():
+        signature.append(
+            tuple(signature_value(rule[column]) for column in GROUP_SIGNATURE_COLUMNS)
+        )
+    return frozenset(signature)
+
+
+def _subject_group_references(subject_rules: pd.DataFrame) -> tuple[set[str], set[str]]:
+    subject_references: set[str] = set()
+    non_subject_references: set[str] = set()
+    for _, rule in subject_rules.iterrows():
+        triple = QueryTriple(rule)
+        subject_references.update(triple.subject_references)
+        non_subject_references.update(triple.predicate_references)
+        non_subject_references.update(triple.object_references)
+        non_subject_references.update(triple.graph_references)
+    return subject_references, non_subject_references
+
+
+def _select_query_source_rules(source_rules: pd.DataFrame) -> pd.DataFrame:
+    selected_groups = []
+    reducible_signatures: set[frozenset[tuple[str, ...]]] = set()
+
+    for _, subject_rules in source_rules.groupby("subject_map_value", dropna=False):
+        signature = _subject_group_signature(subject_rules)
+        subject_references, non_subject_references = _subject_group_references(
+            subject_rules
+        )
+        is_reducible = subject_references <= non_subject_references
+
+        if is_reducible and signature in reducible_signatures:
+            continue
+
+        selected_groups.append(subject_rules)
+        if is_reducible:
+            reducible_signatures.add(signature)
+
+    if not selected_groups:
+        return source_rules.iloc[0:0]
+
+    return pd.concat(selected_groups)
+
+
 def retrieve_data(
     mapping_rules: pd.DataFrame,
     source_rules: pd.DataFrame,
@@ -243,13 +318,14 @@ def retrieve_data(
     decode_columns: bool = False,
 ) -> tuple[pd.DataFrame | None, str | None]:
     """Retrieve data from SPARQL endpoint using mapping rules."""
+    query_source_rules = _select_query_source_rules(source_rules)
     triples: list[QueryTriple] = [
         QueryTriple(rule)
-        for _, rule in source_rules.iterrows()
+        for _, rule in query_source_rules.iterrows()
         if rule["object_map_type"] not in [RML_BLANK_NODE]
     ]
 
-    subject_groups = list(source_rules.groupby("subject_map_value", dropna=False))
+    subject_groups = list(query_source_rules.groupby("subject_map_value", dropna=False))
     triples.extend(
         SubjectTriple(subject_rules.iloc[0]) for _, subject_rules in subject_groups
     )
