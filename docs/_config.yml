@@ -21,4 +21,4 @@ repository:
 html:
   use_issues_button: true
   use_repository_button: true
-  baseurl: https://arcangelo7.github.io/knowledge-graphs-inversion
+  baseurl: https://arcangelo7.github.io/knowledge-graphs-inversion/

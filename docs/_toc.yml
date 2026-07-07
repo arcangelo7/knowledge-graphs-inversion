@@ -3,20 +3,20 @@
 # SPDX-License-Identifier: ISC
 
 format: jb-book
-root: intro
+root: index
 parts:
   - caption: Getting started
     numbered: false
     chapters:
-      - file: 01-installation
-      - file: 02-usage
+      - file: getting-started/installation
+      - file: getting-started/usage
   - caption: Concepts
     numbered: false
     chapters:
-      - file: 03-how-it-works
-      - file: 04-limitations
+      - file: concepts/how-it-works
+      - file: concepts/limitations
   - caption: Evaluation
     numbered: false
     chapters:
-      - file: 05-conformance-tests
-      - file: 06-benchmarking
+      - file: evaluation/conformance-tests
+      - file: evaluation/benchmarking

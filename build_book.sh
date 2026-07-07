@@ -7,4 +7,4 @@
 set -euo pipefail
 
 uv run jupyter-book clean docs
-uv run jupyter-book build docs
+uv run jupyter-book build --builder dirhtml docs
