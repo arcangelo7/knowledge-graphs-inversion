@@ -10,3 +10,6 @@
 	url = https://github.com/arcangelo7/rml-io-registry.git
 	branch = add-rdb-core-tests
 	ignore = dirty
+[submodule "gtfs-bench"]
+	path = gtfs-bench
+	url = https://github.com/oeg-upm/gtfs-bench.git

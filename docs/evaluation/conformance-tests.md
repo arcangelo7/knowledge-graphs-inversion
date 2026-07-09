@@ -27,51 +27,13 @@ Test cases are therefore classified into five outcomes:
 | Not supported | Engine limitation unrelated to invertibility (e.g. SQL queries as logical sources) |
 | Forward mapping failed | Error test case: the forward mapping produces no RDF output |
 
-## Setup
-
-Initialize the submodule:
-
-```bash
-git submodule update --init --recursive
-```
-
 ## Running the test suite
 
-There are two ways to run the conformance tests: from the terminal via pytest, or through a web dashboard that provides richer feedback for debugging.
-
-### Terminal
-
-Pytest manages the PostgreSQL containers automatically. Docker must be running, and Java 21 or newer must be available for RMLMapper. The RMLMapper v8.1.0 jar is downloaded automatically on the first forward mapping run:
+Use the root Makefile entry point. Docker must be running, and Java 21 or newer must be available for RMLMapper. The RMLMapper v8.1.0 jar is downloaded automatically on the first forward mapping run:
 
 ```bash
-uv run pytest -v
+make test-conformance
 ```
-
-To run a single test case from either suite:
-
-```bash
-uv run pytest tests/test_conformance.py::test_r2rml_conformance[R2RMLTC0001a] -v
-```
-
-```bash
-uv run pytest tests/test_conformance.py::test_rml_conformance[RMLTC0001a-RDB] -v
-```
-
-To generate an HTML coverage report:
-
-```bash
-uv run pytest --cov --cov-report=html -v
-```
-
-### Web dashboard
-
-The dashboard runs through Docker Compose and lets you run individual test cases or the full suite. For each test case it shows the expected RDF output, the actual RDF output, the mapping, the inversion status, and a side-by-side comparison of the original and inverted database content, which is useful when diagnosing why a particular inversion fails.
-
-```bash
-docker compose up
-```
-
-The interface is available at `http://localhost:5000`. Results are saved to `test_results/` as JSON and Markdown reports.
 
 ## W3C R2RML test suite
 

@@ -7,6 +7,7 @@ FROM python:3.12-slim
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     git \
+    vim-tiny \
     wget \
     postgresql-client \
     openjdk-21-jre-headless \

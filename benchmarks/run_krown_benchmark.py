@@ -759,42 +759,13 @@ def main():  # pragma: no cover
         description="KROWN Benchmark Runner for Knowledge Graph Inversion (Docker)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Docker Usage:
-  # Start all services and run benchmark
-  docker compose -f docker-compose.benchmark.yml up
-
-  # Run in detached mode
-  docker compose -f docker-compose.benchmark.yml up -d
-
-  # View logs
-  docker compose -f docker-compose.benchmark.yml logs -f benchmark
-
-  # Stop all services
-  docker compose -f docker-compose.benchmark.yml down --remove-orphans
-
-  # Clean volumes
-  docker compose -f docker-compose.benchmark.yml down -v --remove-orphans
-
-Command Line Options (passed to container):
-  docker compose -f docker-compose.benchmark.yml run --rm benchmark benchmark
-  docker compose -f docker-compose.benchmark.yml run --rm benchmark benchmark --iterations 10
+Usage:
+  make benchmark-krown I=10
 
 Notes:
   # When using --iterations > 1, plots are automatically generated
   # Results and plots are saved to benchmarks/krown/results/
         """,
-    )
-
-    parser.add_argument(
-        "--validate",
-        action="store_true",
-        help="Validate that inverted data matches original input data",
-    )
-
-    parser.add_argument(
-        "--no-cleanup",
-        action="store_true",
-        help="Keep database tables after benchmark for manual inspection (default: cleanup all tables)",
     )
 
     parser.add_argument(
@@ -807,8 +778,8 @@ Notes:
     args = parser.parse_args()
 
     runner = KrownBenchmarkRunner(
-        validate=args.validate,
-        cleanup_tables=not args.no_cleanup,
+        validate=True,
+        cleanup_tables=True,
         iterations=args.iterations,
     )
     return runner.run_benchmark()

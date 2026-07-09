@@ -21,6 +21,22 @@ services:
       retries: 5
     restart: unless-stopped
 
+  gtfs_mysql:
+    image: mysql:5.7
+    container_name: kgi-gtfs-mysql
+    profiles:
+      - gtfs
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+    volumes:
+      - ./gtfs-bench/generation/mysql_data/dump-gtfs-new.sql:/docker-entrypoint-initdb.d/01-dump.sql:ro
+      - ./benchmarks/gtfs/mysql-grants.sql:/docker-entrypoint-initdb.d/02-grants.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   benchmark:
     build: .
     container_name: kgi-benchmark
@@ -35,9 +51,14 @@ services:
       - BENCHMARK_DB_USER=r2rml
       - BENCHMARK_DB_PASSWORD=r2rml
       - BENCHMARK_DB_NAME=r2rml
+      - GTFS_MYSQL_HOST=gtfs_mysql
+      - GTFS_MYSQL_PORT=3306
+      - GTFS_MYSQL_DATABASE=gtfs
+      - GTFS_MYSQL_USER=oeg
+      - GTFS_MYSQL_PASSWORD=oeg
     depends_on:
       benchmark_postgresql:
         condition: service_healthy
-    command: ["benchmark"]  # Use the benchmark mode of the unified container
+    command: ["krown-benchmark"]
 volumes:
   benchmark-venv:

@@ -40,8 +40,8 @@ ENV/
 
 # Test and benchmark results
 r2rml_inversion_test_results/
-benchmarks/krown/results/
-benchmarks/krown/scenarios/
+benchmarks/*/results/
+benchmarks/*/scenarios/
 test_logs/
 
 # Logs

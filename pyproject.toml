@@ -78,6 +78,8 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = ["--ignore=benchmarks"]
+norecursedirs = ["benchmarks"]
 
 [tool.pyright]
 include = [

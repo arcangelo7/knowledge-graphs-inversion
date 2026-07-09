@@ -46,10 +46,20 @@ for table in result:
 
 ## Testing
 
-Conformance tests require [Docker](https://www.docker.com/) to run the PostgreSQL databases and Java 21 or newer for RMLMapper v8.1.0:
+Conformance tests require [Docker](https://www.docker.com/) to run the PostgreSQL databases and Java 21 or newer for RMLMapper v8.1.0. Use the root Makefile entry point:
 
 ```bash
-uv run pytest -v
+make test-conformance
+```
+
+## Benchmarking
+
+Benchmark targets initialize submodules, run the needed Docker Compose services, validate completed inversions, and clean up Compose services on exit:
+
+```bash
+make benchmark-krown I=10
+make benchmark-gtfs I=10 S=1,5,10
+make benchmark-all I=10 S=1,5,10
 ```
 
 ## License

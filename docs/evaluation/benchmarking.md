@@ -6,27 +6,27 @@ SPDX-License-Identifier: ISC
 
 # Benchmarking
 
-The benchmark uses [KROWN](https://github.com/kg-construct/KROWN) `Mappings` scenarios. Each run loads generated data into PostgreSQL, materializes RDF with RMLMapper, runs KGI inversion, and validates that only the unmapped `id` column is lost.
+The benchmark suite includes [KROWN](https://github.com/kg-construct/KROWN) `Mappings` scenarios and [GTFS Bench](https://github.com/oeg-upm/gtfs-bench) generated transit scenarios. Each run loads generated data into PostgreSQL, materializes RDF with RMLMapper, runs KGI inversion, and validates reconstructed tables when inversion completes.
+
+KROWN scenarios are expected to be partial because the unmapped `id` column is lost. GTFS scenarios use the official generated data and the official R2RML mapping without altering either one; the benchmark records the observed KGI outcome, including non-invertible or unsupported mappings.
 
 ## Run
 
-Initialize the KROWN submodule once:
+The root Makefile provides the supported entry points:
 
 ```bash
-git submodule update --init --recursive
+make benchmark-krown I=10
 ```
-
-Run the benchmark with validation:
 
 ```bash
-docker compose -f docker-compose.benchmark.yml run --rm benchmark benchmark --iterations 10 --validate
+make benchmark-gtfs I=10 S=1,5,10
 ```
-
-Stop benchmark services:
 
 ```bash
-docker compose -f docker-compose.benchmark.yml down --remove-orphans
+make benchmark-all I=10 S=1,5,10
 ```
+
+`I` is the number of iterations. `S` is a comma-separated list of GTFS scales.
 
 ## PyOxyGraph run with ten iterations (2026-07-07)
 

@@ -24,10 +24,14 @@ cd knowledge-graphs-inversion
 uv sync
 ```
 
-Conformance tests and benchmarks also require [Docker](https://www.docker.com/) for the PostgreSQL databases, Java 21 or newer for RMLMapper v8.1.0, and the git submodules:
+Conformance tests and benchmarks also require [Docker](https://www.docker.com/) for the PostgreSQL and GTFS MySQL databases and Java 21 or newer for RMLMapper v8.1.0. The root Makefile initializes submodules automatically for benchmark runs:
 
 ```bash
-git submodule update --init --recursive
+make benchmark-krown I=10
+```
+
+```bash
+make benchmark-gtfs I=10 S=1,5,10
 ```
 
 ## Dependencies
