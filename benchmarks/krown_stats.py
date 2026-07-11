@@ -24,10 +24,15 @@ class TimingStatistics(TypedDict):
 
 
 class ScenarioMetadata(TypedDict):
-    triples_maps_count: object
-    predicate_object_maps_count: object
-    mapping_size_bytes: object
-    data_size_bytes: object
+    triples_maps_count: int
+    predicate_object_maps_count: int
+    mapping_size_bytes: int
+    data_size_bytes: int
+    rdf_triples: NotRequired[int]
+    number_of_members: NotRequired[int]
+    number_of_properties: NotRequired[int]
+    value_size: NotRequired[int]
+    number_of_columns: NotRequired[int]
 
 
 class ScenarioStatistics(TypedDict):
@@ -36,17 +41,9 @@ class ScenarioStatistics(TypedDict):
     inversion_time: TimingStatistics
     inversion_overhead_percentage: TimingStatistics
     n_runs: int
-    completed_runs: int
-    failed_runs: int
     metadata: ScenarioMetadata
     rows_per_second: NotRequired[TimingStatistics]
     cells_per_second: NotRequired[TimingStatistics]
-
-
-def _number(value: object) -> float:
-    if isinstance(value, (int, float)):
-        return float(value)
-    return float(str(value))
 
 
 def calculate_mean_confidence_interval(
@@ -106,42 +103,30 @@ def calculate_timing_statistics(values: list[float]) -> TimingStatistics:
 
 
 def aggregate_scenario_statistics(
-    runs: list[dict[str, object]],
+    runs: list[dict],
 ) -> ScenarioStatistics:
-    execution_times = [_number(run["execution_time"]) for run in runs]
-    timing_breakdowns = []
-    for run in runs:
-        timing_breakdown = run["timing_breakdown"]
-        if not isinstance(timing_breakdown, dict):
-            raise TypeError("timing_breakdown must be a dictionary")
-        timing_breakdowns.append(timing_breakdown)
-
-    first_success = next((run for run in runs if run["status"] == "completed"), None)
-    if first_success is None:
-        raise ValueError("At least one completed run is required")
+    timing_breakdowns = [run["timing_breakdown"] for run in runs]
+    first_run = runs[0]
 
     statistics: ScenarioStatistics = {
-        "execution_time": calculate_timing_statistics(execution_times),
+        "execution_time": calculate_timing_statistics(
+            [run["execution_time"] for run in runs]
+        ),
         "rmlmapper_time": calculate_timing_statistics(
-            [_number(timing["rmlmapper_time"]) for timing in timing_breakdowns]
+            [timing["rmlmapper_time"] for timing in timing_breakdowns]
         ),
         "inversion_time": calculate_timing_statistics(
-            [_number(timing["inversion_time"]) for timing in timing_breakdowns]
+            [timing["inversion_time"] for timing in timing_breakdowns]
         ),
         "inversion_overhead_percentage": calculate_timing_statistics(
-            [
-                _number(timing["inversion_overhead_percentage"])
-                for timing in timing_breakdowns
-            ]
+            [timing["inversion_overhead_percentage"] for timing in timing_breakdowns]
         ),
         "n_runs": len(runs),
-        "completed_runs": len([run for run in runs if run["status"] == "completed"]),
-        "failed_runs": len([run for run in runs if run["status"] == "failed"]),
         "metadata": {
-            "triples_maps_count": first_success["triples_maps_count"],
-            "predicate_object_maps_count": first_success["predicate_object_maps_count"],
-            "mapping_size_bytes": first_success["mapping_size_bytes"],
-            "data_size_bytes": first_success["data_size_bytes"],
+            "triples_maps_count": first_run["triples_maps_count"],
+            "predicate_object_maps_count": first_run["predicate_object_maps_count"],
+            "mapping_size_bytes": first_run["mapping_size_bytes"],
+            "data_size_bytes": first_run["data_size_bytes"],
         },
     }
 

@@ -23,12 +23,14 @@ The benchmark varies one parameter at a time:
 ## Run
 
 ```bash
-make benchmark-krown I=10
+make benchmark-krown I=100
 ```
 
 `I` is the number of iterations.
 
-## PyOxyGraph run with ten iterations (2026-07-11)
+## Results
+
+The results below were collected with 100 iterations per scenario.
 
 The benchmark stores seven distinct results. The same baseline result is shown in all three tables, so the results below contain nine rows: seven distinct results and two repeated views of the baseline.
 
@@ -36,9 +38,9 @@ The benchmark stores seven distinct results. The same baseline result is shown i
 
 | Rows | CSV MiB | RDF triples | RMLMapper (s) | Inversion (s) | Overhead | Rows/s | Cells/s |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1,000 | 0.52 | 5,000 | 1.27 ± 0.07 | 0.54 ± 0.07 | 42.7 ± 6.3% | 1,912 | 11,472 |
-| 10,000 | 5.29 | 50,000 | 1.70 ± 0.08 | 0.88 ± 0.11 | 51.4 ± 5.1% | 11,681 | 70,087 |
-| 50,000 | 26.69 | 250,000 | 3.24 ± 0.13 | 2.41 ± 0.15 | 74.3 ± 3.8% | 20,893 | 125,360 |
+| 1,000 | 0.52 | 5,000 | 1.17 ± 0.00 | 0.57 ± 0.02 | 49.1 ± 2.0% | 1,821 | 10,928 |
+| 10,000 | 5.29 | 50,000 | 1.61 ± 0.01 | 0.82 ± 0.03 | 51.2 ± 1.6% | 12,440 | 74,638 |
+| 50,000 | 26.69 | 250,000 | 2.98 ± 0.01 | 2.22 ± 0.02 | 74.3 ± 0.8% | 22,615 | 135,688 |
 
 ![RMLMapper and inversion times as the number of rows varies.](images/krown_rows_timing.png)
 
@@ -46,9 +48,9 @@ The benchmark stores seven distinct results. The same baseline result is shown i
 
 | Properties | CSV MiB | RDF triples | RMLMapper (s) | Inversion (s) | Overhead | Rows/s | Cells/s |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 3 | 3.19 | 30,000 | 1.62 ± 0.08 | 0.80 ± 0.11 | 49.1 ± 5.3% | 12,899 | 51,594 |
-| 5 | 5.29 | 50,000 | 1.70 ± 0.08 | 0.88 ± 0.11 | 51.4 ± 5.1% | 11,681 | 70,087 |
-| 8 | 8.43 | 80,000 | 1.91 ± 0.06 | 1.11 ± 0.09 | 58.1 ± 4.3% | 9,134 | 82,202 |
+| 3 | 3.19 | 30,000 | 1.46 ± 0.01 | 0.71 ± 0.03 | 48.8 ± 1.9% | 14,573 | 58,290 |
+| 5 | 5.29 | 50,000 | 1.61 ± 0.01 | 0.82 ± 0.03 | 51.2 ± 1.6% | 12,440 | 74,638 |
+| 8 | 8.43 | 80,000 | 1.78 ± 0.01 | 0.99 ± 0.02 | 55.5 ± 1.2% | 10,253 | 92,276 |
 
 ![RMLMapper and inversion times as the number of properties varies.](images/krown_properties_timing.png)
 
@@ -56,8 +58,8 @@ The benchmark stores seven distinct results. The same baseline result is shown i
 
 | Value size | CSV MiB | RDF triples | RMLMapper (s) | Inversion (s) | Overhead | Rows/s | Cells/s |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 50 | 2.90 | 50,000 | 1.64 ± 0.08 | 0.84 ± 0.08 | 51.3 ± 4.8% | 12,076 | 72,456 |
-| 100 | 5.29 | 50,000 | 1.70 ± 0.08 | 0.88 ± 0.11 | 51.4 ± 5.1% | 11,681 | 70,087 |
-| 150 | 7.67 | 50,000 | 1.84 ± 0.06 | 0.96 ± 0.13 | 52.0 ± 5.7% | 10,724 | 64,346 |
+| 50 | 2.90 | 50,000 | 1.51 ± 0.01 | 0.75 ± 0.02 | 49.9 ± 1.3% | 13,474 | 80,844 |
+| 100 | 5.29 | 50,000 | 1.61 ± 0.01 | 0.82 ± 0.03 | 51.2 ± 1.6% | 12,440 | 74,638 |
+| 150 | 7.67 | 50,000 | 1.67 ± 0.01 | 0.83 ± 0.02 | 50.0 ± 1.2% | 12,172 | 73,031 |
 
 ![RMLMapper and inversion times as the value size varies.](images/krown_value_size_timing.png)

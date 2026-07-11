@@ -18,7 +18,6 @@ path = [
     "README.md",
     "RELEASE.md",
     "PLAN.md",
-    "plan/**",
     "rmlmapper*.jar",
 ]
 SPDX-FileCopyrightText = "2026 Arcangelo Massari <arcangelo.massari@unibo.it>"
