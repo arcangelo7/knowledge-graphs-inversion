@@ -12,7 +12,7 @@ path = [
     "uv.lock",
     "output.nt",
     "docs/.gitignore",
-    "docs/evaluation/images/*.png",
+    "docs/benchmarking/images/*.png",
     "benchmarks/krown/config/**",
     "CHANGELOG.md",
     "README.md",

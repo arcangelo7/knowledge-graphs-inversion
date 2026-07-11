@@ -15,8 +15,12 @@ parts:
     chapters:
       - file: concepts/how-it-works
       - file: concepts/limitations
-  - caption: Evaluation
+  - caption: Validation
     numbered: false
     chapters:
-      - file: evaluation/conformance-tests
-      - file: evaluation/benchmarking
+      - file: validation/conformance-tests
+  - caption: Benchmarking
+    numbered: false
+    chapters:
+      - file: benchmarking/krown
+      - file: benchmarking/gtfs

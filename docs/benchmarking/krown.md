@@ -4,11 +4,11 @@ SPDX-FileCopyrightText: 2026 Arcangelo Massari <arcangelo.massari@unibo.it>
 SPDX-License-Identifier: ISC
 -->
 
-# Benchmarking
+# KROWN
 
-The benchmark suite includes fully invertible [KROWN](https://github.com/kg-construct/KROWN) `RawData` scenarios and [GTFS Bench](https://github.com/oeg-upm/gtfs-bench) generated transit scenarios. Each run loads generated data into PostgreSQL, materializes RDF with RMLMapper, runs KGI inversion, and validates the reconstructed tables.
+The [KROWN](https://github.com/kg-construct/KROWN) benchmark uses fully invertible `RawData` scenarios. Each run loads generated data into PostgreSQL, materializes RDF with RMLMapper, runs KGI inversion, and validates the reconstructed table.
 
-The KROWN benchmark varies one parameter at a time:
+The benchmark varies one parameter at a time:
 
 | Scenario | Rows | Properties | `value_size` | Series |
 | --- | ---: | ---: | ---: | --- |
@@ -20,31 +20,17 @@ The KROWN benchmark varies one parameter at a time:
 | `value_size_low` | 10,000 | 5 | 50 | Value size |
 | `value_size_high` | 10,000 | 5 | 150 | Value size |
 
-The benchmark stores seven distinct results. The same baseline result is shown in all three tables, so the documentation contains nine rows: seven distinct results and two repeated views of the baseline. Every KROWN iteration must reconstruct the column order, row count, values, and row multiplicities exactly.
-
-GTFS scenarios use the official generated data and the official R2RML mapping without altering either one. The benchmark records the observed KGI outcome, including non-invertible or unsupported mappings.
-
 ## Run
-
-The root Makefile provides the supported entry points:
 
 ```bash
 make benchmark-krown I=10
 ```
 
-```bash
-make benchmark-gtfs I=10 S=1,5,10
-```
-
-```bash
-make benchmark-all I=10 S=1,5,10
-```
-
-`I` is the number of iterations. `S` is a comma-separated list of GTFS scales.
-
-## KROWN output
+`I` is the number of iterations.
 
 ## PyOxyGraph run with ten iterations (2026-07-11)
+
+The benchmark stores seven distinct results. The same baseline result is shown in all three tables, so the results below contain nine rows: seven distinct results and two repeated views of the baseline.
 
 ### Rows
 
