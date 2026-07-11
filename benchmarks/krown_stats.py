@@ -2,173 +2,147 @@
 #
 # SPDX-License-Identifier: ISC
 
-"""Statistical analysis module for KROWN benchmark results.
-
-This module provides functions to calculate statistical metrics from benchmark runs,
-including confidence intervals, quartiles, and outlier detection.
-"""
+from typing import NotRequired, TypedDict
 
 import numpy as np
 from scipy import stats
-from typing import Dict, List, Tuple, Any
+
+
+class TimingStatistics(TypedDict):
+    mean: float
+    median: float
+    std: float
+    min: float
+    max: float
+    q1: float
+    q3: float
+    iqr: float
+    ci_95_lower: float
+    ci_95_upper: float
+    outliers: list[float]
+    n: int
+
+
+class ScenarioMetadata(TypedDict):
+    triples_maps_count: object
+    predicate_object_maps_count: object
+    mapping_size_bytes: object
+    data_size_bytes: object
+
+
+class ScenarioStatistics(TypedDict):
+    execution_time: TimingStatistics
+    rmlmapper_time: TimingStatistics
+    inversion_time: TimingStatistics
+    inversion_overhead_percentage: TimingStatistics
+    n_runs: int
+    completed_runs: int
+    failed_runs: int
+    metadata: ScenarioMetadata
+    rows_per_second: NotRequired[TimingStatistics]
+    cells_per_second: NotRequired[TimingStatistics]
+
+
+def _number(value: object) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    return float(str(value))
 
 
 def calculate_mean_confidence_interval(
     data: np.ndarray, confidence: float = 0.95
-) -> Tuple[float, float, float]:
-    """Calculate mean and its confidence interval using t-Student distribution.
+) -> tuple[float, float, float]:
+    if len(data) == 0:
+        raise ValueError("At least one observation is required")
 
-    Args:
-        data: Array of numeric values (must have at least 2 elements)
-        confidence: Confidence level (default 0.95 for 95% CI)
+    mean = float(np.mean(data))
+    if len(data) == 1:
+        return mean, mean, mean
 
-    Returns:
-        Tuple of (mean, ci_lower, ci_upper)
-    """
-    n = len(data)
-    mean_val = float(np.mean(data))
+    standard_error = float(stats.sem(data))
+    if standard_error == 0 or np.isnan(standard_error):
+        return mean, mean, mean
 
-    if n == 1:
-        # Single observation: no confidence interval
-        return (mean_val, mean_val, mean_val)
-
-    # Calculate 95% CI using t-Student distribution
-    ci = stats.t.interval(confidence, n - 1, loc=mean_val, scale=stats.sem(data))
-    ci_lower = float(ci[0])
-    ci_upper = float(ci[1])
-
-    return (mean_val, ci_lower, ci_upper)
+    lower, upper = stats.t.interval(
+        confidence,
+        len(data) - 1,
+        loc=mean,
+        scale=standard_error,
+    )
+    return mean, float(lower), float(upper)
 
 
-def detect_outliers_iqr(data: np.ndarray) -> List[float]:
-    """Detect outliers using the IQR (Interquartile Range) method.
-
-    Outliers are values outside [Q1 - 1.5*IQR, Q3 + 1.5*IQR].
-
-    Args:
-        data: Array of numeric values (must have at least 4 elements)
-
-    Returns:
-        List of outlier values
-    """
-    q1 = np.percentile(data, 25)
-    q3 = np.percentile(data, 75)
-    iqr = q3 - q1
-
-    lower_bound = q1 - 1.5 * iqr
-    upper_bound = q3 + 1.5 * iqr
-
-    outliers = [float(x) for x in data if x < lower_bound or x > upper_bound]
-    return outliers
+def detect_outliers_iqr(data: np.ndarray) -> list[float]:
+    first_quartile = np.percentile(data, 25)
+    third_quartile = np.percentile(data, 75)
+    interquartile_range = third_quartile - first_quartile
+    lower_bound = first_quartile - 1.5 * interquartile_range
+    upper_bound = third_quartile + 1.5 * interquartile_range
+    return [
+        float(value) for value in data if value < lower_bound or value > upper_bound
+    ]
 
 
-def calculate_timing_statistics(values: List[float]) -> Dict[str, Any]:
-    """Calculate comprehensive statistics for timing measurements.
-
-    Args:
-        values: List of timing values from multiple benchmark runs (must not be empty)
-
-    Returns:
-        Dictionary containing:
-            - mean: Average value
-            - median: Middle value
-            - std: Standard deviation
-            - min: Minimum value
-            - max: Maximum value
-            - q1: 25th percentile (first quartile)
-            - q3: 75th percentile (third quartile)
-            - iqr: Interquartile range (Q3 - Q1)
-            - ci_95_lower: Lower bound of 95% confidence interval
-            - ci_95_upper: Upper bound of 95% confidence interval
-            - outliers: List of outlier values
-            - n: Number of observations
-    """
+def calculate_timing_statistics(values: list[float]) -> TimingStatistics:
     data = np.array(values, dtype=float)
-    mean_val, ci_lower, ci_upper = calculate_mean_confidence_interval(data)
-
-    q1 = float(np.percentile(data, 25))
-    q3 = float(np.percentile(data, 75))
-    iqr = q3 - q1
-
-    outliers = detect_outliers_iqr(data)
+    mean, confidence_low, confidence_high = calculate_mean_confidence_interval(data)
+    first_quartile = float(np.percentile(data, 25))
+    third_quartile = float(np.percentile(data, 75))
 
     return {
-        "mean": mean_val,
+        "mean": mean,
         "median": float(np.median(data)),
         "std": float(np.std(data, ddof=1)) if len(data) > 1 else 0.0,
         "min": float(np.min(data)),
         "max": float(np.max(data)),
-        "q1": q1,
-        "q3": q3,
-        "iqr": iqr,
-        "ci_95_lower": ci_lower,
-        "ci_95_upper": ci_upper,
-        "outliers": outliers,
+        "q1": first_quartile,
+        "q3": third_quartile,
+        "iqr": third_quartile - first_quartile,
+        "ci_95_lower": confidence_low,
+        "ci_95_upper": confidence_high,
+        "outliers": detect_outliers_iqr(data),
         "n": len(data),
     }
 
 
-def aggregate_scenario_statistics(runs: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Aggregate statistics for a single scenario across multiple runs.
+def aggregate_scenario_statistics(
+    runs: list[dict[str, object]],
+) -> ScenarioStatistics:
+    execution_times = [_number(run["execution_time"]) for run in runs]
+    timing_breakdowns = []
+    for run in runs:
+        timing_breakdown = run["timing_breakdown"]
+        if not isinstance(timing_breakdown, dict):
+            raise TypeError("timing_breakdown must be a dictionary")
+        timing_breakdowns.append(timing_breakdown)
 
-    Args:
-        runs: List of result dictionaries from multiple benchmark runs
+    first_success = next((run for run in runs if run["status"] == "completed"), None)
+    if first_success is None:
+        raise ValueError("At least one completed run is required")
 
-    Returns:
-        Dictionary containing statistics for all timing metrics
-    """
-    # Extract timing values from all runs
-    execution_times = [r["execution_time"] for r in runs]
-
-    timing_breakdown = [r["timing_breakdown"] for r in runs]
-    rmlmapper_times = [tb["rmlmapper_time"] for tb in timing_breakdown]
-    inversion_times = [tb["inversion_time"] for tb in timing_breakdown]
-    overhead_percentages = [
-        tb["inversion_overhead_percentage"] for tb in timing_breakdown
-    ]
-
-    # Calculate statistics for each metric
-    stats = {
+    statistics: ScenarioStatistics = {
         "execution_time": calculate_timing_statistics(execution_times),
-        "rmlmapper_time": calculate_timing_statistics(rmlmapper_times),
-        "inversion_time": calculate_timing_statistics(inversion_times),
+        "rmlmapper_time": calculate_timing_statistics(
+            [_number(timing["rmlmapper_time"]) for timing in timing_breakdowns]
+        ),
+        "inversion_time": calculate_timing_statistics(
+            [_number(timing["inversion_time"]) for timing in timing_breakdowns]
+        ),
         "inversion_overhead_percentage": calculate_timing_statistics(
-            overhead_percentages
+            [
+                _number(timing["inversion_overhead_percentage"])
+                for timing in timing_breakdowns
+            ]
         ),
         "n_runs": len(runs),
-        "completed_runs": len([r for r in runs if r["status"] == "completed"]),
-        "failed_runs": len([r for r in runs if r["status"] == "failed"]),
-    }
-
-    # Include metadata from first successful run
-    first_success = next((r for r in runs if r["status"] == "completed"), None)
-    if first_success:
-        stats["metadata"] = {
+        "completed_runs": len([run for run in runs if run["status"] == "completed"]),
+        "failed_runs": len([run for run in runs if run["status"] == "failed"]),
+        "metadata": {
             "triples_maps_count": first_success["triples_maps_count"],
             "predicate_object_maps_count": first_success["predicate_object_maps_count"],
             "mapping_size_bytes": first_success["mapping_size_bytes"],
             "data_size_bytes": first_success["data_size_bytes"],
-        }
+        },
+    }
 
-    return stats
-
-
-def get_boxplot_legend_text() -> str:
-    """Get standardized box plot elements description text.
-
-    Returns:
-        Formatted text explaining box plot elements with line wrapping
-    """
-    return (
-        "Box plot elements:\n"
-        "• Box edges: 25th (Q1) and 75th (Q3)\n"
-        "  percentiles (interquartile range, IQR)\n"
-        "• Blue line: median (50th percentile)\n"
-        "• Red diamond: mean\n"
-        "• Green bars: 95% confidence interval\n"
-        "  for the mean (t-Student)\n"
-        "• Whiskers: extend to the most extreme\n"
-        "  data point within 1.5×IQR from box edges\n"
-        "• Circles: outliers (values beyond\n"
-        "  1.5×IQR from box edges)"
-    )
+    return statistics
