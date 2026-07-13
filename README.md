@@ -57,10 +57,12 @@ make test-conformance
 Benchmark targets initialize submodules, run the needed Docker Compose services, validate completed inversions, and clean up Compose services on exit:
 
 ```bash
-make benchmark-krown I=10
+make benchmark-krown I=1 KROWN_SUITES=mappings
 make benchmark-gtfs I=10 S=1,5,10
-make benchmark-all I=10 S=1,5,10
+make benchmark-all I=1 S=1,5,10 KROWN_SUITES=mappings
 ```
+
+The KROWN runner supports `raw`, `mappings`, `named-graphs`, and `joins`. Running without `KROWN_SUITES` selects every official-scale scenario.
 
 ## License
 

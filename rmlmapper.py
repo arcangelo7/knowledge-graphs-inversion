@@ -5,6 +5,7 @@
 import os
 import re
 import subprocess
+import sys
 import urllib.request
 from urllib.parse import urlparse
 
@@ -94,9 +95,36 @@ def run(
     username: str | None = None,
     password: str | None = None,
     timeout: int = 180,
+    java_options: tuple[str, ...] = (),
 ) -> int:
+    result = execute(
+        mapping_path,
+        output_path,
+        serialization,
+        dsn,
+        username,
+        password,
+        timeout,
+        java_options,
+    )
+    if result.returncode != 0:
+        sys.stderr.write(result.stdout)
+        sys.stderr.write(result.stderr)
+    return result.returncode
+
+
+def execute(
+    mapping_path: str,
+    output_path: str,
+    serialization: str = "nquads",
+    dsn: str | None = None,
+    username: str | None = None,
+    password: str | None = None,
+    timeout: int = 180,
+    java_options: tuple[str, ...] = (),
+) -> subprocess.CompletedProcess[str]:
     jar_path = _get_jar_path()
-    cmd = ["java", "-jar", jar_path]
+    cmd = ["java", *java_options, "-jar", jar_path]
     cmd.extend(
         _build_args(
             os.path.abspath(mapping_path),
@@ -108,5 +136,4 @@ def run(
         )
     )
 
-    result = subprocess.run(cmd, capture_output=True, timeout=timeout)
-    return result.returncode
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)

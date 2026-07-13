@@ -1,91 +1,355 @@
 {
-    "@id": "http://example.com/kg-inversion-benchmark/postgresql",
-    "name": "KG Inversion PostgreSQL",
-    "description": "PostgreSQL benchmark for Knowledge Graph Inversion using fully invertible KROWN RawData scenarios",
-    "instances": [
-        {
-            "@id": "http://example.com/kg-inversion-benchmark/postgresql#rows-low",
-            "name": "rows_low",
-            "generator": "RawData",
-            "parameters": {
-                "number_of_members": 1000,
-                "number_of_properties": 5,
-                "value_size": 100,
-                "data_format": "postgresql",
-                "engine": "RMLMapper"
-            }
-        },
-        {
-            "@id": "http://example.com/kg-inversion-benchmark/postgresql#baseline",
-            "name": "baseline",
-            "generator": "RawData",
-            "parameters": {
-                "number_of_members": 10000,
-                "number_of_properties": 5,
-                "value_size": 100,
-                "data_format": "postgresql",
-                "engine": "RMLMapper"
-            }
-        },
-        {
-            "@id": "http://example.com/kg-inversion-benchmark/postgresql#rows-high",
-            "name": "rows_high",
-            "generator": "RawData",
-            "parameters": {
-                "number_of_members": 50000,
-                "number_of_properties": 5,
-                "value_size": 100,
-                "data_format": "postgresql",
-                "engine": "RMLMapper"
-            }
-        },
-        {
-            "@id": "http://example.com/kg-inversion-benchmark/postgresql#properties-low",
-            "name": "properties_low",
-            "generator": "RawData",
-            "parameters": {
-                "number_of_members": 10000,
-                "number_of_properties": 3,
-                "value_size": 100,
-                "data_format": "postgresql",
-                "engine": "RMLMapper"
-            }
-        },
-        {
-            "@id": "http://example.com/kg-inversion-benchmark/postgresql#properties-high",
-            "name": "properties_high",
-            "generator": "RawData",
-            "parameters": {
-                "number_of_members": 10000,
-                "number_of_properties": 8,
-                "value_size": 100,
-                "data_format": "postgresql",
-                "engine": "RMLMapper"
-            }
-        },
-        {
-            "@id": "http://example.com/kg-inversion-benchmark/postgresql#value-size-low",
-            "name": "value_size_low",
-            "generator": "RawData",
-            "parameters": {
-                "number_of_members": 10000,
-                "number_of_properties": 5,
-                "value_size": 50,
-                "data_format": "postgresql",
-                "engine": "RMLMapper"
-            }
-        },
-        {
-            "@id": "http://example.com/kg-inversion-benchmark/postgresql#value-size-high",
-            "name": "value_size_high",
-            "generator": "RawData",
-            "parameters": {
-                "number_of_members": 10000,
-                "number_of_properties": 5,
-                "value_size": 150,
-                "data_format": "postgresql",
-                "engine": "RMLMapper"
-            }
-        }
-    ]
+  "@id": "http://example.com/kg-inversion-benchmark/postgresql",
+  "name": "KROWN Knowledge Graph Inversion benchmark",
+  "description": "Official KROWN RawData, Mappings, NamedGraph, and join scenarios relevant to Knowledge Graph inversion",
+  "instances": [
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#raw-members-10k",
+      "name": "10K members, 20 properties",
+      "generator": "RawData",
+      "parameters": {"number_of_members": 10000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#raw-members-100k",
+      "name": "100K members, 20 properties",
+      "generator": "RawData",
+      "parameters": {"number_of_members": 100000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#raw-members-1m",
+      "name": "1M members, 20 properties",
+      "generator": "RawData",
+      "parameters": {"number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#raw-members-10m",
+      "name": "10M members, 20 properties",
+      "generator": "RawData",
+      "parameters": {"number_of_members": 10000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#raw-properties-1",
+      "name": "100K members, 1 property",
+      "generator": "RawData",
+      "parameters": {"number_of_members": 100000, "number_of_properties": 1, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#raw-properties-10",
+      "name": "100K members, 10 properties",
+      "generator": "RawData",
+      "parameters": {"number_of_members": 100000, "number_of_properties": 10, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#raw-properties-30",
+      "name": "100K members, 30 properties",
+      "generator": "RawData",
+      "parameters": {"number_of_members": 100000, "number_of_properties": 30, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#raw-value-size-500",
+      "name": "500 characters",
+      "generator": "RawData",
+      "parameters": {"number_of_members": 100000, "number_of_properties": 20, "value_size": 500, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#raw-value-size-1k",
+      "name": "1K characters",
+      "generator": "RawData",
+      "parameters": {"number_of_members": 100000, "number_of_properties": 20, "value_size": 1000, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#raw-value-size-5k",
+      "name": "5K characters",
+      "generator": "RawData",
+      "parameters": {"number_of_members": 100000, "number_of_properties": 20, "value_size": 5000, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#raw-value-size-10k",
+      "name": "10K characters",
+      "generator": "RawData",
+      "parameters": {"number_of_members": 100000, "number_of_properties": 20, "value_size": 10000, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#mappings-1-5",
+      "name": "1 TM + 5 POM",
+      "generator": "Mappings",
+      "parameters": {"number_of_tms": 1, "number_of_poms": 5, "number_of_members": 100000, "number_of_properties": 30, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#mappings-10-5",
+      "name": "10 TM + 5 POM",
+      "generator": "Mappings",
+      "parameters": {"number_of_tms": 10, "number_of_poms": 5, "number_of_members": 100000, "number_of_properties": 30, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#mappings-20-5",
+      "name": "20 TM + 5 POM",
+      "generator": "Mappings",
+      "parameters": {"number_of_tms": 20, "number_of_poms": 5, "number_of_members": 100000, "number_of_properties": 30, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#mappings-30-5",
+      "name": "30 TM + 5 POM",
+      "generator": "Mappings",
+      "parameters": {"number_of_tms": 30, "number_of_poms": 5, "number_of_members": 100000, "number_of_properties": 30, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#mappings-20-1",
+      "name": "20 TM + 1 POM",
+      "generator": "Mappings",
+      "parameters": {"number_of_tms": 20, "number_of_poms": 1, "number_of_members": 100000, "number_of_properties": 30, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#mappings-20-3",
+      "name": "20 TM + 3 POM",
+      "generator": "Mappings",
+      "parameters": {"number_of_tms": 20, "number_of_poms": 3, "number_of_members": 100000, "number_of_properties": 30, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#mappings-20-10",
+      "name": "20 TM + 10 POM",
+      "generator": "Mappings",
+      "parameters": {"number_of_tms": 20, "number_of_poms": 10, "number_of_members": 100000, "number_of_properties": 30, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#joins-relation-1-1",
+      "name": "Join relation 1-1",
+      "generator": "JoinsRelation",
+      "parameters": {"percentage": 50.0, "n": 1, "m": 1, "number_of_members": 100000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#joins-relation-1-5",
+      "name": "Join relation 1-5",
+      "generator": "JoinsRelation",
+      "parameters": {"percentage": 50.0, "n": 1, "m": 5, "number_of_members": 100000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#joins-relation-1-10",
+      "name": "Join relation 1-10",
+      "generator": "JoinsRelation",
+      "parameters": {"percentage": 50.0, "n": 1, "m": 10, "number_of_members": 100000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#joins-relation-1-15",
+      "name": "Join relation 1-15",
+      "generator": "JoinsRelation",
+      "parameters": {"percentage": 50.0, "n": 1, "m": 15, "number_of_members": 100000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#joins-relation-5-1",
+      "name": "Join relation 5-1",
+      "generator": "JoinsRelation",
+      "parameters": {"percentage": 50.0, "n": 5, "m": 1, "number_of_members": 100000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#joins-relation-10-1",
+      "name": "Join relation 10-1",
+      "generator": "JoinsRelation",
+      "parameters": {"percentage": 50.0, "n": 10, "m": 1, "number_of_members": 100000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#joins-relation-15-1",
+      "name": "Join relation 15-1",
+      "generator": "JoinsRelation",
+      "parameters": {"percentage": 50.0, "n": 15, "m": 1, "number_of_members": 100000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#joins-relation-3-3",
+      "name": "Join relation 3-3",
+      "generator": "JoinsRelation",
+      "parameters": {"percentage": 50.0, "n": 3, "m": 3, "number_of_members": 100000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#joins-relation-3-5",
+      "name": "Join relation 3-5",
+      "generator": "JoinsRelation",
+      "parameters": {"percentage": 50.0, "n": 3, "m": 5, "number_of_members": 100000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#joins-relation-5-3",
+      "name": "Join relation 5-3",
+      "generator": "JoinsRelation",
+      "parameters": {"percentage": 50.0, "n": 5, "m": 3, "number_of_members": 100000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#joins-relation-10-5",
+      "name": "Join relation 10-5",
+      "generator": "JoinsRelation",
+      "parameters": {"percentage": 50.0, "n": 10, "m": 5, "number_of_members": 100000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#joins-relation-5-10",
+      "name": "Join relation 5-10",
+      "generator": "JoinsRelation",
+      "parameters": {"percentage": 50.0, "n": 5, "m": 10, "number_of_members": 100000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#joins-conditions-1",
+      "name": "Join with 1 condition",
+      "generator": "JoinsMultiple",
+      "parameters": {"percentage": 50.0, "n": 1, "m": 1, "jc": 1, "number_of_members": 100000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#joins-conditions-5",
+      "name": "Join with 5 conditions",
+      "generator": "JoinsMultiple",
+      "parameters": {"percentage": 50.0, "n": 1, "m": 1, "jc": 5, "number_of_members": 100000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#joins-conditions-10",
+      "name": "Join with 10 conditions",
+      "generator": "JoinsMultiple",
+      "parameters": {"percentage": 50.0, "n": 1, "m": 1, "jc": 10, "number_of_members": 100000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#joins-conditions-15",
+      "name": "Join with 15 conditions",
+      "generator": "JoinsMultiple",
+      "parameters": {"percentage": 50.0, "n": 1, "m": 1, "jc": 15, "number_of_members": 100000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#named-graph-subject-static-1",
+      "name": "1 static named graph in the subject map",
+      "generator": "NamedGraph",
+      "parameters": {"number_of_ng_pom": 0, "number_of_ng_s": 1, "static": true, "number_of_tms": 1, "number_of_poms": 20, "number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#named-graph-subject-static-5",
+      "name": "5 static named graphs in the subject map",
+      "generator": "NamedGraph",
+      "parameters": {"number_of_ng_pom": 0, "number_of_ng_s": 5, "static": true, "number_of_tms": 1, "number_of_poms": 20, "number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#named-graph-subject-static-10",
+      "name": "10 static named graphs in the subject map",
+      "generator": "NamedGraph",
+      "parameters": {"number_of_ng_pom": 0, "number_of_ng_s": 10, "static": true, "number_of_tms": 1, "number_of_poms": 20, "number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#named-graph-subject-static-15",
+      "name": "15 static named graphs in the subject map",
+      "generator": "NamedGraph",
+      "parameters": {"number_of_ng_pom": 0, "number_of_ng_s": 15, "static": true, "number_of_tms": 1, "number_of_poms": 20, "number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#named-graph-subject-dynamic-1",
+      "name": "1 dynamic named graph in the subject map",
+      "generator": "NamedGraph",
+      "parameters": {"number_of_ng_pom": 0, "number_of_ng_s": 1, "static": false, "number_of_tms": 1, "number_of_poms": 20, "number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#named-graph-subject-dynamic-5",
+      "name": "5 dynamic named graphs in the subject map",
+      "generator": "NamedGraph",
+      "parameters": {"number_of_ng_pom": 0, "number_of_ng_s": 5, "static": false, "number_of_tms": 1, "number_of_poms": 20, "number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#named-graph-subject-dynamic-10",
+      "name": "10 dynamic named graphs in the subject map",
+      "generator": "NamedGraph",
+      "parameters": {"number_of_ng_pom": 0, "number_of_ng_s": 10, "static": false, "number_of_tms": 1, "number_of_poms": 20, "number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#named-graph-subject-dynamic-15",
+      "name": "15 dynamic named graphs in the subject map",
+      "generator": "NamedGraph",
+      "parameters": {"number_of_ng_pom": 0, "number_of_ng_s": 15, "static": false, "number_of_tms": 1, "number_of_poms": 20, "number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#named-graph-pom-static-1",
+      "name": "1 static named graph in a predicate-object map",
+      "generator": "NamedGraph",
+      "parameters": {"number_of_ng_pom": 1, "number_of_ng_s": 0, "static": true, "number_of_tms": 1, "number_of_poms": 1, "number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#named-graph-pom-static-5",
+      "name": "5 static named graphs in a predicate-object map",
+      "generator": "NamedGraph",
+      "parameters": {"number_of_ng_pom": 5, "number_of_ng_s": 0, "static": true, "number_of_tms": 1, "number_of_poms": 1, "number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#named-graph-pom-static-10",
+      "name": "10 static named graphs in a predicate-object map",
+      "generator": "NamedGraph",
+      "parameters": {"number_of_ng_pom": 10, "number_of_ng_s": 0, "static": true, "number_of_tms": 1, "number_of_poms": 1, "number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#named-graph-pom-static-15",
+      "name": "15 static named graphs in a predicate-object map",
+      "generator": "NamedGraph",
+      "parameters": {"number_of_ng_pom": 15, "number_of_ng_s": 0, "static": true, "number_of_tms": 1, "number_of_poms": 1, "number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#named-graph-pom-dynamic-1",
+      "name": "1 dynamic named graph in a predicate-object map",
+      "generator": "NamedGraph",
+      "parameters": {"number_of_ng_pom": 1, "number_of_ng_s": 0, "static": false, "number_of_tms": 1, "number_of_poms": 1, "number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#named-graph-pom-dynamic-5",
+      "name": "5 dynamic named graphs in a predicate-object map",
+      "generator": "NamedGraph",
+      "parameters": {"number_of_ng_pom": 5, "number_of_ng_s": 0, "static": false, "number_of_tms": 1, "number_of_poms": 1, "number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#named-graph-pom-dynamic-10",
+      "name": "10 dynamic named graphs in a predicate-object map",
+      "generator": "NamedGraph",
+      "parameters": {"number_of_ng_pom": 10, "number_of_ng_s": 0, "static": false, "number_of_tms": 1, "number_of_poms": 1, "number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#named-graph-pom-dynamic-15",
+      "name": "15 dynamic named graphs in a predicate-object map",
+      "generator": "NamedGraph",
+      "parameters": {"number_of_ng_pom": 15, "number_of_ng_s": 0, "static": false, "number_of_tms": 1, "number_of_poms": 1, "number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#named-graph-both-static-1",
+      "name": "1 static named graph in subject and predicate-object maps",
+      "generator": "NamedGraph",
+      "parameters": {"number_of_ng_pom": 1, "number_of_ng_s": 1, "static": true, "number_of_tms": 1, "number_of_poms": 10, "number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#named-graph-both-static-5",
+      "name": "5 static named graphs in subject and predicate-object maps",
+      "generator": "NamedGraph",
+      "parameters": {"number_of_ng_pom": 5, "number_of_ng_s": 5, "static": true, "number_of_tms": 1, "number_of_poms": 10, "number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#named-graph-both-static-10",
+      "name": "10 static named graphs in subject and predicate-object maps",
+      "generator": "NamedGraph",
+      "parameters": {"number_of_ng_pom": 10, "number_of_ng_s": 10, "static": true, "number_of_tms": 1, "number_of_poms": 10, "number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#named-graph-both-static-15",
+      "name": "15 static named graphs in subject and predicate-object maps",
+      "generator": "NamedGraph",
+      "parameters": {"number_of_ng_pom": 15, "number_of_ng_s": 15, "static": true, "number_of_tms": 1, "number_of_poms": 10, "number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#named-graph-both-dynamic-1",
+      "name": "1 dynamic named graph in subject and predicate-object maps",
+      "generator": "NamedGraph",
+      "parameters": {"number_of_ng_pom": 1, "number_of_ng_s": 1, "static": false, "number_of_tms": 1, "number_of_poms": 10, "number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#named-graph-both-dynamic-5",
+      "name": "5 dynamic named graphs in subject and predicate-object maps",
+      "generator": "NamedGraph",
+      "parameters": {"number_of_ng_pom": 5, "number_of_ng_s": 5, "static": false, "number_of_tms": 1, "number_of_poms": 10, "number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#named-graph-both-dynamic-10",
+      "name": "10 dynamic named graphs in subject and predicate-object maps",
+      "generator": "NamedGraph",
+      "parameters": {"number_of_ng_pom": 10, "number_of_ng_s": 10, "static": false, "number_of_tms": 1, "number_of_poms": 10, "number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    },
+    {
+      "@id": "http://example.com/kg-inversion-benchmark/postgresql#named-graph-both-dynamic-15",
+      "name": "15 dynamic named graphs in subject and predicate-object maps",
+      "generator": "NamedGraph",
+      "parameters": {"number_of_ng_pom": 15, "number_of_ng_s": 15, "static": false, "number_of_tms": 1, "number_of_poms": 10, "number_of_members": 1000000, "number_of_properties": 20, "value_size": 0, "data_format": "postgresql", "engine": "RMLMapper"}
+    }
+  ]
 }

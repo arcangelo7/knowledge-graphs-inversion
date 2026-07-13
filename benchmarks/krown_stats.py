@@ -26,13 +26,13 @@ class TimingStatistics(TypedDict):
 class ScenarioMetadata(TypedDict):
     triples_maps_count: int
     predicate_object_maps_count: int
+    join_conditions_count: int
+    graph_maps_count: int
     mapping_size_bytes: int
     data_size_bytes: int
-    rdf_triples: NotRequired[int]
-    number_of_members: NotRequired[int]
-    number_of_properties: NotRequired[int]
-    value_size: NotRequired[int]
-    number_of_columns: NotRequired[int]
+    rdf_statements: int
+    source_rows: int
+    source_cells: int
 
 
 class ScenarioStatistics(TypedDict):
@@ -125,8 +125,13 @@ def aggregate_scenario_statistics(
         "metadata": {
             "triples_maps_count": first_run["triples_maps_count"],
             "predicate_object_maps_count": first_run["predicate_object_maps_count"],
+            "join_conditions_count": first_run["join_conditions_count"],
+            "graph_maps_count": first_run["graph_maps_count"],
             "mapping_size_bytes": first_run["mapping_size_bytes"],
             "data_size_bytes": first_run["data_size_bytes"],
+            "rdf_statements": first_run["rdf_statements"],
+            "source_rows": first_run["source_rows"],
+            "source_cells": first_run["source_cells"],
         },
     }
 
