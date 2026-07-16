@@ -42,7 +42,6 @@ import rmlmapper  # noqa: E402
 from benchmarks.krown_stats import aggregate_scenario_statistics  # noqa: E402
 from kgi.core import reconstruct  # noqa: E402
 from kgi.exceptions import NonInvertibleError, UnsupportedMappingError  # noqa: E402
-from kgi.models import ReconstructedTable  # noqa: E402
 
 console = Console()
 
@@ -355,10 +354,9 @@ def _create_uppercase_view(engine: Engine, table_name: str, lower_table: str) ->
 
 def validate_gtfs_inversion(
     original_tables: dict[str, pd.DataFrame],
-    reconstructed_tables: list[ReconstructedTable],
+    reconstructed_tables: dict[str, pd.DataFrame],
     scenario_name: str,
 ) -> dict[str, object]:
-    reconstructed = {table.name: table.data for table in reconstructed_tables}
     results: dict[str, object] = {
         "scenario": scenario_name,
         "validation_passed": True,
@@ -370,7 +368,9 @@ def validate_gtfs_inversion(
 
     for table_name, original_df in original_tables.items():
         reconstructed_df = (
-            reconstructed[table_name] if table_name in reconstructed else None
+            reconstructed_tables[table_name]
+            if table_name in reconstructed_tables
+            else None
         )
         table_result = _validate_table(
             original_df,
@@ -575,9 +575,7 @@ class GtfsBenchmarkRunner:
             self.clear_source_tables()
             inversion_started = time.time()
             try:
-                inversion_results, inversion_time = self.execute_inversion_step(
-                    mapping_file, rdf_file
-                )
+                inversion_time = self.execute_inversion_step(mapping_file, rdf_file)
             except NonInvertibleError as error:
                 return self.observed_outcome_result(
                     status="non_invertible",
@@ -602,9 +600,9 @@ class GtfsBenchmarkRunner:
                     data_dir=data_dir,
                     error=error,
                 )
-            self.materialize_reconstructed_tables(scenario_name, inversion_results)
+            reconstructed_tables = self.read_reconstructed_tables()
             validation_results = validate_gtfs_inversion(
-                original_tables, inversion_results, scenario_name
+                original_tables, reconstructed_tables, scenario_name
             )
 
             total_time = time.time() - start_time
@@ -631,7 +629,7 @@ class GtfsBenchmarkRunner:
                 ),
                 "triples_maps_count": tm_count,
                 "predicate_object_maps_count": pom_count,
-                "inversion_count": len(inversion_results),
+                "inversion_count": len(reconstructed_tables),
                 "validation_results": validation_results,
             }
         except Exception as error:
@@ -721,31 +719,25 @@ class GtfsBenchmarkRunner:
         finally:
             engine.dispose()
 
-    def execute_inversion_step(
-        self, mapping_file: Path, rdf_file: Path
-    ) -> tuple[list[ReconstructedTable], float]:
+    def execute_inversion_step(self, mapping_file: Path, rdf_file: Path) -> float:
         start_time = time.time()
         conn_string = self.get_connection_string()
         source_db_url = conn_string.replace("postgresql://", "postgresql+psycopg2://")
-        inversion_results = reconstruct(
+        reconstruct(
             mapping=str(mapping_file),
             rdf_graph=str(rdf_file),
+            dest_db_url=source_db_url,
             source_db_url=source_db_url,
         )
-        return inversion_results, time.time() - start_time
+        return time.time() - start_time
 
-    def materialize_reconstructed_tables(
-        self, scenario_name: str, results: list[ReconstructedTable]
-    ) -> None:
+    def read_reconstructed_tables(self) -> dict[str, pd.DataFrame]:
         engine = create_engine(self.get_connection_string())
         try:
-            for result in results:
-                result.data.to_sql(
-                    f"{scenario_name}_{result.name.lower()}",
-                    engine,
-                    if_exists="replace",
-                    index=False,
-                )
+            return {
+                table_name: _read_table(engine, table_name.lower())
+                for table_name in TABLE_HEADERS
+            }
         finally:
             engine.dispose()
 

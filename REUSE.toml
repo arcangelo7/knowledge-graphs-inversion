@@ -13,6 +13,7 @@ path = [
     "output.nt",
     "docs/.gitignore",
     "docs/benchmarking/images/*.png",
+    "docs/benchmarking/results/*.json",
     "benchmarks/krown/config/**",
     "CHANGELOG.md",
     "README.md",

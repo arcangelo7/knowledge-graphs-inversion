@@ -45,7 +45,6 @@ from kgi.exceptions import (
     NonInvertibleError,
     UnsupportedMappingError,
 )
-from kgi.models import ReconstructedTable
 from kgi.query import retrieve_data
 from kgi.schema import (
     DatabaseSchemaRetriever,
@@ -147,9 +146,7 @@ def _check_for_literal_subjects(store: Store) -> bool:
     return False
 
 
-def _generate_template(
-    source_rules: pd.DataFrame, db_url: str | None = None
-) -> RDBTemplate:
+def _generate_template(source_rules: pd.DataFrame, db_url: str) -> RDBTemplate:
     source_type = source_rules.iloc[0]["source_type"]
 
     if source_type == "RDB":
@@ -300,9 +297,10 @@ def _build_morph_config(
 def reconstruct(
     mapping: str | pathlib.Path,
     rdf_graph: str | pathlib.Path,
+    *,
+    dest_db_url: str,
     source_db_url: str | None = None,
-    dest_db_url: str | None = None,
-) -> list[ReconstructedTable]:
+) -> None:
     logger = get_logger()
     mapping_path = str(mapping)
     rdf_graph_str = str(rdf_graph)
@@ -360,26 +358,28 @@ def reconstruct(
 
         try:
             endpoint = EndpointFactory.create_from_url(rdf_graph_str)
-        except (FileNotFoundError, OSError) as e:
+        except FileNotFoundError as e:
             raise NoDataError(
                 "No RDF input file found, likely due to mapping errors"
             ) from e
         except ValueError as e:
             raise NonInvertibleError(f"Output RDF contains invalid data: {e}") from e
 
-        results: list[ReconstructedTable] = []
+        reconstructed_table_count = 0
         for table_name_value, source_rules in mappings.groupby("logical_source_value"):
             table_name = str(table_name_value)
-            source_section = source_rules.iloc[0].get("source_section", "DataSource1")
-            template_db_url = dest_db_url if dest_db_url else source_db_url
-            template = _generate_template(source_rules, template_db_url)
+            source_section = (
+                str(source_rules.iloc[0]["source_section"])
+                if "source_section" in source_rules.columns
+                else "DataSource1"
+            )
+            template = _generate_template(source_rules, dest_db_url)
 
-            source_data, _ = retrieve_data(
+            source_data_chunks, _ = retrieve_data(
                 mappings, source_rules, endpoint, decode_columns=True
             )
 
-            if source_data is None:
-                results.append(ReconstructedTable(name=table_name, data=pd.DataFrame()))
+            if source_data_chunks is None:
                 logger.warning(f"No data generated for {table_name}")
                 continue
 
@@ -387,16 +387,18 @@ def reconstruct(
                 schema_retriever = schema_retrievers[source_section]
                 table_schema = schema_retriever.get_table_schema(table_name)
                 if table_schema:
-                    source_data = apply_schema_types(source_data, table_schema)
-                    source_data = apply_schema_ordering(source_data, table_schema)
+                    source_data_chunks = (
+                        apply_schema_ordering(
+                            apply_schema_types(chunk, table_schema), table_schema
+                        )
+                        for chunk in source_data_chunks
+                    )
 
-            template.fill_data(source_data, table_name)
-            results.append(ReconstructedTable(name=table_name, data=source_data))
+            template.fill_data(source_data_chunks, table_name)
+            reconstructed_table_count += 1
 
-        if not results:
+        if reconstructed_table_count == 0:
             raise NoDataError("No data was generated during reconstruction")
-
-        return results
     finally:
         if endpoint is not None:
             endpoint.close()

@@ -41,6 +41,6 @@ make benchmark-gtfs I=10 S=1,5,10
 The library pulls in a few things worth knowing about:
 
 - [**morph-kgc**](https://morph-kgc.readthedocs.io/) parses [R2RML](https://www.w3.org/TR/r2rml/) mapping documents into an internal representation the algorithm operates on.
-- [**pyoxigraph**](https://pyoxigraph.readthedocs.io/) provides the in-memory RDF store and SPARQL engine for local graph queries.
+- [**pyoxigraph**](https://pyoxigraph.readthedocs.io/) provides the local RDF store and SPARQL engine.
 - [**pandas**](https://pandas.pydata.org/) handles tabular data throughout the pipeline.
 - [**SQLAlchemy**](https://www.sqlalchemy.org/) manages database connections when writing output to SQL databases.

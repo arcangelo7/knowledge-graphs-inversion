@@ -95,10 +95,7 @@ def plot_timing_charts(stats_data: dict, output_dir: Path) -> list[Path]:
                 upper_errors,
                 failure_labels,
             ) = _timing_points(stats_data, series, metric_name)
-            if all(isinstance(value, float) for value in parameter_values):
-                x_values = [float(value) for value in parameter_values]
-            else:
-                x_values = [float(index) for index in range(len(parameter_values))]
+            x_values = [float(index) for index in range(len(parameter_values))]
             if all(np.isnan(value) for value in means):
                 continue
             axis.errorbar(
@@ -128,17 +125,13 @@ def plot_timing_charts(stats_data: dict, output_dir: Path) -> list[Path]:
         axis.set_title(f"KROWN {series['title']}")
         axis.set_xlabel(str(series["parameter_label"]))
         axis.set_ylabel("Time (s), mean with 95% CI")
-        explicit_ticks = not all(
-            isinstance(value, float) for value in parameter_values
-        ) or all(label is not None for label in failure_labels)
-        if explicit_ticks:
-            axis.set_xticks(
-                x_values,
-                [
-                    f"{value:g}" if isinstance(value, float) else str(value)
-                    for value in parameter_values
-                ],
-            )
+        axis.set_xticks(
+            x_values,
+            [
+                f"{value:,.0f}" if isinstance(value, float) else str(value)
+                for value in parameter_values
+            ],
+        )
         axis.grid(axis="y", alpha=0.25)
         handles, labels = axis.get_legend_handles_labels()
         if handles:

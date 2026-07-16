@@ -4,6 +4,7 @@
 
 import pandas as pd
 import pytest
+from pyoxigraph import Literal, NamedNode, Quad, QuerySolutions, Store
 
 from kgi.constants import (
     RML_BLANK_NODE,
@@ -14,7 +15,7 @@ from kgi.constants import (
 )
 from kgi.core import _check_for_ambiguous_subject_templates
 from kgi.exceptions import NonInvertibleError
-from kgi.query import Query, _select_query_source_rules
+from kgi.query import Query, _select_query_source_rules, _solutions_to_dataframes
 from kgi.triples import QueryTriple, SubjectTriple
 from kgi.utils import Codex, IdGenerator, insert_columns
 
@@ -53,6 +54,24 @@ def test_subject_template_adds_filter_when_reference_is_already_bound() -> None:
     insert_columns(mappings)
     rule = mappings.iloc[0]
     query = Query([QueryTriple(rule), SubjectTriple(rule)])
+
+    generated = query.generate(mappings)
+
+    assert generated == (
+        "SELECT ?p1 WHERE {?p1_uri <http://example.com/p1> ?p1 .\n"
+        "FILTER(REGEX(STR(?p1_uri), 'http://example.com/table/([^/]*)'))\n"
+        "BIND(STRAFTER(STR(?p1_uri), 'http://example.com/table/') as ?p1_uri_slice)\n"
+        "FILTER(!BOUND(?p1) || STR(?p1) = STR(?p1_uri_slice) "
+        "|| ENCODE_FOR_URI(STR(?p1)) = STR(?p1_uri_slice) "
+        "|| STR(?p1) = ENCODE_FOR_URI(STR(?p1_uri_slice)))}"
+    )
+
+
+def test_query_deduplicates_identical_generated_patterns() -> None:
+    mappings = pd.DataFrame([_rule("p1", "p1")])
+    insert_columns(mappings)
+    rule = mappings.iloc[0]
+    query = Query([QueryTriple(rule), QueryTriple(rule), SubjectTriple(rule)])
 
     generated = query.generate(mappings)
 
@@ -158,6 +177,47 @@ def test_redundant_subject_groups_use_single_query_group() -> None:
         generated.count("FILTER("),
         generated.count("BIND("),
     ) == (8, 2, 1)
+
+
+def test_query_solutions_are_converted_in_exact_chunks() -> None:
+    store = Store()
+    predicate = NamedNode("http://example.com/value")
+    for identifier in range(1, 4):
+        store.add(
+            Quad(
+                NamedNode(f"http://example.com/{identifier}"),
+                predicate,
+                Literal(identifier),
+            )
+        )
+    solutions = store.query(
+        "SELECT ?subject ?value WHERE { "
+        "?subject <http://example.com/value> ?value "
+        "} ORDER BY ?subject"
+    )
+    assert isinstance(solutions, QuerySolutions)
+
+    chunks = list(_solutions_to_dataframes(solutions, chunk_size=2))
+
+    assert [chunk.to_dict(orient="records") for chunk in chunks] == [
+        [
+            {"subject": "http://example.com/1", "value": 1},
+            {"subject": "http://example.com/2", "value": 2},
+        ],
+        [{"subject": "http://example.com/3", "value": 3}],
+    ]
+
+
+def test_empty_query_solutions_produce_one_empty_chunk() -> None:
+    store = Store()
+    solutions = store.query("SELECT ?subject WHERE { ?subject ?p ?o }")
+    assert isinstance(solutions, QuerySolutions)
+
+    chunks = list(_solutions_to_dataframes(solutions, chunk_size=2))
+
+    assert len(chunks) == 1
+    assert chunks[0].columns.tolist() == ["subject"]
+    assert chunks[0].to_dict(orient="records") == []
 
 
 def _predicate_rule(subject_column: str, object_column: str) -> dict[str, object]:

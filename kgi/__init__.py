@@ -10,11 +10,9 @@ from kgi.exceptions import (
     NonInvertibleError,
     UnsupportedMappingError,
 )
-from kgi.models import ReconstructedTable
 
 __all__ = [
     "reconstruct",
-    "ReconstructedTable",
     "KGIError",
     "MappingError",
     "NoDataError",

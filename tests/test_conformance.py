@@ -51,12 +51,13 @@ def _run_conformance_test(
             pytest.skip("Forward mapping produced no RDF output (error test case)")
 
     try:
-        reconstruct(
+        result = reconstruct(
             mapping=mapping_path,
             rdf_graph=output_path,
-            source_db_url=source_db,
             dest_db_url=dest_db,
+            source_db_url=source_db,
         )
+        assert result is None
     except NoDataError:
         if not forward_mapping_produced_output:
             pytest.skip("Forward mapping failed - no RDF output produced")

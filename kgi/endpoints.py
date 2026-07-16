@@ -6,8 +6,9 @@
 
 import logging
 import os
-
-from io import BytesIO
+import tempfile
+from collections.abc import Iterable, Iterator
+from itertools import islice
 from typing import TypeAlias
 
 from pyoxigraph import (
@@ -16,7 +17,6 @@ from pyoxigraph import (
     Literal,
     NamedNode,
     Quad,
-    QueryResultsFormat,
     QuerySolutions,
     RdfFormat,
     Store,
@@ -28,6 +28,7 @@ from kgi.base import Endpoint
 
 
 _BNODE_IRI_PREFIX = "urn:bnode:"
+_RDF_LOAD_BATCH_SIZE = 100_000
 
 RdfSubject: TypeAlias = NamedNode | BlankNode | Triple
 RdfObject: TypeAlias = NamedNode | BlankNode | Literal | Triple
@@ -64,18 +65,38 @@ def _triple_blank_nodes_to_iris(term: Triple) -> Triple:
     )
 
 
-def _load_preserving_blank_node_labels(
-    store: Store, path: str, rdf_format: RdfFormat
-) -> None:
-    store.bulk_extend(
-        Quad(
-            _subject_blank_nodes_to_iris(quad.subject),
+def _quads_with_default_graph_union(
+    path: str,
+    rdf_format: RdfFormat,
+    normalize_blank_nodes: bool,
+) -> Iterator[Quad]:
+    for quad in parse(path=path, format=rdf_format):
+        normalized_quad = Quad(
+            _subject_blank_nodes_to_iris(quad.subject)
+            if normalize_blank_nodes
+            else quad.subject,
             quad.predicate,
-            _object_blank_nodes_to_iris(quad.object),
-            _graph_name_blank_nodes_to_iris(quad.graph_name),
+            _object_blank_nodes_to_iris(quad.object)
+            if normalize_blank_nodes
+            else quad.object,
+            _graph_name_blank_nodes_to_iris(quad.graph_name)
+            if normalize_blank_nodes
+            else quad.graph_name,
         )
-        for quad in parse(path=path, format=rdf_format)
-    )
+        yield normalized_quad
+        if not isinstance(normalized_quad.graph_name, DefaultGraph):
+            yield Quad(
+                normalized_quad.subject,
+                normalized_quad.predicate,
+                normalized_quad.object,
+                DefaultGraph(),
+            )
+
+
+def _bulk_extend_in_batches(store: Store, quads: Iterable[Quad]) -> None:
+    iterator = iter(quads)
+    while batch := list(islice(iterator, _RDF_LOAD_BATCH_SIZE)):
+        store.bulk_extend(batch)
 
 
 def _has_explicit_blank_nodes(path: str) -> bool:
@@ -98,36 +119,39 @@ def _rdf_format_from_path(path: str) -> RdfFormat | None:
 class LocalSparqlGraphStore(Endpoint):
     """Local pyoxigraph-based SPARQL endpoint."""
 
-    def __init__(self, url: str, delete_after_use: bool = False):
-        self.delete_after_use = delete_after_use
-        self._store: Store | None = Store()
-
+    def __init__(self, url: str):
         rdf_format = _rdf_format_from_path(url)
         if rdf_format is None:
             raise ValueError(f"Unsupported RDF file format: {url}")
-        if not _has_explicit_blank_nodes(url):
-            self._store.bulk_load(path=url, format=rdf_format)
-        else:
-            _load_preserving_blank_node_labels(self._store, url, rdf_format)
 
-    def query(self, query: str):
-        """Execute a SPARQL query on the local store and return SPARQL JSON."""
+        self._temporary_directory = tempfile.TemporaryDirectory(
+            prefix=".kgi_pyoxigraph_", dir=os.getcwd()
+        )
+        self._store: Store | None = Store(self._temporary_directory.name)
+        try:
+            normalize_blank_nodes = _has_explicit_blank_nodes(url)
+            _bulk_extend_in_batches(
+                self._store,
+                _quads_with_default_graph_union(url, rdf_format, normalize_blank_nodes),
+            )
+        except BaseException:
+            self.close()
+            raise
+
+    def query(self, query: str) -> QuerySolutions:
         assert self._store is not None
         try:
-            results = self._store.query(query, use_default_graph_as_union=True)
+            results = self._store.query(query)
             assert isinstance(results, QuerySolutions)
-            buf = BytesIO()
-            results.serialize(buf, QueryResultsFormat.JSON)
-            return buf.getvalue().decode()
+            return results
         except Exception as e:
             logging.getLogger("kgi").error(f"Query execution error: {e}")
             logging.getLogger("kgi").error(f"Failed query: {query}")
             raise
 
-    def __del__(self):
-        """Clean up resources."""
-        if self.delete_after_use:
-            self._store = None
+    def close(self) -> None:
+        self._store = None
+        self._temporary_directory.cleanup()
 
 
 class EndpointFactory:

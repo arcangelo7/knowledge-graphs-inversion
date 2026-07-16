@@ -4,10 +4,11 @@
 
 """SPARQL query generation and execution."""
 
-import json
 import logging
+from collections.abc import Iterator
 
 import pandas as pd
+from pyoxigraph import BlankNode, Literal, NamedNode, QuerySolutions, Triple
 
 from kgi.base import Endpoint
 from kgi.constants import (
@@ -49,6 +50,8 @@ GROUP_SIGNATURE_COLUMNS = [
     "graph_reference_count",
     "object_join_conditions",
 ]
+_QUERY_CHUNK_SIZE = 10_000
+RdfTerm = NamedNode | BlankNode | Literal | Triple | None
 
 
 class Query:
@@ -103,6 +106,7 @@ class Query:
             return None
 
         triple_strings = []
+        generated_patterns = set()
 
         # Separate SubjectTriples from ObjectTriples.
         # SubjectTriples must be processed last so their BINDs are skipped
@@ -136,8 +140,12 @@ class Query:
                 triple_string = triple.generate(
                     self.id_generator, self.codex, all_mapping_rules
                 )
-                if triple_string is not None:
+                if (
+                    triple_string is not None
+                    and triple_string not in generated_patterns
+                ):
                     triple_strings.append(triple_string)
+                    generated_patterns.add(triple_string)
 
         graph_info = self._get_exclusive_graph_info()
         graph_binds = ""
@@ -238,32 +246,42 @@ class Query:
 
         return df
 
-    def execute_on_endpoint(
-        self, endpoint: Endpoint, all_mapping_rules: pd.DataFrame
-    ) -> pd.DataFrame:
-        """Execute query on a SPARQL endpoint."""
-        self.generated_query = self.generate(all_mapping_rules)
-        assert self.generated_query is not None
-        json_result = endpoint.query(self.generated_query)
-        df = _json_sparql_to_dataframe(json_result)
-        return self.decode_dataframe(df)
+
+def _term_to_python(term: RdfTerm) -> object:
+    if term is None:
+        return None
+    if isinstance(term, Literal):
+        return sparql_to_python_type(term.value, term.datatype.value)
+    if isinstance(term, (NamedNode, BlankNode)):
+        return term.value
+    return str(term)
 
 
-def _json_sparql_to_dataframe(json_result: str) -> pd.DataFrame:
-    result_data = json.loads(json_result)
-    columns = result_data["head"]["vars"]
-    data = []
-    for binding in result_data["results"]["bindings"]:
-        row = {}
-        for col in columns:
-            if col in binding:
-                value = binding[col]["value"]
-                datatype = binding[col].get("datatype")
-                row[col] = sparql_to_python_type(value, datatype)
-            else:
-                row[col] = None
-        data.append(row)
-    return pd.DataFrame(data, columns=columns)
+def _solutions_to_dataframes(
+    solutions: QuerySolutions, chunk_size: int = _QUERY_CHUNK_SIZE
+) -> Iterator[pd.DataFrame]:
+    variables = list(solutions.variables)
+    columns = [variable.value for variable in variables]
+    column_index = pd.Index(columns)
+    rows: list[dict[str, object]] = []
+    found_solution = False
+
+    for solution in solutions:
+        found_solution = True
+        rows.append(
+            {
+                variable.value: _term_to_python(solution[variable])
+                for variable in variables
+            }
+        )
+        if len(rows) == chunk_size:
+            yield pd.DataFrame(rows, columns=column_index)
+            rows = []
+
+    if rows:
+        yield pd.DataFrame(rows, columns=column_index)
+    elif not found_solution:
+        yield pd.DataFrame(columns=column_index)
 
 
 def _subject_group_signature(subject_rules: pd.DataFrame) -> frozenset[tuple[str, ...]]:
@@ -316,7 +334,7 @@ def retrieve_data(
     source_rules: pd.DataFrame,
     endpoint: Endpoint,
     decode_columns: bool = False,
-) -> tuple[pd.DataFrame | None, str | None]:
+) -> tuple[Iterator[pd.DataFrame] | None, str | None]:
     """Retrieve data from SPARQL endpoint using mapping rules."""
     query_source_rules = _select_query_source_rules(source_rules)
     triples: list[QueryTriple] = [
@@ -336,18 +354,7 @@ def retrieve_data(
         logging.getLogger("kgi").warning("No query generated (no references found)")
         return None, None
 
-    try:
-        result = endpoint.query(generated_query)
-        if not result.strip():
-            return pd.DataFrame(), generated_query
-
-        df = _json_sparql_to_dataframe(result)
-
-        if decode_columns:
-            df = query.decode_dataframe(df)
-
-        return df, generated_query
-
-    except Exception as e:
-        logging.getLogger("kgi").warning(f"Error while querying endpoint: {e}")
-        raise
+    chunks = _solutions_to_dataframes(endpoint.query(generated_query))
+    if decode_columns:
+        chunks = (query.decode_dataframe(chunk) for chunk in chunks)
+    return chunks, generated_query

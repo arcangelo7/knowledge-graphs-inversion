@@ -6,137 +6,127 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 import pandas as pd
 import sqlalchemy
 from sqlalchemy import Column, MetaData, Table
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.sql.sqltypes import Boolean, Date, DateTime, Integer, Numeric, String
 
-from kgi.base import Template
 
-_INSERT_CHUNK_SIZE = 10_000
-
-
-class RDBTemplate(Template):
+class RDBTemplate:
     """Template for relational database format."""
 
-    def __init__(self, db_url):
+    def __init__(self, db_url: str):
         self.db_url = db_url
 
-    def create_engine(self):
-        """Create SQLAlchemy engine."""
+    def create_engine(self) -> Engine:
         return sqlalchemy.create_engine(self.db_url)
 
-    def create_template(self) -> str:
-        """RDB template structure is determined by database schema."""
-        return "RDB template: structure will be determined by the database schema"
-
-    def fill_data(self, data: pd.DataFrame, source_name: str) -> None:
-        """Materialize reconstructed data in the target database."""
-        table_name = source_name
+    def fill_data(self, data_chunks: Iterable[pd.DataFrame], table_name: str) -> None:
+        chunks = iter(data_chunks)
+        first_chunk = next(chunks)
         engine = self.create_engine()
-        table = self._get_sqla_table(data, table_name)
-
-        # Convert data types to match schema before creating insert statement
-        data = data.copy()
-        for col in table.columns:
-            if isinstance(col.type, String):
-                data[col.name] = data[col.name].map(
-                    lambda x: str(x) if x is not None else None
-                )
-
-        if data.empty:
-            # Create only table structure if DataFrame is empty
+        try:
             with engine.begin() as connection:
-                inspector = sqlalchemy.inspect(engine)
-                if not inspector.has_table(table_name):
-                    table.create(connection)
+                table = self._get_sqla_table(first_chunk, table_name)
+                self._prepare_table(connection, table, first_chunk.empty)
+                self._insert_chunk(connection, table, first_chunk)
+                for chunk in chunks:
+                    self._insert_chunk(connection, table, chunk)
+        finally:
             engine.dispose()
+
+    @staticmethod
+    def _prepare_table(
+        connection: Connection, table: Table, empty_result: bool
+    ) -> None:
+        inspector = sqlalchemy.inspect(connection)
+        if not inspector.has_table(table.name):
+            table.create(connection)
+            return
+        if empty_result:
             return
 
-        if not self._is_sql_query(table_name):
-            with engine.begin() as connection:
-                inspector = sqlalchemy.inspect(engine)
-                if inspector.has_table(table_name):
-                    existing_columns = inspector.get_columns(table_name)
-                    existing_column_names = set(col["name"] for col in existing_columns)
-                    new_column_names = set(col.name for col in table.columns)
+        existing_columns = inspector.get_columns(table.name)
+        existing_column_names = {str(column["name"]) for column in existing_columns}
+        new_column_names = {column.name for column in table.columns}
 
-                    # Add missing columns
-                    for col in table.columns:
-                        if col.name not in existing_column_names:
-                            connection.execute(
-                                sqlalchemy.text(
-                                    f'ALTER TABLE "{table_name}" ADD COLUMN "{col.name}" {col.type}'
-                                )
-                            )
+        for column in table.columns:
+            if column.name not in existing_column_names:
+                connection.execute(
+                    sqlalchemy.text(
+                        f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {column.type}'
+                    )
+                )
 
-                    # Remove extra columns
-                    for col_name in existing_column_names - new_column_names:
-                        connection.execute(
-                            sqlalchemy.text(
-                                f'ALTER TABLE "{table_name}" DROP COLUMN "{col_name}"'
-                            )
-                        )
+        for column_name in existing_column_names - new_column_names:
+            connection.execute(
+                sqlalchemy.text(
+                    f'ALTER TABLE "{table.name}" DROP COLUMN "{column_name}"'
+                )
+            )
 
-                    # Update column types if necessary
-                    for col in table.columns:
-                        existing_col = next(
-                            (c for c in existing_columns if c["name"] == col.name), None
-                        )
-                        if existing_col and not isinstance(
-                            existing_col["type"], col.type.__class__
-                        ):
-                            connection.execute(
-                                sqlalchemy.text(
-                                    f'ALTER TABLE "{table_name}" ALTER COLUMN "{col.name}" TYPE {col.type}'
-                                )
-                            )
-                else:
-                    # Create table if it doesn't exist
-                    table.create(connection)
+        for column in table.columns:
+            existing_column = next(
+                (
+                    candidate
+                    for candidate in existing_columns
+                    if candidate["name"] == column.name
+                ),
+                None,
+            )
+            if existing_column and not isinstance(
+                existing_column["type"], column.type.__class__
+            ):
+                connection.execute(
+                    sqlalchemy.text(
+                        f'ALTER TABLE "{table.name}" ALTER COLUMN "{column.name}" TYPE {column.type}'
+                    )
+                )
 
-                for start in range(0, len(data), _INSERT_CHUNK_SIZE):
-                    chunk = data.iloc[start : start + _INSERT_CHUNK_SIZE]
-                    connection.execute(table.insert(), chunk.to_dict(orient="records"))
+    @staticmethod
+    def _insert_chunk(connection: Connection, table: Table, data: pd.DataFrame) -> None:
+        if data.empty:
+            return
+        converted = data.copy()
+        for column in table.columns:
+            if isinstance(column.type, String):
+                converted[column.name] = converted[column.name].map(
+                    lambda value: str(value) if value is not None else None
+                )
+        connection.execute(table.insert(), converted.to_dict(orient="records"))
 
-        engine.dispose()
-
-    def _is_sql_query(self, table_name: str) -> bool:
-        """Check if table_name contains SQL keywords."""
-        sql_keywords = ["SELECT", "FROM", "WHERE", "JOIN", "GROUP BY", "ORDER BY"]
-        return any(keyword in table_name.upper() for keyword in sql_keywords)
-
-    def _get_sqla_table(self, df: pd.DataFrame, table_name: str):
-        """Create SQLAlchemy table from DataFrame."""
+    @staticmethod
+    def _get_sqla_table(df: pd.DataFrame, table_name: str) -> Table:
         metadata = MetaData()
         columns = []
 
         for column_name, dtype in df.dtypes.items():
-            # Check if column contains mixed types by examining actual values
             column_values = df[column_name].dropna()
-            has_strings = any(isinstance(val, str) for val in column_values)
-            has_numbers = any(isinstance(val, (int, float)) for val in column_values)
+            has_strings = any(isinstance(value, str) for value in column_values)
 
-            # If column has mixed strings and numbers, or contains strings, use String type
-            if has_strings or (has_strings and has_numbers):
-                col_type = String()
+            if has_strings:
+                column_type = String()
             elif "int" in str(dtype):
-                col_type = Integer()
+                column_type = Integer()
             elif "float" in str(dtype):
-                col_type = Numeric()
+                column_type = Numeric()
             elif "bool" in str(dtype):
-                col_type = Boolean()
+                column_type = Boolean()
             elif "datetime" in str(dtype):
-                col_type = DateTime()
+                column_type = DateTime()
             elif "date" in str(dtype):
-                col_type = Date()
+                column_type = Date()
             else:
-                col_type = String()
+                column_type = String()
 
-            columns.append(Column(column_name, col_type))  # type: ignore[arg-type]
+            columns.append(
+                Column(
+                    str(column_name),
+                    column_type,  # type: ignore[reportArgumentType]
+                )
+            )
 
         return Table(table_name, metadata, *columns)
-
-    @property
-    def columns_decoded(self) -> bool:
-        return True

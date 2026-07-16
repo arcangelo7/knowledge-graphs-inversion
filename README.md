@@ -7,7 +7,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%20|%203.12%20|%203.13-blue.svg)](https://www.python.org/)
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
 
-Given an RDF graph and the [R2RML](https://www.w3.org/TR/r2rml/) or [RML](https://kg-construct.github.io/rml-core/spec/docs/) mapping that produced it, this tool reconstructs the original relational data. It parses the mapping document, generates SPARQL queries that reverse each mapping rule, and materializes the reconstructed rows in a relational database when a destination URL is provided.
+Given an RDF graph and the [R2RML](https://www.w3.org/TR/r2rml/) or [RML](https://kg-construct.github.io/rml-core/spec/docs/) mapping that produced it, this tool reconstructs the original relational data. It parses the mapping document, generates SPARQL queries that reverse each mapping rule, and materializes the reconstructed rows in a destination database.
 
 Full documentation at [arcangelo7.github.io/knowledge-graphs-inversion](https://arcangelo7.github.io/knowledge-graphs-inversion/).
 
@@ -26,23 +26,15 @@ cd knowledge-graphs-inversion && uv sync
 ```python
 import kgi
 
-result = kgi.reconstruct(
+kgi.reconstruct(
     mapping="mapping.ttl",
     rdf_graph="output.nq",
-    source_db_url="postgresql+psycopg2://user:pass@localhost:5432/source",
     dest_db_url="postgresql+psycopg2://user:pass@localhost:5433/dest",
+    source_db_url="postgresql+psycopg2://user:pass@localhost:5432/source",
 )
 ```
 
-The result is a list of `ReconstructedTable` objects. Each object has a `name` attribute with the source table name and a `data` attribute containing a pandas DataFrame with the reconstructed rows. The rows are materialized automatically when `dest_db_url` is provided.
-
-```python
-for table in result:
-    print(table.name)
-    print(table.data)
-```
-
-`source_db_url` is optional and used to read the original column types and ordering. When using RML mappings with [D2RQ](http://d2rq.org/) database definitions, the connection info is extracted automatically from the mapping itself, no need to pass `source_db_url` at all. `dest_db_url` is optional and sets the target database for materialized rows. RDF queries are executed locally with PyOxyGraph.
+`dest_db_url` is required and identifies the database that receives the reconstructed tables. The function returns `None`. `source_db_url` is optional and is used to read the original column types and ordering. When an RML mapping contains a [D2RQ](http://d2rq.org/) database definition, its connection information is used as `source_db_url` unless an explicit value is passed. RDF queries are executed locally with PyOxigraph.
 
 ## Testing
 
@@ -58,11 +50,12 @@ Benchmark targets initialize submodules, run the needed Docker Compose services,
 
 ```bash
 make benchmark-krown I=1 KROWN_SUITES=mappings
+make benchmark-krown I=1 KROWN_SCENARIO=namedgraph_0SM-NG_5POM-NG_1TM_1POM_True
 make benchmark-gtfs I=10 S=1,5,10
 make benchmark-all I=1 S=1,5,10 KROWN_SUITES=mappings
 ```
 
-The KROWN runner supports `raw`, `mappings`, `named-graphs`, and `joins`. Running without `KROWN_SUITES` selects every official-scale scenario.
+The KROWN runner supports `raw`, `mappings`, `named-graphs`, and `joins`. Running without `KROWN_SUITES` selects every official-scale scenario. Set `KROWN_SCENARIO` to an exact scenario name from the benchmark output to rerun only that scenario.
 
 ## License
 

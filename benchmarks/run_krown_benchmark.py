@@ -45,7 +45,6 @@ from benchmarks.krown_stats import (  # noqa: E402
 from benchmarks.krown_validator import KrownValidator  # noqa: E402
 from kgi.core import reconstruct  # noqa: E402
 from kgi.exceptions import NonInvertibleError  # noqa: E402
-from kgi.models import ReconstructedTable  # noqa: E402
 
 console = Console(width=max(shutil.get_terminal_size().columns, 100))
 
@@ -532,6 +531,7 @@ class KrownBenchmarkRunner:
         cleanup_tables: bool = True,
         iterations: int = 1,
         suites: tuple[str, ...] = SUITES,
+        scenario_name: str | None = None,
     ):
         project_root = Path(__file__).resolve().parent.parent
         self.data_generator_dir = project_root / "KROWN" / "data-generator"
@@ -541,13 +541,47 @@ class KrownBenchmarkRunner:
         self.results_dir = benchmark_dir / "results"
         self.cleanup_tables = cleanup_tables
         self.iterations = iterations
-        self.suites = suites
-        self.scenarios = tuple(
-            scenario
-            for scenario in load_scenarios(self.config_file)
-            if scenario.suite in suites
+        catalog = load_scenarios(self.config_file)
+        scenario_names = {scenario.generated_name for scenario in catalog}
+        if scenario_name is not None and scenario_name not in scenario_names:
+            raise ValueError(f"Unknown KROWN scenario: {scenario_name}")
+
+        suite_scenarios = tuple(
+            scenario for scenario in catalog if scenario.suite in suites
         )
-        self.series = tuple(series for series in SERIES if series.suite in suites)
+        if scenario_name is not None:
+            suite_scenarios = tuple(
+                scenario
+                for scenario in suite_scenarios
+                if scenario.generated_name == scenario_name
+            )
+            if not suite_scenarios:
+                selected_suites = ", ".join(suites)
+                raise ValueError(
+                    f"KROWN scenario {scenario_name} is not included in "
+                    f"selected suites: {selected_suites}"
+                )
+
+        self.scenarios = suite_scenarios
+        self.suites = tuple(
+            suite
+            for suite in SUITES
+            if any(scenario.suite == suite for scenario in self.scenarios)
+        )
+        selected_names = {scenario.generated_name for scenario in self.scenarios}
+        self.series = tuple(
+            KrownSeries(
+                name=series.name,
+                title=series.title,
+                suite=series.suite,
+                parameter_label=series.parameter_label,
+                points=tuple(
+                    point for point in series.points if point[0] in selected_names
+                ),
+            )
+            for series in SERIES
+            if any(point[0] in selected_names for point in series.points)
+        )
         self.connection_string = (
             f"postgresql://{os.environ['BENCHMARK_DB_USER']}:"
             f"{os.environ['BENCHMARK_DB_PASSWORD']}@"
@@ -816,19 +850,18 @@ class KrownBenchmarkRunner:
             engine.dispose()
         return originals
 
-    def execute_inversion_step(
-        self, shared_dir: Path, rdf_file: Path
-    ) -> tuple[list[ReconstructedTable], float]:
+    def execute_inversion_step(self, shared_dir: Path, rdf_file: Path) -> float:
         source_db_url = self.connection_string.replace(
             "postgresql://", "postgresql+psycopg2://"
         )
         started = time.perf_counter()
-        inversion_results = reconstruct(
+        reconstruct(
             mapping=str(shared_dir / "mapping.r2rml.ttl"),
             rdf_graph=str(rdf_file),
+            dest_db_url=source_db_url,
             source_db_url=source_db_url,
         )
-        return inversion_results, time.perf_counter() - started
+        return time.perf_counter() - started
 
     def build_scenario_result(
         self,
@@ -954,9 +987,7 @@ class KrownBenchmarkRunner:
         original_tables = self.archive_source_tables(source_tables)
         inversion_started = time.perf_counter()
         try:
-            inversion_results, inversion_time = self.execute_inversion_step(
-                shared_dir, rdf_file
-            )
+            inversion_time = self.execute_inversion_step(shared_dir, rdf_file)
         except NonInvertibleError as error:
             inversion_time = time.perf_counter() - inversion_started
             if scenario.expected_outcome != "NON_INVERTIBLE":
@@ -989,17 +1020,7 @@ class KrownBenchmarkRunner:
                 "out_of_memory",
                 "Python raised MemoryError during inversion",
             ) from error
-        reconstructed_table_names = [result.name for result in inversion_results]
         expected_table_names = [source_table.name for source_table in source_tables]
-        if set(reconstructed_table_names) != set(expected_table_names):
-            raise ScenarioExecutionFailure(
-                "inversion_validation",
-                "unexpected_tables",
-                (
-                    f"Unexpected reconstructed tables for {scenario.generated_name}: "
-                    f"{reconstructed_table_names}"
-                ),
-            )
         total_time = time.perf_counter() - started
 
         roundtrip_file = shared_dir / "roundtrip.nq"
@@ -1035,7 +1056,7 @@ class KrownBenchmarkRunner:
             rmlmapper_time=rmlmapper_time,
             inversion_time=inversion_time,
             total_time=total_time,
-            inversion_count=len(inversion_results),
+            inversion_count=len(expected_table_names),
             validation_results=validation_results,
         )
 
@@ -1340,11 +1361,19 @@ def main() -> int:  # pragma: no cover
         default=SUITES,
         help="Comma-separated suites: raw,mappings,named-graphs,joins (default: all)",
     )
-    args = parser.parse_args()
-    runner = KrownBenchmarkRunner(
-        iterations=args.iterations,
-        suites=args.suites,
+    parser.add_argument(
+        "--scenario",
+        help="Exact generated name of one scenario to run",
     )
+    args = parser.parse_args()
+    try:
+        runner = KrownBenchmarkRunner(
+            iterations=args.iterations,
+            suites=args.suites,
+            scenario_name=args.scenario,
+        )
+    except ValueError as error:
+        parser.error(str(error))
     return runner.run_benchmark()
 
 

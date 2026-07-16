@@ -37,6 +37,61 @@ Mapping scenarios with more TMs than POMs must return `NON_INVERTIBLE` because i
 
 Reported timings exclude validation. Results include source size, RDF statement counts, mapping structure, throughput, validation losses, summary statistics, and 95% confidence intervals.
 
+## Results
+
+The current checkpoint was collected on 16 July 2026 with PyOxigraph and one iteration per scenario. The [raw results](results/krown_benchmark_results_raw_2026-07-16.json) and [aggregated statistics](results/krown_benchmark_results_stats_2026-07-16.json) preserve the measurements and failure diagnostics.
+
+| Outcome | Scenarios |
+| --- | ---: |
+| `FULL` | 8 |
+| `PARTIAL` | 13 |
+| `NON_INVERTIBLE` | 6 |
+| `OUT_OF_MEMORY` | 11 |
+| `TIMEOUT` | 3 |
+| `FAILED` | 17 |
+
+Of the 31 failed scenarios, 15 failed during forward mapping: 11 ran out of memory, three timed out, and one ended after a Java Virtual Machine crash. The official RMLMapper/PostgreSQL results also report resource limits for the same configurations: out-of-memory failures for 10 million rows and value sizes of 5,000 and 10,000 characters, and timeouts for named-graph scenarios and join-condition cases with 5, 10, or 15 conditions. See the [KROWN record](https://zenodo.org/records/10973892).
+
+The other 16 failures are RDF round-trip mismatches after forward mapping completed. They remain recorded as failures pending investigation.
+
+### Raw data
+
+![RMLMapper and inversion times as the number of rows varies.](images/krown_rows_timing.png)
+
+![RMLMapper and inversion times as the number of properties varies.](images/krown_properties_timing.png)
+
+![RMLMapper and inversion times as the value size varies.](images/krown_value_size_timing.png)
+
+### Mappings
+
+![RMLMapper and inversion times as the number of Triples Maps varies.](images/krown_mappings_triples_maps_timing.png)
+
+![RMLMapper and inversion times as the number of Predicate-Object Maps varies.](images/krown_mappings_predicate_object_maps_timing.png)
+
+### Named graphs
+
+![RMLMapper and inversion times for static named graphs in the Subject Map.](images/krown_named_graphs_subject_static_timing.png)
+
+![RMLMapper and inversion times for dynamic named graphs in the Subject Map.](images/krown_named_graphs_subject_dynamic_timing.png)
+
+![RMLMapper and inversion times for static named graphs in Predicate-Object Maps.](images/krown_named_graphs_pom_static_timing.png)
+
+![RMLMapper and inversion times for dynamic named graphs in Predicate-Object Maps.](images/krown_named_graphs_pom_dynamic_timing.png)
+
+![RMLMapper and inversion times for static named graphs in Subject and Predicate-Object Maps.](images/krown_named_graphs_both_static_timing.png)
+
+![RMLMapper and inversion times for dynamic named graphs in Subject and Predicate-Object Maps.](images/krown_named_graphs_both_dynamic_timing.png)
+
+### Joins
+
+![RMLMapper and inversion times for one-to-many relations.](images/krown_joins_one_to_many_timing.png)
+
+![RMLMapper and inversion times for many-to-one relations.](images/krown_joins_many_to_one_timing.png)
+
+![RMLMapper and inversion times for many-to-many relations.](images/krown_joins_many_to_many_timing.png)
+
+![RMLMapper and inversion times as the number of join conditions varies.](images/krown_joins_conditions_timing.png)
+
 ## Run
 
 Run all suites once:
@@ -52,5 +107,13 @@ make benchmark-krown I=1 KROWN_SUITES=mappings,named-graphs
 ```
 
 `KROWN_SUITES` accepts `raw`, `mappings`, `named-graphs`, and `joins`, and defaults to `all`. The 10M-row raw-data case and the 1M-row named-graph cases require the most time and disk space.
+
+To rerun one scenario, copy its generated name from the benchmark output:
+
+```bash
+make benchmark-krown I=1 KROWN_SCENARIO=namedgraph_0SM-NG_5POM-NG_1TM_1POM_True
+```
+
+`KROWN_SCENARIO` requires an exact name. When combined with `KROWN_SUITES`, the selected scenario must belong to one of those suites. Results, statistics, and plots contain only the selected scenario.
 
 The runner generates one scenario at a time and removes it after its iterations. Raw and aggregated JSON files, together with one timing plot per series, are written to `benchmarks/krown/results/`.

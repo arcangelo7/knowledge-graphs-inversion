@@ -21,6 +21,7 @@ rml_io_registry/test-cases/**/*.ttl
 rml_io_registry/test-cases/**/*.log
 rml_io_registry/test-cases/output.*
 inversion.log
+hs_err_pid*.log
 rmlmapper*.jar
 
 # Virtuoso data directory
