@@ -7,7 +7,6 @@
 import argparse
 import datetime as dt
 import json
-import os
 import shutil
 import socket
 import subprocess
@@ -510,18 +509,18 @@ class GtfsBenchmarkRunner:
         self.iterations = iterations
 
         self.db_config = {
-            "host": os.environ["BENCHMARK_DB_HOST"],
-            "port": os.environ["BENCHMARK_DB_PORT"],
-            "user": os.environ["BENCHMARK_DB_USER"],
-            "password": os.environ["BENCHMARK_DB_PASSWORD"],
-            "database": os.environ["BENCHMARK_DB_NAME"],
+            "host": "benchmark_postgresql",
+            "port": "5432",
+            "user": "r2rml",
+            "password": "r2rml",
+            "database": "r2rml",
         }
         self.gtfs_mysql_config = GtfsMySqlConfig(
-            host=os.environ["GTFS_MYSQL_HOST"],
-            port=int(os.environ["GTFS_MYSQL_PORT"]),
-            database=os.environ["GTFS_MYSQL_DATABASE"],
-            user=os.environ["GTFS_MYSQL_USER"],
-            password=os.environ["GTFS_MYSQL_PASSWORD"],
+            host="gtfs_mysql",
+            port=3306,
+            database="gtfs",
+            user="oeg",
+            password="oeg",
         )
 
     def get_connection_string(self) -> str:
@@ -940,6 +939,12 @@ class GtfsBenchmarkRunner:
             )
             if completed_runs:
                 stats = aggregate_scenario_statistics(completed_runs)
+                if "rmlmapper_time" not in stats:
+                    raise ValueError("GTFS statistics lack RMLMapper timing")
+                if "inversion_time" not in stats:
+                    raise ValueError("GTFS statistics lack inversion timing")
+                if "inversion_overhead_percentage" not in stats:
+                    raise ValueError("GTFS statistics lack inversion overhead")
                 table.add_row(
                     scenario_name,
                     f"{len(completed_runs)}/{len(runs)}",

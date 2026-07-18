@@ -45,17 +45,6 @@ services:
       - benchmark-venv:/app/.venv
       - ./benchmarks/krown/results:/app/benchmarks/krown/results
     working_dir: /app
-    environment:
-      - BENCHMARK_DB_HOST=benchmark_postgresql
-      - BENCHMARK_DB_PORT=5432
-      - BENCHMARK_DB_USER=r2rml
-      - BENCHMARK_DB_PASSWORD=r2rml
-      - BENCHMARK_DB_NAME=r2rml
-      - GTFS_MYSQL_HOST=gtfs_mysql
-      - GTFS_MYSQL_PORT=3306
-      - GTFS_MYSQL_DATABASE=gtfs
-      - GTFS_MYSQL_USER=oeg
-      - GTFS_MYSQL_PASSWORD=oeg
     depends_on:
       benchmark_postgresql:
         condition: service_healthy

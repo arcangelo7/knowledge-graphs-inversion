@@ -16,25 +16,39 @@ def _quoted(identifier: str) -> str:
 
 
 class KrownValidator:
-    def __init__(self, connection_string: str):
+    def __init__(
+        self,
+        connection_string: str,
+        source_schema: str,
+        destination_schema: str,
+    ):
         self.engine: Engine = create_engine(connection_string)
+        self.source_schema = source_schema
+        self.destination_schema = destination_schema
 
-    def _columns(self, table_name: str) -> list[str]:
+    @staticmethod
+    def _qualified(schema: str, table_name: str) -> str:
+        return f"{_quoted(schema)}.{_quoted(table_name)}"
+
+    def _columns(self, schema: str, table_name: str) -> list[str]:
         return [
-            column["name"] for column in inspect(self.engine).get_columns(table_name)
+            column["name"]
+            for column in inspect(self.engine).get_columns(table_name, schema=schema)
         ]
 
-    def _row_count(self, table_name: str) -> int:
+    def _row_count(self, schema: str, table_name: str) -> int:
         with self.engine.connect() as connection:
             return int(
                 connection.execute(
-                    text(f"SELECT COUNT(*) FROM {_quoted(table_name)}")
+                    text(f"SELECT COUNT(*) FROM {self._qualified(schema, table_name)}")
                 ).scalar_one()
             )
 
     def _difference_exists(
         self,
+        left_schema: str,
         left_table: str,
+        right_schema: str,
         right_table: str,
         columns: list[str],
         preserve_multiplicity: bool,
@@ -44,21 +58,21 @@ class KrownValidator:
         query = text(
             "SELECT EXISTS ("
             "SELECT 1 FROM ("
-            f"SELECT {column_list} FROM {_quoted(left_table)} "
+            f"SELECT {column_list} FROM "
+            f"{self._qualified(left_schema, left_table)} "
             f"{operator} "
-            f"SELECT {column_list} FROM {_quoted(right_table)}"
+            f"SELECT {column_list} FROM "
+            f"{self._qualified(right_schema, right_table)}"
             ") AS difference)"
         )
         with self.engine.connect() as connection:
             return bool(connection.execute(query).scalar_one())
 
-    def _table_result(
-        self, original_table: str, reconstructed_table: str
-    ) -> dict[str, object]:
-        original_columns = self._columns(original_table)
-        reconstructed_columns = self._columns(reconstructed_table)
-        original_rows = self._row_count(original_table)
-        reconstructed_rows = self._row_count(reconstructed_table)
+    def _table_result(self, table_name: str) -> dict[str, object]:
+        original_columns = self._columns(self.source_schema, table_name)
+        reconstructed_columns = self._columns(self.destination_schema, table_name)
+        original_rows = self._row_count(self.source_schema, table_name)
+        reconstructed_rows = self._row_count(self.destination_schema, table_name)
         extra_columns = [
             column for column in reconstructed_columns if column not in original_columns
         ]
@@ -76,25 +90,33 @@ class KrownValidator:
 
         if column_subset:
             foreign_values = self._difference_exists(
-                reconstructed_table,
-                original_table,
+                self.destination_schema,
+                table_name,
+                self.source_schema,
+                table_name,
                 reconstructed_columns,
                 preserve_multiplicity=False,
             )
             missing_values = self._difference_exists(
-                original_table,
-                reconstructed_table,
+                self.source_schema,
+                table_name,
+                self.destination_schema,
+                table_name,
                 reconstructed_columns,
                 preserve_multiplicity=False,
             )
             multiplicities_match = not self._difference_exists(
-                reconstructed_table,
-                original_table,
+                self.destination_schema,
+                table_name,
+                self.source_schema,
+                table_name,
                 reconstructed_columns,
                 preserve_multiplicity=True,
             ) and not self._difference_exists(
-                original_table,
-                reconstructed_table,
+                self.source_schema,
+                table_name,
+                self.destination_schema,
+                table_name,
                 reconstructed_columns,
                 preserve_multiplicity=True,
             )
@@ -161,20 +183,26 @@ class KrownValidator:
 
     def validate_inversion(
         self,
-        original_tables: dict[str, str],
-        reconstructed_tables: list[str],
+        expected_tables: list[str],
         scenario_name: str,
         expected_outcome: str,
         original_rdf: Path,
         roundtrip_rdf: Path,
     ) -> dict[str, object]:
-        table_names_match = set(original_tables) == set(reconstructed_tables)
+        inspector = inspect(self.engine)
+        source_tables = set(inspector.get_table_names(schema=self.source_schema))
+        destination_tables = set(
+            inspector.get_table_names(schema=self.destination_schema)
+        )
+        expected_table_names = set(expected_tables)
+        table_names_match = (
+            source_tables == expected_table_names
+            and destination_tables == expected_table_names
+        )
         table_results = {}
         if table_names_match:
-            for table_name in reconstructed_tables:
-                table_results[table_name] = self._table_result(
-                    original_tables[table_name], table_name
-                )
+            for table_name in expected_tables:
+                table_results[table_name] = self._table_result(table_name)
 
         rdf_round_trip = self._rdf_datasets_equal(original_rdf, roundtrip_rdf)
         exact = (
@@ -218,6 +246,8 @@ class KrownValidator:
                 "tables": table_names_match,
                 "rdf_round_trip": rdf_round_trip,
             },
+            "source_tables": sorted(source_tables),
+            "destination_tables": sorted(destination_tables),
             "tables": table_results,
             "errors": errors,
         }

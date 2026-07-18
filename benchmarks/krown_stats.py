@@ -37,11 +37,11 @@ class ScenarioMetadata(TypedDict):
 
 class ScenarioStatistics(TypedDict):
     execution_time: TimingStatistics
-    rmlmapper_time: TimingStatistics
-    inversion_time: TimingStatistics
-    inversion_overhead_percentage: TimingStatistics
     n_runs: int
     metadata: ScenarioMetadata
+    rmlmapper_time: NotRequired[TimingStatistics]
+    inversion_time: NotRequired[TimingStatistics]
+    inversion_overhead_percentage: NotRequired[TimingStatistics]
     rows_per_second: NotRequired[TimingStatistics]
     cells_per_second: NotRequired[TimingStatistics]
 
@@ -112,15 +112,6 @@ def aggregate_scenario_statistics(
         "execution_time": calculate_timing_statistics(
             [run["execution_time"] for run in runs]
         ),
-        "rmlmapper_time": calculate_timing_statistics(
-            [timing["rmlmapper_time"] for timing in timing_breakdowns]
-        ),
-        "inversion_time": calculate_timing_statistics(
-            [timing["inversion_time"] for timing in timing_breakdowns]
-        ),
-        "inversion_overhead_percentage": calculate_timing_statistics(
-            [timing["inversion_overhead_percentage"] for timing in timing_breakdowns]
-        ),
         "n_runs": len(runs),
         "metadata": {
             "triples_maps_count": first_run["triples_maps_count"],
@@ -134,5 +125,14 @@ def aggregate_scenario_statistics(
             "source_cells": first_run["source_cells"],
         },
     }
+    for metric_name in (
+        "rmlmapper_time",
+        "inversion_time",
+        "inversion_overhead_percentage",
+    ):
+        if all(metric_name in timing for timing in timing_breakdowns):
+            statistics[metric_name] = calculate_timing_statistics(
+                [timing[metric_name] for timing in timing_breakdowns]
+            )
 
     return statistics

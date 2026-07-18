@@ -7,8 +7,6 @@
 import argparse
 import csv
 import json
-import logging
-import os
 import shutil
 import subprocess
 import sys
@@ -16,6 +14,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from rdflib import Graph, Namespace
 from rdflib.namespace import RDF
@@ -25,45 +24,59 @@ from rich.progress import (
     MofNCompleteColumn,
     Progress,
     SpinnerColumn,
+    TaskID,
     TextColumn,
     TimeElapsedColumn,
 )
 from rich.table import Table
-from sqlalchemy import create_engine, text
+from sqlalchemy import URL, create_engine, text
 from sqlalchemy.engine import Engine
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-logging.disable(logging.CRITICAL)
-
-import rmlmapper  # noqa: E402
-from benchmarks.krown_plots import plot_timing_charts  # noqa: E402
-from benchmarks.krown_stats import (  # noqa: E402
+import rmlmapper
+from benchmarks.krown_catalog import (
+    KROWN_REPOSITORY,
+    SERIES,
+    SUITES,
+    KrownScenario,
+    KrownSeries,
+    ParameterValue,
+    load_scenarios,
+)
+from benchmarks.krown_metrics import (
+    OfficialKrownExecutor,
+    OfficialRunResult,
+    SynchronousCollector,
+    generate_official_statistics,
+    read_step_duration,
+)
+from benchmarks.krown_plots import plot_timing_charts
+from benchmarks.krown_stats import (
     aggregate_scenario_statistics,
     calculate_timing_statistics,
 )
-from benchmarks.krown_validator import KrownValidator  # noqa: E402
-from kgi.core import reconstruct  # noqa: E402
-from kgi.exceptions import NonInvertibleError  # noqa: E402
+from benchmarks.krown_validator import KrownValidator
+from kgi.core import reconstruct
+from kgi.exceptions import NonInvertibleError
 
 console = Console(width=max(shutil.get_terminal_size().columns, 100))
 
 R2RML = Namespace("http://www.w3.org/ns/r2rml#")
 SPARQL_ENGINE = "pyoxigraph"
+RMLMAPPER_VERSION = "8.1.0"
 RMLMAPPER_JAVA_OPTIONS = (
     "-XX:InitialRAMPercentage=50.0",
     "-XX:MaxRAMPercentage=50.0",
 )
 RMLMAPPER_TIMEOUT_SECONDS = 3 * 60 * 60
-SUITES = ("raw", "mappings", "named-graphs", "joins")
-GENERATOR_SUITES = {
-    "RawData": "raw",
-    "Mappings": "mappings",
-    "NamedGraph": "named-graphs",
-    "JoinsRelation": "joins",
-    "JoinsMultiple": "joins",
-}
-ParameterValue = bool | int | float | str
+KROWN_COOLDOWN_SECONDS = 15
+SOURCE_SCHEMA = "source"
+DESTINATION_SCHEMA = "destination"
+BenchmarkMode = Literal["forward", "backward", "roundtrip"]
+
+EXIT_TIMEOUT = 20
+EXIT_OUT_OF_MEMORY = 21
+EXIT_PROCESS_ERROR = 22
+EXIT_NON_INVERTIBLE = 23
 
 
 def _dictionary(value: object) -> dict[str, object]:
@@ -93,141 +106,87 @@ def _integer_parameter(parameters: dict[str, ParameterValue], name: str) -> int:
     return value
 
 
-def _float_parameter(parameters: dict[str, ParameterValue], name: str) -> float:
-    value = parameters[name]
-    if not isinstance(value, (int, float)) or isinstance(value, bool):
-        raise TypeError(f"KROWN parameter {name} must be numeric")
-    return float(value)
+def _quoted(identifier: str) -> str:
+    return '"' + identifier.replace('"', '""') + '"'
 
 
-def _boolean_parameter(parameters: dict[str, ParameterValue], name: str) -> bool:
-    value = parameters[name]
-    if not isinstance(value, bool):
-        raise TypeError(f"KROWN parameter {name} must be boolean")
-    return value
+def _format_confidence_interval(statistics: dict[str, object]) -> str:
+    mean = _number(statistics["mean"])
+    lower = _number(statistics["ci_95_lower"])
+    upper = _number(statistics["ci_95_upper"])
+    margin = max(mean - lower, upper - mean)
+    return f"{mean:.2f}±{margin:.2f}"
 
 
-@dataclass(frozen=True)
-class KrownScenario:
-    identifier: str
-    display_name: str
-    generator: str
-    parameters: dict[str, ParameterValue]
-
-    @property
-    def suite(self) -> str:
-        return GENERATOR_SUITES[self.generator]
-
-    @property
-    def expected_outcome(self) -> str:
-        if self.generator == "RawData":
-            return "FULL"
-        if self.generator == "Mappings" and _integer_parameter(
-            self.parameters, "number_of_tms"
-        ) > _integer_parameter(self.parameters, "number_of_poms"):
-            return "NON_INVERTIBLE"
-        return "PARTIAL"
-
-    @property
-    def generated_name(self) -> str:
-        parameters = self.parameters
-        if self.generator == "RawData":
-            return (
-                f"raw_{_integer_parameter(parameters, 'number_of_members')}_"
-                f"{_integer_parameter(parameters, 'number_of_properties')}_"
-                f"{_integer_parameter(parameters, 'value_size')}"
-            )
-        if self.generator == "Mappings":
-            return (
-                f"mappings_{_integer_parameter(parameters, 'number_of_tms')}_"
-                f"{_integer_parameter(parameters, 'number_of_poms')}"
-            )
-        if self.generator == "NamedGraph":
-            static = _boolean_parameter(parameters, "static")
-            return (
-                "namedgraph_"
-                f"{_integer_parameter(parameters, 'number_of_ng_s')}SM-NG_"
-                f"{_integer_parameter(parameters, 'number_of_ng_pom')}POM-NG_"
-                f"{_integer_parameter(parameters, 'number_of_tms')}TM_"
-                f"{_integer_parameter(parameters, 'number_of_poms')}POM_{static}"
-            )
-        if self.generator == "JoinsRelation":
-            percentage = _float_parameter(parameters, "percentage")
-            return (
-                "joins_relations_"
-                f"{_integer_parameter(parameters, 'n')}-"
-                f"{_integer_parameter(parameters, 'm')}_{percentage}"
-            )
-        if self.generator == "JoinsMultiple":
-            percentage = _float_parameter(parameters, "percentage")
-            return (
-                "joins_mutiple_"
-                f"{_integer_parameter(parameters, 'n')}-"
-                f"{_integer_parameter(parameters, 'm')}_"
-                f"{_integer_parameter(parameters, 'jc')}jc_{percentage}"
-            )
-        raise ValueError(f"Unsupported KROWN generator: {self.generator}")
-
-    @property
-    def source_table_count(self) -> int:
-        return 2 if self.suite == "joins" else 1
-
-    @property
-    def source_rows(self) -> int:
-        return (
-            _integer_parameter(self.parameters, "number_of_members")
-            * self.source_table_count
-        )
-
-    @property
-    def source_cells(self) -> int:
-        columns = _integer_parameter(self.parameters, "number_of_properties") + 1
-        return self.source_rows * columns
-
-    @property
-    def expected_rdf_statements(self) -> int | None:
-        rows = _integer_parameter(self.parameters, "number_of_members")
-        if self.generator == "RawData":
-            return rows * _integer_parameter(self.parameters, "number_of_properties")
-        if self.generator == "Mappings":
-            return (
-                rows
-                * _integer_parameter(self.parameters, "number_of_tms")
-                * _integer_parameter(self.parameters, "number_of_poms")
-            )
-        if self.generator == "NamedGraph":
-            graph_count = _integer_parameter(
-                self.parameters, "number_of_ng_s"
-            ) + _integer_parameter(self.parameters, "number_of_ng_pom")
-            return (
-                rows
-                * _integer_parameter(self.parameters, "number_of_poms")
-                * graph_count
-            )
-        return None
-
-    def config_instance(self) -> dict[str, object]:
-        return {
-            "@id": self.identifier,
-            "name": self.display_name,
-            "generator": self.generator,
-            "parameters": self.parameters,
-        }
-
-
-@dataclass(frozen=True)
-class KrownSeries:
-    name: str
-    title: str
-    suite: str
-    parameter_label: str
-    points: tuple[tuple[str, ParameterValue], ...]
+def _format_percentage_confidence_interval(
+    statistics: dict[str, object],
+) -> str:
+    mean = _number(statistics["mean"])
+    lower = _number(statistics["ci_95_lower"])
+    upper = _number(statistics["ci_95_upper"])
+    margin = max(mean - lower, upper - mean)
+    return f"{mean:.1f}±{margin:.1f}%"
 
 
 @dataclass(frozen=True)
 class SourceTable:
     name: str
     csv_file: Path
+
+
+@dataclass(frozen=True)
+class ForwardMeasurement:
+    iteration: int
+    rdf_file: Path
+    duration: float
+    rdf_statements: int
+    run_path: Path
+    metrics_step: int
+
+
+@dataclass(frozen=True)
+class DatabaseSettings:
+    username: str
+    password: str
+    host: str
+    port: int
+    database: str
+
+    def sqlalchemy_url(self, schema: str | None = None) -> str:
+        url = URL.create(
+            "postgresql+psycopg2",
+            username=self.username,
+            password=self.password,
+            host=self.host,
+            port=self.port,
+            database=self.database,
+        )
+        rendered_url = url.render_as_string(hide_password=False)
+        if schema is None:
+            return rendered_url
+        return f"{rendered_url}?options=-csearch_path={schema}"
+
+    def jdbc_url(self, schema: str) -> str:
+        return (
+            f"jdbc:postgresql://{self.host}:{self.port}/{self.database}"
+            f"?currentSchema={schema}"
+        )
+
+
+HOST_DATABASE = DatabaseSettings(
+    username="r2rml",
+    password="r2rml",
+    host="127.0.0.1",
+    port=5434,
+    database="r2rml",
+)
+COMPOSE_DATABASE = DatabaseSettings(
+    username="r2rml",
+    password="r2rml",
+    host="benchmark_postgresql",
+    port=5432,
+    database="r2rml",
+)
 
 
 class ScenarioExecutionFailure(RuntimeError):
@@ -237,11 +196,15 @@ class ScenarioExecutionFailure(RuntimeError):
         kind: str,
         message: str,
         diagnostic: str = "",
+        elapsed_seconds: float = 0.0,
+        iteration: int | None = None,
     ):
         super().__init__(message)
         self.stage = stage
         self.kind = kind
         self.diagnostic = diagnostic
+        self.elapsed_seconds = elapsed_seconds
+        self.iteration = iteration
 
     @property
     def outcome(self) -> str:
@@ -252,207 +215,10 @@ class ScenarioExecutionFailure(RuntimeError):
         return "FAILED"
 
 
-def _raw_name(members: int, properties: int, value_size: int) -> str:
-    return f"raw_{members}_{properties}_{value_size}"
-
-
-def _mappings_name(triples_maps: int, predicate_object_maps: int) -> str:
-    return f"mappings_{triples_maps}_{predicate_object_maps}"
-
-
-def _named_graph_name(
-    subject_graphs: int,
-    predicate_object_graphs: int,
-    predicate_object_maps: int,
-    static: bool,
-) -> str:
-    return (
-        f"namedgraph_{subject_graphs}SM-NG_{predicate_object_graphs}POM-NG_"
-        f"1TM_{predicate_object_maps}POM_{static}"
-    )
-
-
-def _join_relation_name(n: int, m: int) -> str:
-    return f"joins_relations_{n}-{m}_50.0"
-
-
-def _join_conditions_name(conditions: int) -> str:
-    return f"joins_mutiple_1-1_{conditions}jc_50.0"
-
-
-SERIES = (
-    KrownSeries(
-        "raw_rows",
-        "Raw data: rows",
-        "raw",
-        "Rows",
-        tuple(
-            (_raw_name(value, 20, 0), value)
-            for value in (10_000, 100_000, 1_000_000, 10_000_000)
-        ),
-    ),
-    KrownSeries(
-        "raw_properties",
-        "Raw data: properties",
-        "raw",
-        "Properties",
-        tuple((_raw_name(100_000, value, 0), value) for value in (1, 10, 20, 30)),
-    ),
-    KrownSeries(
-        "raw_value_size",
-        "Raw data: value size",
-        "raw",
-        "Value size (characters)",
-        tuple(
-            (_raw_name(100_000, 20, value), value)
-            for value in (500, 1_000, 5_000, 10_000)
-        ),
-    ),
-    KrownSeries(
-        "mappings_triples_maps",
-        "Mappings: Triples Maps",
-        "mappings",
-        "Triples Maps",
-        tuple((_mappings_name(value, 5), value) for value in (1, 10, 20, 30)),
-    ),
-    KrownSeries(
-        "mappings_predicate_object_maps",
-        "Mappings: Predicate-Object Maps",
-        "mappings",
-        "Predicate-Object Maps",
-        tuple((_mappings_name(20, value), value) for value in (1, 3, 5, 10)),
-    ),
-    *tuple(
-        KrownSeries(
-            f"named_graphs_subject_{'static' if static else 'dynamic'}",
-            f"Named graphs in subject map ({'static' if static else 'dynamic'})",
-            "named-graphs",
-            "Named graphs",
-            tuple(
-                (_named_graph_name(value, 0, 20, static), value)
-                for value in (1, 5, 10, 15)
-            ),
-        )
-        for static in (True, False)
-    ),
-    *tuple(
-        KrownSeries(
-            f"named_graphs_pom_{'static' if static else 'dynamic'}",
-            (
-                "Named graphs in predicate-object map "
-                f"({'static' if static else 'dynamic'})"
-            ),
-            "named-graphs",
-            "Named graphs",
-            tuple(
-                (_named_graph_name(0, value, 1, static), value)
-                for value in (1, 5, 10, 15)
-            ),
-        )
-        for static in (True, False)
-    ),
-    *tuple(
-        KrownSeries(
-            f"named_graphs_both_{'static' if static else 'dynamic'}",
-            (
-                "Named graphs in subject and predicate-object maps "
-                f"({'static' if static else 'dynamic'})"
-            ),
-            "named-graphs",
-            "Named graphs in each map",
-            tuple(
-                (_named_graph_name(value, value, 10, static), value)
-                for value in (1, 5, 10, 15)
-            ),
-        )
-        for static in (True, False)
-    ),
-    KrownSeries(
-        "joins_one_to_many",
-        "Joins: 1-N relations",
-        "joins",
-        "Relation",
-        tuple(
-            (_join_relation_name(1, value), f"1-{value}") for value in (1, 5, 10, 15)
-        ),
-    ),
-    KrownSeries(
-        "joins_many_to_one",
-        "Joins: N-1 relations",
-        "joins",
-        "Relation",
-        tuple(
-            (_join_relation_name(value, 1), f"{value}-1") for value in (1, 5, 10, 15)
-        ),
-    ),
-    KrownSeries(
-        "joins_many_to_many",
-        "Joins: N-M relations",
-        "joins",
-        "Relation",
-        tuple(
-            (_join_relation_name(n, m), f"{n}-{m}")
-            for n, m in ((3, 3), (3, 5), (5, 3), (10, 5), (5, 10))
-        ),
-    ),
-    KrownSeries(
-        "joins_conditions",
-        "Joins: conditions",
-        "joins",
-        "Join conditions",
-        tuple((_join_conditions_name(value), value) for value in (1, 5, 10, 15)),
-    ),
-)
-
-
-def load_scenarios(config_file: Path) -> tuple[KrownScenario, ...]:
-    catalog = json.loads(config_file.read_text(encoding="utf-8"))
-    if not isinstance(catalog, dict) or not isinstance(catalog["instances"], list):
-        raise TypeError("Invalid KROWN benchmark catalog")
-
-    scenarios = []
-    for value in catalog["instances"]:
-        if not isinstance(value, dict) or not isinstance(value["parameters"], dict):
-            raise TypeError("Invalid KROWN scenario")
-        raw_parameters = value["parameters"]
-        parameters: dict[str, ParameterValue] = {}
-        for name, parameter_value in raw_parameters.items():
-            if not isinstance(name, str) or not isinstance(
-                parameter_value, (bool, int, float, str)
-            ):
-                raise TypeError("Invalid KROWN scenario parameter")
-            parameters[name] = parameter_value
-        scenarios.append(
-            KrownScenario(
-                identifier=str(value["@id"]),
-                display_name=str(value["name"]),
-                generator=str(value["generator"]),
-                parameters=parameters,
-            )
-        )
-
-    generated_names = [scenario.generated_name for scenario in scenarios]
-    if len(generated_names) != len(set(generated_names)):
-        raise ValueError("KROWN benchmark catalog contains duplicate scenarios")
-
-    catalog_names = set(generated_names)
-    series_names = {
-        scenario_name for series in SERIES for scenario_name, _ in series.points
-    }
-    if catalog_names != series_names:
-        missing = sorted(series_names - catalog_names)
-        unreferenced = sorted(catalog_names - series_names)
-        raise ValueError(
-            f"KROWN catalog and series differ: missing={missing}, "
-            f"unreferenced={unreferenced}"
-        )
-
-    suite_order = {suite: index for index, suite in enumerate(SUITES)}
-    return tuple(sorted(scenarios, key=lambda scenario: suite_order[scenario.suite]))
-
-
 def generate_scenario(
-    scenario: KrownScenario, scenarios_root: Path, data_generator_dir: Path
+    scenario: KrownScenario,
+    scenarios_root: Path,
+    data_generator_dir: Path,
 ) -> Path:
     if scenarios_root.exists():
         shutil.rmtree(scenarios_root)
@@ -499,106 +265,29 @@ def generate_scenario(
     return scenario_path
 
 
-def _format_confidence_interval(statistics: dict[str, object]) -> str:
-    mean = _number(statistics["mean"])
-    lower = _number(statistics["ci_95_lower"])
-    upper = _number(statistics["ci_95_upper"])
-    margin = max(mean - lower, upper - mean)
-    return f"{mean:.2f}±{margin:.2f}"
-
-
-def _format_percentage_confidence_interval(
-    statistics: dict[str, object],
-) -> str:
-    mean = _number(statistics["mean"])
-    lower = _number(statistics["ci_95_lower"])
-    upper = _number(statistics["ci_95_upper"])
-    margin = max(mean - lower, upper - mean)
-    return f"{mean:.1f}±{margin:.1f}%"
-
-
-def _quoted(identifier: str) -> str:
-    return '"' + identifier.replace('"', '""') + '"'
-
-
-def _original_table_name(table_name: str) -> str:
-    return f"_krown_original_{table_name}"
-
-
-class KrownBenchmarkRunner:
+class ScenarioOperations:
     def __init__(
         self,
-        cleanup_tables: bool = True,
-        iterations: int = 1,
-        suites: tuple[str, ...] = SUITES,
-        scenario_name: str | None = None,
+        scenario: KrownScenario,
+        scenario_path: Path,
+        database: DatabaseSettings,
     ):
-        project_root = Path(__file__).resolve().parent.parent
-        self.data_generator_dir = project_root / "KROWN" / "data-generator"
-        benchmark_dir = Path(__file__).resolve().parent / "krown"
-        self.config_file = benchmark_dir / "config" / "kg-inversion-benchmark.json"
-        self.scenarios_root = benchmark_dir / "scenarios"
-        self.results_dir = benchmark_dir / "results"
-        self.cleanup_tables = cleanup_tables
-        self.iterations = iterations
-        catalog = load_scenarios(self.config_file)
-        scenario_names = {scenario.generated_name for scenario in catalog}
-        if scenario_name is not None and scenario_name not in scenario_names:
-            raise ValueError(f"Unknown KROWN scenario: {scenario_name}")
-
-        suite_scenarios = tuple(
-            scenario for scenario in catalog if scenario.suite in suites
+        self.scenario = scenario
+        self.scenario_path = scenario_path
+        self.database = database
+        metadata_value = json.loads(
+            (scenario_path / "metadata.json").read_text(encoding="utf-8")
         )
-        if scenario_name is not None:
-            suite_scenarios = tuple(
-                scenario
-                for scenario in suite_scenarios
-                if scenario.generated_name == scenario_name
-            )
-            if not suite_scenarios:
-                selected_suites = ", ".join(suites)
-                raise ValueError(
-                    f"KROWN scenario {scenario_name} is not included in "
-                    f"selected suites: {selected_suites}"
-                )
-
-        self.scenarios = suite_scenarios
-        self.suites = tuple(
-            suite
-            for suite in SUITES
-            if any(scenario.suite == suite for scenario in self.scenarios)
-        )
-        selected_names = {scenario.generated_name for scenario in self.scenarios}
-        self.series = tuple(
-            KrownSeries(
-                name=series.name,
-                title=series.title,
-                suite=series.suite,
-                parameter_label=series.parameter_label,
-                points=tuple(
-                    point for point in series.points if point[0] in selected_names
-                ),
-            )
-            for series in SERIES
-            if any(point[0] in selected_names for point in series.points)
-        )
-        self.connection_string = (
-            f"postgresql://{os.environ['BENCHMARK_DB_USER']}:"
-            f"{os.environ['BENCHMARK_DB_PASSWORD']}@"
-            f"{os.environ['BENCHMARK_DB_HOST']}:"
-            f"{os.environ['BENCHMARK_DB_PORT']}/"
-            f"{os.environ['BENCHMARK_DB_NAME']}"
-        )
-        self.validator = KrownValidator(self.connection_string)
-
-    def prepare_output_directories(self) -> None:
-        self.results_dir.mkdir(parents=True, exist_ok=True)
-        if self.scenarios_root.exists():
-            shutil.rmtree(self.scenarios_root)
-        self.scenarios_root.mkdir(parents=True)
+        if not isinstance(metadata_value, dict):
+            raise TypeError("Invalid KROWN metadata")
+        self.metadata: dict[str, object] = metadata_value
+        self.shared_dir = scenario_path / "data" / "shared"
+        self.source_tables = self._source_tables()
 
     @staticmethod
-    def mapping_component_counts(mapping_file: Path) -> tuple[int, int, int, int]:
+    def mapping_component_counts(
+        mapping_file: Path,
+    ) -> tuple[int, int, int, int]:
         graph = Graph()
         graph.parse(mapping_file)
         triples_maps = set(graph.subjects(RDF.type, R2RML.TriplesMap))
@@ -618,47 +307,39 @@ class KrownBenchmarkRunner:
         with rdf_file.open(encoding="utf-8") as file:
             return sum(1 for line in file if line.strip())
 
-    @staticmethod
-    def _metadata_steps(metadata: dict[str, object]) -> list[dict[str, object]]:
-        steps = metadata["steps"]
+    def _metadata_steps(self) -> list[dict[str, object]]:
+        steps = self.metadata["steps"]
         if not isinstance(steps, list) or not all(
             isinstance(step, dict) for step in steps
         ):
             raise TypeError("Invalid KROWN metadata steps")
         return steps
 
-    @classmethod
-    def _metadata_step(
-        cls, metadata: dict[str, object], command: str
-    ) -> dict[str, object]:
+    def _metadata_step(self, command: str) -> dict[str, object]:
         matching_steps = [
-            step for step in cls._metadata_steps(metadata) if step["command"] == command
+            step for step in self._metadata_steps() if step["command"] == command
         ]
         if len(matching_steps) != 1:
             raise ValueError(f"Expected one {command} step in KROWN metadata")
         return matching_steps[0]
 
-    @classmethod
-    def source_tables(
-        cls, metadata: dict[str, object], shared_dir: Path
-    ) -> tuple[SourceTable, ...]:
+    def _source_tables(self) -> tuple[SourceTable, ...]:
         load_steps = [
             step
-            for step in cls._metadata_steps(metadata)
+            for step in self._metadata_steps()
             if step["command"] in ("load", "load_multiple")
         ]
         if len(load_steps) != 1:
             raise ValueError("Expected one KROWN database load step")
-        load_step = load_steps[0]
-        parameters = load_step["parameters"]
+        parameters = load_steps[0]["parameters"]
         if not isinstance(parameters, dict):
             raise TypeError("Invalid KROWN load parameters")
 
-        if load_step["command"] == "load":
+        if load_steps[0]["command"] == "load":
             return (
                 SourceTable(
                     name=str(parameters["table"]),
-                    csv_file=shared_dir / str(parameters["csv_file"]),
+                    csv_file=self.shared_dir / str(parameters["csv_file"]),
                 ),
             )
 
@@ -672,48 +353,60 @@ class KrownBenchmarkRunner:
             tables.append(
                 SourceTable(
                     name=str(value["table"]),
-                    csv_file=shared_dir / str(value["file"]),
+                    csv_file=self.shared_dir / str(value["file"]),
                 )
             )
         return tuple(tables)
 
-    def execute_load_rdb_step(
-        self,
-        source_tables: tuple[SourceTable, ...],
-        scenario: KrownScenario,
-    ) -> None:
-        engine = create_engine(self.connection_string)
+    @property
+    def mapping_file(self) -> Path:
+        parameters = self._metadata_step("execute_mapping")["parameters"]
+        if not isinstance(parameters, dict):
+            raise TypeError("Invalid KROWN mapping parameters")
+        return self.shared_dir / str(parameters["mapping_file"])
+
+    def reset_schema(self, schema: str) -> None:
+        engine = create_engine(self.database.sqlalchemy_url())
         try:
-            for source_table in source_tables:
-                self.load_source_table(engine, source_table, scenario)
+            with engine.begin() as connection:
+                connection.execute(
+                    text(f"DROP SCHEMA IF EXISTS {_quoted(schema)} CASCADE")
+                )
+                connection.execute(text(f"CREATE SCHEMA {_quoted(schema)}"))
         finally:
             engine.dispose()
 
-    @staticmethod
-    def load_source_table(
-        engine: Engine, source_table: SourceTable, scenario: KrownScenario
-    ) -> None:
+    def prepare_source(self) -> None:
+        self.reset_schema(SOURCE_SCHEMA)
+        self.reset_schema(DESTINATION_SCHEMA)
+        engine = create_engine(self.database.sqlalchemy_url(SOURCE_SCHEMA))
+        try:
+            for source_table in self.source_tables:
+                self._load_source_table(engine, source_table)
+        finally:
+            engine.dispose()
+
+    def _load_source_table(self, engine: Engine, source_table: SourceTable) -> None:
         with source_table.csv_file.open(newline="", encoding="utf-8") as file:
             columns = next(csv.reader(file))
         expected_columns = ["id"] + [
             f"p{number}"
             for number in range(
                 1,
-                _integer_parameter(scenario.parameters, "number_of_properties") + 1,
+                _integer_parameter(self.scenario.parameters, "number_of_properties")
+                + 1,
             )
         ]
         if columns != expected_columns:
             raise ValueError(
-                f"Unexpected CSV columns for {scenario.generated_name}: {columns}"
+                f"Unexpected CSV columns for {self.scenario.generated_name}: {columns}"
             )
 
         table_name = _quoted(source_table.name)
-        original_name = _quoted(_original_table_name(source_table.name))
         definitions = [f"{_quoted('id')} INTEGER PRIMARY KEY"]
         definitions.extend(f"{_quoted(column)} TEXT" for column in columns[1:])
         with engine.begin() as connection:
             connection.execute(text(f"DROP TABLE IF EXISTS {table_name} CASCADE"))
-            connection.execute(text(f"DROP TABLE IF EXISTS {original_name} CASCADE"))
             connection.execute(
                 text(f"CREATE TABLE {table_name} ({', '.join(definitions)})")
             )
@@ -734,164 +427,352 @@ class KrownBenchmarkRunner:
             row_count = connection.execute(
                 text(f"SELECT COUNT(*) FROM {table_name}")
             ).scalar_one()
-        expected_rows = _integer_parameter(scenario.parameters, "number_of_members")
+        expected_rows = _integer_parameter(
+            self.scenario.parameters, "number_of_members"
+        )
         if row_count != expected_rows:
             raise ValueError(
-                f"Unexpected row count for {scenario.generated_name}/"
+                f"Unexpected row count for {self.scenario.generated_name}/"
                 f"{source_table.name}: expected={expected_rows}, actual={row_count}"
             )
 
-    @staticmethod
-    def run_rmlmapper(
-        mapping_file: Path,
-        output_file: Path,
-        jdbc_dsn: str,
-        username: str,
-        password: str,
-        stage: str,
-    ) -> float:
-        output_file.unlink(missing_ok=True)
-        started = time.perf_counter()
+    def forward(self, schema: str, rdf_file: Path) -> None:
+        rdf_file.unlink(missing_ok=True)
         try:
             process = rmlmapper.execute(
-                str(mapping_file),
-                str(output_file),
+                str(self.mapping_file),
+                str(rdf_file),
                 serialization="nquads",
-                dsn=jdbc_dsn,
-                username=username,
-                password=password,
+                dsn=self.database.jdbc_url(schema),
+                username=self.database.username,
+                password=self.database.password,
                 timeout=RMLMAPPER_TIMEOUT_SECONDS,
                 java_options=RMLMAPPER_JAVA_OPTIONS,
             )
         except subprocess.TimeoutExpired as error:
             diagnostic = _process_output(error.stdout) + _process_output(error.stderr)
-            if diagnostic:
-                sys.stderr.write(diagnostic)
             raise ScenarioExecutionFailure(
-                stage,
+                "rmlmapper",
                 "timeout",
                 f"RMLMapper timed out after {RMLMAPPER_TIMEOUT_SECONDS} seconds",
                 diagnostic,
             ) from error
-        elapsed = time.perf_counter() - started
         if process.returncode != 0:
             diagnostic = process.stdout + process.stderr
-            if diagnostic:
-                sys.stderr.write(diagnostic)
             failure_kind = (
                 "out_of_memory" if "OutOfMemoryError" in diagnostic else "process_error"
             )
             raise ScenarioExecutionFailure(
-                stage,
+                "rmlmapper",
                 failure_kind,
                 f"RMLMapper failed with exit code {process.returncode}",
                 diagnostic,
             )
-        if not output_file.exists():
+        if not rdf_file.exists():
             raise ScenarioExecutionFailure(
-                stage,
-                "missing_output",
-                f"RMLMapper did not create {output_file}",
+                "rmlmapper",
+                "process_error",
+                f"RMLMapper did not create {rdf_file}",
             )
-        return elapsed
 
-    def execute_forward_mapping_step(
-        self,
-        metadata: dict[str, object],
-        shared_dir: Path,
-        output_file: Path,
-        stage: str,
-    ) -> float:
-        mapping_step = self._metadata_step(metadata, "execute_mapping")
-        parameters = mapping_step["parameters"]
-        if not isinstance(parameters, dict):
-            raise TypeError("Invalid KROWN mapping parameters")
-        mapping_file = shared_dir / str(parameters["mapping_file"])
-        output_file.unlink(missing_ok=True)
-
-        sqlalchemy_url = self.connection_string.replace(
-            "postgresql://", "postgresql+psycopg2://"
-        )
-        jdbc_dsn, username, password = rmlmapper.sqlalchemy_to_jdbc(sqlalchemy_url)
-        return self.run_rmlmapper(
-            mapping_file,
-            output_file,
-            jdbc_dsn,
-            username,
-            password,
-            stage,
-        )
-
-    def archive_source_tables(
-        self, source_tables: tuple[SourceTable, ...]
-    ) -> dict[str, str]:
-        originals = {}
-        engine = create_engine(self.connection_string)
-        try:
-            with engine.begin() as connection:
-                for source_table in source_tables:
-                    table_name = _quoted(source_table.name)
-                    original = _original_table_name(source_table.name)
-                    original_name = _quoted(original)
-                    connection.execute(
-                        text(f"DROP TABLE IF EXISTS {original_name} CASCADE")
-                    )
-                    connection.execute(
-                        text(f"ALTER TABLE {table_name} RENAME TO {_quoted(original)}")
-                    )
-                    connection.execute(
-                        text(
-                            f"CREATE TABLE {table_name} "
-                            f"(LIKE {original_name} INCLUDING DEFAULTS)"
-                        )
-                    )
-                    originals[source_table.name] = original
-        finally:
-            engine.dispose()
-        return originals
-
-    def execute_inversion_step(self, shared_dir: Path, rdf_file: Path) -> float:
-        source_db_url = self.connection_string.replace(
-            "postgresql://", "postgresql+psycopg2://"
-        )
-        started = time.perf_counter()
+    def backward(self, rdf_file: Path) -> None:
         reconstruct(
-            mapping=str(shared_dir / "mapping.r2rml.ttl"),
+            mapping=str(self.mapping_file),
             rdf_graph=str(rdf_file),
-            dest_db_url=source_db_url,
-            source_db_url=source_db_url,
+            dest_db_url=self.database.sqlalchemy_url(DESTINATION_SCHEMA),
+            source_db_url=self.database.sqlalchemy_url(SOURCE_SCHEMA),
         )
-        return time.perf_counter() - started
 
-    def build_scenario_result(
+
+def _scenario_by_name(project_root: Path, name: str) -> KrownScenario:
+    matching = [
+        scenario
+        for scenario in load_scenarios(project_root)
+        if scenario.generated_name == name
+    ]
+    if len(matching) != 1:
+        raise ValueError(f"Unknown KROWN scenario: {name}")
+    return matching[0]
+
+
+def _internal_stage_main(arguments: list[str]) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--stage",
+        required=True,
+        choices=(
+            "prepare",
+            "reset-destination",
+            "forward-destination",
+            "backward",
+        ),
+    )
+    parser.add_argument("--scenario", required=True)
+    parser.add_argument("--scenario-path", type=Path, required=True)
+    parser.add_argument("--rdf-file", type=Path)
+    args = parser.parse_args(arguments)
+
+    project_root = Path(__file__).resolve().parent.parent
+    scenario = _scenario_by_name(project_root, args.scenario)
+    scenario_path = project_root / args.scenario_path
+    operations = ScenarioOperations(scenario, scenario_path, COMPOSE_DATABASE)
+    try:
+        if args.stage == "prepare":
+            operations.prepare_source()
+        elif args.stage == "reset-destination":
+            operations.reset_schema(DESTINATION_SCHEMA)
+        else:
+            if args.rdf_file is None:
+                parser.error(f"--rdf-file is required for {args.stage}")
+            rdf_file = project_root / args.rdf_file
+            if args.stage == "forward-destination":
+                operations.forward(DESTINATION_SCHEMA, rdf_file)
+            else:
+                operations.backward(rdf_file)
+    except ScenarioExecutionFailure as error:
+        if error.diagnostic:
+            sys.stderr.write(error.diagnostic)
+        if error.kind == "timeout":
+            return EXIT_TIMEOUT
+        if error.kind == "out_of_memory":
+            return EXIT_OUT_OF_MEMORY
+        return EXIT_PROCESS_ERROR
+    except NonInvertibleError as error:
+        sys.stderr.write(f"{error}\n")
+        return EXIT_NON_INVERTIBLE
+    except MemoryError:
+        return EXIT_OUT_OF_MEMORY
+    return 0
+
+
+class KrownBenchmarkRunner:
+    def __init__(
+        self,
+        mode: BenchmarkMode,
+        iterations: int,
+        sample_interval: float,
+        suites: tuple[str, ...],
+        scenario_name: str | None,
+        cleanup_tables: bool = True,
+    ):
+        self.project_root = Path(__file__).resolve().parent.parent
+        self.data_generator_dir = self.project_root / "KROWN" / "data-generator"
+        benchmark_dir = Path(__file__).resolve().parent / "krown"
+        self.scenarios_root = benchmark_dir / "scenarios"
+        self.results_dir = benchmark_dir / "results"
+        self.mode = mode
+        self.iterations = iterations
+        self.sample_interval = sample_interval
+        self.cleanup_tables = cleanup_tables
+        self.local_database_started = False
+        self.database = HOST_DATABASE
+        self.validator = KrownValidator(
+            self.database.sqlalchemy_url(),
+            SOURCE_SCHEMA,
+            DESTINATION_SCHEMA,
+        )
+        self.compose_file = self.project_root / "docker-compose.benchmark.yml"
+        self.timestamp = int(time.time())
+        self.session_dir = self.results_dir / f"krown_{self.timestamp}_{self.mode}"
+        self.resource_summaries: dict[str, list[dict[str, int | float | str]]] = {}
+
+        catalog = load_scenarios(self.project_root)
+        scenario_names = {scenario.generated_name for scenario in catalog}
+        if scenario_name is not None and scenario_name not in scenario_names:
+            raise ValueError(f"Unknown KROWN scenario: {scenario_name}")
+        selected = tuple(scenario for scenario in catalog if scenario.suite in suites)
+        if scenario_name is not None:
+            selected = tuple(
+                scenario
+                for scenario in selected
+                if scenario.generated_name == scenario_name
+            )
+            if not selected:
+                raise ValueError(
+                    f"KROWN scenario {scenario_name} is not included in "
+                    f"selected suites: {', '.join(suites)}"
+                )
+        self.scenarios = selected
+        self.suites = tuple(
+            suite
+            for suite in SUITES
+            if any(scenario.suite == suite for scenario in selected)
+        )
+        selected_names = {scenario.generated_name for scenario in selected}
+        self.series = tuple(
+            KrownSeries(
+                name=series.name,
+                title=series.title,
+                suite=series.suite,
+                parameter_label=series.parameter_label,
+                points=tuple(
+                    point for point in series.points if point[0] in selected_names
+                ),
+            )
+            for series in SERIES
+            if any(point[0] in selected_names for point in series.points)
+        )
+        self.krown_commit = subprocess.run(
+            ["git", "-C", str(self.project_root / "KROWN"), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    @property
+    def measured_stages(self) -> tuple[str, ...]:
+        if self.mode == "forward":
+            return ("forward",)
+        if self.mode == "backward":
+            return ("backward",)
+        return ("forward", "backward")
+
+    def prepare_output_directories(self) -> None:
+        self.results_dir.mkdir(parents=True, exist_ok=True)
+        self.session_dir.mkdir()
+        if self.scenarios_root.exists():
+            shutil.rmtree(self.scenarios_root)
+        self.scenarios_root.mkdir(parents=True)
+
+    def _stage_command(
+        self,
+        stage: str,
+        scenario: KrownScenario,
+        scenario_path: Path,
+        rdf_file: Path | None,
+    ) -> list[str]:
+        command = [
+            "docker",
+            "compose",
+            "-f",
+            str(self.compose_file),
+            "run",
+            "--rm",
+            "--entrypoint",
+            "uv",
+            "benchmark",
+            "run",
+            "python",
+            "-m",
+            "benchmarks.run_krown_benchmark",
+            "_stage",
+            "--stage",
+            stage,
+            "--scenario",
+            scenario.generated_name,
+            "--scenario-path",
+            str(scenario_path.relative_to(self.project_root)),
+        ]
+        if rdf_file is not None:
+            command.extend(("--rdf-file", str(rdf_file.relative_to(self.project_root))))
+        return command
+
+    def run_stage(
+        self,
+        stage: str,
+        result_stage: str,
+        scenario: KrownScenario,
+        scenario_path: Path,
+        rdf_file: Path | None = None,
+    ) -> None:
+        started = time.perf_counter()
+        process = subprocess.run(
+            self._stage_command(stage, scenario, scenario_path, rdf_file),
+            capture_output=True,
+            text=True,
+        )
+        elapsed = time.perf_counter() - started
+        if process.returncode == 0:
+            return
+
+        diagnostic = process.stdout + process.stderr
+        if process.returncode == EXIT_TIMEOUT:
+            kind = "timeout"
+        elif process.returncode in (EXIT_OUT_OF_MEMORY, 137):
+            kind = "out_of_memory"
+        elif process.returncode == EXIT_PROCESS_ERROR:
+            kind = "process_error"
+        elif process.returncode == EXIT_NON_INVERTIBLE:
+            kind = "non_invertible"
+        else:
+            raise RuntimeError(
+                f"KROWN stage {stage} failed with exit code "
+                f"{process.returncode}:\n{diagnostic}"
+            )
+        raise ScenarioExecutionFailure(
+            result_stage,
+            kind,
+            f"KROWN stage {result_stage} failed",
+            diagnostic,
+            elapsed,
+        )
+
+    def validate_forward_output(
         self,
         scenario: KrownScenario,
-        shared_dir: Path,
-        source_tables: tuple[SourceTable, ...],
+        operations: ScenarioOperations,
+        rdf_file: Path,
+    ) -> int:
+        rdf_statements = operations.count_rdf_statements(rdf_file)
+        expected = scenario.expected_rdf_statements
+        if expected is not None and rdf_statements != expected:
+            raise ScenarioExecutionFailure(
+                "forward_validation",
+                "invalid_output",
+                (
+                    f"Unexpected RDF statement count for "
+                    f"{scenario.generated_name}: expected={expected}, "
+                    f"actual={rdf_statements}"
+                ),
+            )
+        return rdf_statements
+
+    def _case_directory(self, scenario: KrownScenario) -> Path:
+        return self.session_dir / scenario.generated_name
+
+    def _build_result(
+        self,
+        scenario: KrownScenario,
+        operations: ScenarioOperations,
+        timings: dict[str, float],
         rdf_statements: int,
-        rmlmapper_time: float,
-        inversion_time: float,
-        total_time: float,
         inversion_count: int,
         validation_results: dict[str, object],
+        metrics: dict[str, dict[str, object]],
     ) -> dict[str, object]:
-        mapping_file = shared_dir / "mapping.r2rml.ttl"
         (
             triples_maps,
             predicate_object_maps,
             join_conditions,
             graph_maps,
-        ) = self.mapping_component_counts(mapping_file)
+        ) = operations.mapping_component_counts(operations.mapping_file)
         data_size_bytes = sum(
-            source_table.csv_file.stat().st_size for source_table in source_tables
+            source_table.csv_file.stat().st_size
+            for source_table in operations.source_tables
         )
-        outcome = str(validation_results["outcome"])
+        execution_time = sum(
+            timings[name]
+            for name in ("rmlmapper_time", "inversion_time")
+            if name in timings
+        )
         throughput = None
-        if outcome != "NON_INVERTIBLE":
+        if (
+            "inversion_time" in timings
+            and validation_results["outcome"] != "NON_INVERTIBLE"
+        ):
             throughput = {
-                "rows_per_second": scenario.source_rows / inversion_time,
-                "cells_per_second": scenario.source_cells / inversion_time,
+                "rows_per_second": (scenario.source_rows / timings["inversion_time"]),
+                "cells_per_second": (scenario.source_cells / timings["inversion_time"]),
             }
+
+        timing_breakdown: dict[str, float] = {
+            **timings,
+            "total_time": execution_time,
+        }
+        if self.mode == "roundtrip":
+            timing_breakdown["inversion_overhead_percentage"] = (
+                timings["inversion_time"] / timings["rmlmapper_time"] * 100
+            )
 
         return {
             "status": "completed",
@@ -901,17 +782,17 @@ class KrownBenchmarkRunner:
             "generator": scenario.generator,
             "expected_outcome": scenario.expected_outcome,
             "parameters": scenario.parameters,
-            "execution_time": total_time,
-            "timing_breakdown": {
-                "rmlmapper_time": rmlmapper_time,
-                "inversion_time": inversion_time,
-                "inversion_overhead_percentage": inversion_time / rmlmapper_time * 100,
-                "total_time": total_time,
+            "source_configuration": {
+                "identifier": scenario.identifier,
+                "file": scenario.source_config,
+                "overrides": scenario.configuration_overrides,
             },
+            "execution_time": execution_time,
+            "timing_breakdown": timing_breakdown,
             "throughput": throughput,
-            "mapping_file": str(mapping_file),
-            "data_files": [str(table.csv_file) for table in source_tables],
-            "mapping_size_bytes": mapping_file.stat().st_size,
+            "mapping_file": str(operations.mapping_file),
+            "data_files": [str(table.csv_file) for table in operations.source_tables],
+            "mapping_size_bytes": operations.mapping_file.stat().st_size,
             "data_size_bytes": data_size_bytes,
             "rdf_statements": rdf_statements,
             "source_rows": scenario.source_rows,
@@ -921,13 +802,16 @@ class KrownBenchmarkRunner:
             "join_conditions_count": join_conditions,
             "graph_maps_count": graph_maps,
             "inversion_count": inversion_count,
+            "metrics": {
+                "scope": "system",
+                "stages": metrics,
+            },
             "validation_results": validation_results,
         }
 
     @staticmethod
-    def build_failure_result(
+    def _build_failure_result(
         scenario: KrownScenario,
-        elapsed_seconds: float,
         error: ScenarioExecutionFailure,
     ) -> dict[str, object]:
         return {
@@ -938,7 +822,12 @@ class KrownBenchmarkRunner:
             "generator": scenario.generator,
             "expected_outcome": scenario.expected_outcome,
             "parameters": scenario.parameters,
-            "execution_time": elapsed_seconds,
+            "source_configuration": {
+                "identifier": scenario.identifier,
+                "file": scenario.source_config,
+                "overrides": scenario.configuration_overrides,
+            },
+            "execution_time": error.elapsed_seconds,
             "failure": {
                 "stage": error.stage,
                 "kind": error.kind,
@@ -948,116 +837,318 @@ class KrownBenchmarkRunner:
             },
         }
 
-    def execute_krown_scenario(
-        self, scenario: KrownScenario, scenario_path: Path
+    def _validate_inversion(
+        self,
+        scenario: KrownScenario,
+        operations: ScenarioOperations,
+        original_rdf: Path,
+        iteration: int,
     ) -> dict[str, object]:
-        metadata_value = json.loads(
-            (scenario_path / "metadata.json").read_text(encoding="utf-8")
+        roundtrip_rdf = operations.shared_dir / f"roundtrip_{iteration}.nq"
+        self.run_stage(
+            "forward-destination",
+            "roundtrip_mapping",
+            scenario,
+            operations.scenario_path,
+            roundtrip_rdf,
         )
-        if not isinstance(metadata_value, dict):
-            raise TypeError("Invalid KROWN metadata")
-        metadata: dict[str, object] = metadata_value
-        shared_dir = scenario_path / "data" / "shared"
-        source_tables = self.source_tables(metadata, shared_dir)
-        started = time.perf_counter()
-
-        self.execute_load_rdb_step(source_tables, scenario)
-        rdf_file = shared_dir / "out.nq"
-        rmlmapper_time = self.execute_forward_mapping_step(
-            metadata,
-            shared_dir,
-            rdf_file,
-            "forward_mapping",
+        validation = self.validator.validate_inversion(
+            expected_tables=[table.name for table in operations.source_tables],
+            scenario_name=scenario.generated_name,
+            expected_outcome=scenario.expected_outcome,
+            original_rdf=original_rdf,
+            roundtrip_rdf=roundtrip_rdf,
         )
-        rdf_statements = self.count_rdf_statements(rdf_file)
-        expected_rdf_statements = scenario.expected_rdf_statements
-        if (
-            expected_rdf_statements is not None
-            and rdf_statements != expected_rdf_statements
-        ):
+        if validation["validation_passed"] is not True:
             raise ScenarioExecutionFailure(
-                "forward_validation",
-                "invalid_output",
-                (
-                    f"Unexpected RDF statement count for {scenario.generated_name}: "
-                    f"expected={expected_rdf_statements}, actual={rdf_statements}"
-                ),
+                "roundtrip_validation",
+                "mismatch",
+                f"Unexpected inversion result: {validation}",
+            )
+        return validation
+
+    def _preserve_forward_results(
+        self,
+        scenario: KrownScenario,
+        executor: OfficialKrownExecutor,
+        phase: str,
+    ) -> Path:
+        destination = self._case_directory(scenario) / phase / "results"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(executor.results_path), destination)
+        return destination
+
+    @staticmethod
+    def _forward_failure(
+        result: OfficialRunResult,
+        executor: OfficialKrownExecutor,
+        iteration: int,
+    ) -> ScenarioExecutionFailure:
+        if result.failed_resource != "RMLMapper":
+            raise RuntimeError(
+                "KROWN Executor failed outside RMLMapper: "
+                f"resource={result.failed_resource}, step={result.failed_step}\n"
+                f"{result.diagnostic}"
+            )
+        diagnostic_lower = result.diagnostic.lower()
+        if "outofmemoryerror" in diagnostic_lower:
+            kind = "out_of_memory"
+        elif "timeout" in diagnostic_lower:
+            kind = "timeout"
+        else:
+            kind = "process_error"
+        metrics_file = executor.results_path / f"run_{iteration}" / "metrics.csv"
+        duration = read_step_duration(metrics_file, executor.mapping_step)
+        return ScenarioExecutionFailure(
+            "forward_mapping",
+            kind,
+            "KROWN Executor RMLMapper step failed",
+            result.diagnostic,
+            duration,
+            iteration,
+        )
+
+    def _run_forward_phase(
+        self,
+        scenario: KrownScenario,
+        operations: ScenarioOperations,
+        runs: int,
+        phase: str,
+        report_statistics: bool,
+        progress: Progress,
+        task: TaskID,
+    ) -> list[ForwardMeasurement]:
+        executor = OfficialKrownExecutor(
+            self.project_root,
+            operations.scenario_path,
+            RMLMAPPER_VERSION,
+        )
+        for iteration in range(1, runs + 1):
+            progress.update(
+                task,
+                description=(f"{scenario.generated_name} forward ({iteration}/{runs})"),
+            )
+            result = executor.run(
+                self.sample_interval,
+                iteration,
+                iteration == runs,
+            )
+            if not result.success:
+                error = self._forward_failure(result, executor, iteration)
+                self._preserve_forward_results(scenario, executor, phase)
+                raise error
+
+        if report_statistics:
+            summary = executor.statistics()
+            forward_summary = dict(summary[executor.mapping_step - 1])
+            forward_summary["stage_name"] = "forward"
+            self.resource_summaries.setdefault(scenario.generated_name, []).append(
+                forward_summary
             )
 
-        original_tables = self.archive_source_tables(source_tables)
-        inversion_started = time.perf_counter()
+        results_path = self._preserve_forward_results(
+            scenario,
+            executor,
+            phase,
+        )
+        measurements = []
+        for iteration in range(1, runs + 1):
+            run_path = results_path / f"run_{iteration}"
+            rdf_file = run_path / "rmlmapper" / executor.output_file
+            rdf_statements = self.validate_forward_output(
+                scenario,
+                operations,
+                rdf_file,
+            )
+            measurements.append(
+                ForwardMeasurement(
+                    iteration=iteration,
+                    rdf_file=rdf_file,
+                    duration=read_step_duration(
+                        run_path / "metrics.csv",
+                        executor.mapping_step,
+                    ),
+                    rdf_statements=rdf_statements,
+                    run_path=run_path,
+                    metrics_step=executor.mapping_step,
+                )
+            )
+        return measurements
+
+    @staticmethod
+    def _forward_metrics(
+        measurement: ForwardMeasurement,
+    ) -> dict[str, object]:
+        return {
+            "executor": "KROWN Executor",
+            "metrics_file": str(measurement.run_path / "metrics.csv"),
+            "case_info_file": str(measurement.run_path / "case-info.txt"),
+            "step": measurement.metrics_step,
+        }
+
+    @staticmethod
+    def _backward_metrics(run_path: Path) -> dict[str, object]:
+        return {
+            "executor": "local inversion",
+            "metrics_file": str(run_path / "metrics.csv"),
+            "case_info_file": str(run_path / "case-info.txt"),
+            "step": 1,
+        }
+
+    def _build_forward_result(
+        self,
+        scenario: KrownScenario,
+        operations: ScenarioOperations,
+        measurement: ForwardMeasurement,
+    ) -> dict[str, object]:
+        return self._build_result(
+            scenario,
+            operations,
+            {"rmlmapper_time": measurement.duration},
+            measurement.rdf_statements,
+            0,
+            {
+                "scenario": scenario.generated_name,
+                "validation_passed": True,
+                "expected_outcome": None,
+                "outcome": "FORWARD",
+                "checks": {"rdf_statements": True},
+            },
+            {"forward": self._forward_metrics(measurement)},
+        )
+
+    def _prepare_local_source(
+        self,
+        scenario: KrownScenario,
+        operations: ScenarioOperations,
+    ) -> None:
+        self.run_stage(
+            "prepare",
+            "database_setup",
+            scenario,
+            operations.scenario_path,
+        )
+        self.local_database_started = True
+
+    def _execute_backward_iteration(
+        self,
+        scenario: KrownScenario,
+        operations: ScenarioOperations,
+        iteration: int,
+        forward: ForwardMeasurement,
+    ) -> dict[str, object]:
+        self.run_stage(
+            "reset-destination",
+            "destination_setup",
+            scenario,
+            operations.scenario_path,
+        )
+        case_directory = self._case_directory(scenario) / "backward"
+        run_path = case_directory / "results" / f"run_{iteration}"
+        run_path.mkdir(parents=True)
+        collector = SynchronousCollector(
+            project_root=self.project_root,
+            case_name=f"{scenario.generated_name}:backward",
+            run_path=run_path,
+            sample_interval=self.sample_interval,
+            number_of_steps=1,
+            run_id=iteration,
+            case_directory=case_directory,
+        )
+        execution_error: ScenarioExecutionFailure | None = None
         try:
-            inversion_time = self.execute_inversion_step(shared_dir, rdf_file)
-        except NonInvertibleError as error:
-            inversion_time = time.perf_counter() - inversion_started
+            self.run_stage(
+                "backward",
+                "inversion",
+                scenario,
+                operations.scenario_path,
+                forward.rdf_file,
+            )
+        except ScenarioExecutionFailure as error:
+            execution_error = error
+        finally:
+            collector.stop()
+
+        inversion_time = read_step_duration(run_path / "metrics.csv", 1)
+        time.sleep(KROWN_COOLDOWN_SECONDS)
+        if execution_error is not None and execution_error.kind != "non_invertible":
+            raise ScenarioExecutionFailure(
+                execution_error.stage,
+                execution_error.kind,
+                str(execution_error),
+                execution_error.diagnostic,
+                inversion_time,
+                iteration,
+            ) from execution_error
+
+        if self.mode == "roundtrip":
+            timings = {
+                "rmlmapper_time": forward.duration,
+                "inversion_time": inversion_time,
+            }
+            metrics = {
+                "forward": self._forward_metrics(forward),
+                "backward": self._backward_metrics(run_path),
+            }
+        else:
+            timings = {"inversion_time": inversion_time}
+            metrics = {"backward": self._backward_metrics(run_path)}
+
+        if execution_error is not None:
             if scenario.expected_outcome != "NON_INVERTIBLE":
                 raise ScenarioExecutionFailure(
                     "inversion",
                     "unexpected_non_invertible",
-                    str(error),
-                ) from error
-            validation_results: dict[str, object] = {
-                "scenario": scenario.generated_name,
-                "validation_passed": True,
-                "expected_outcome": scenario.expected_outcome,
-                "outcome": "NON_INVERTIBLE",
-                "error": str(error),
-            }
-            return self.build_scenario_result(
-                scenario=scenario,
-                shared_dir=shared_dir,
-                source_tables=source_tables,
-                rdf_statements=rdf_statements,
-                rmlmapper_time=rmlmapper_time,
-                inversion_time=inversion_time,
-                total_time=time.perf_counter() - started,
-                inversion_count=0,
-                validation_results=validation_results,
+                    execution_error.diagnostic,
+                    execution_error.diagnostic,
+                    inversion_time,
+                    iteration,
+                )
+            result = self._build_result(
+                scenario,
+                operations,
+                timings,
+                forward.rdf_statements,
+                0,
+                {
+                    "scenario": scenario.generated_name,
+                    "validation_passed": True,
+                    "expected_outcome": scenario.expected_outcome,
+                    "outcome": "NON_INVERTIBLE",
+                    "error": execution_error.diagnostic,
+                },
+                metrics,
             )
-        except MemoryError as error:
-            raise ScenarioExecutionFailure(
-                "inversion",
-                "out_of_memory",
-                "Python raised MemoryError during inversion",
-            ) from error
-        expected_table_names = [source_table.name for source_table in source_tables]
-        total_time = time.perf_counter() - started
-
-        roundtrip_file = shared_dir / "roundtrip.nq"
-        self.execute_forward_mapping_step(
-            metadata,
-            shared_dir,
-            roundtrip_file,
-            "roundtrip_mapping",
-        )
-        validation_results = self.validator.validate_inversion(
-            original_tables=original_tables,
-            reconstructed_tables=expected_table_names,
-            scenario_name=scenario.generated_name,
-            expected_outcome=scenario.expected_outcome,
-            original_rdf=rdf_file,
-            roundtrip_rdf=roundtrip_file,
-        )
-        if validation_results["validation_passed"] is not True:
-            raise ScenarioExecutionFailure(
-                "roundtrip_validation",
-                "mismatch",
-                (
-                    f"Unexpected inversion result for {scenario.generated_name}: "
-                    f"{validation_results}"
-                ),
+        else:
+            validation = self._validate_inversion(
+                scenario,
+                operations,
+                forward.rdf_file,
+                iteration,
             )
+            result = self._build_result(
+                scenario,
+                operations,
+                timings,
+                forward.rdf_statements,
+                len(operations.source_tables),
+                validation,
+                metrics,
+            )
+        return result
 
-        return self.build_scenario_result(
-            scenario=scenario,
-            shared_dir=shared_dir,
-            source_tables=source_tables,
-            rdf_statements=rdf_statements,
-            rmlmapper_time=rmlmapper_time,
-            inversion_time=inversion_time,
-            total_time=total_time,
-            inversion_count=len(expected_table_names),
-            validation_results=validation_results,
+    def _generate_backward_statistics(self, scenario: KrownScenario) -> None:
+        case_directory = self._case_directory(scenario) / "backward"
+        summary = generate_official_statistics(
+            project_root=self.project_root,
+            results_path=case_directory / "results",
+            number_of_steps=1,
+            case_directory=case_directory,
+        )
+        backward_summary = dict(summary[0])
+        backward_summary["stage_name"] = "backward"
+        self.resource_summaries.setdefault(scenario.generated_name, []).append(
+            backward_summary
         )
 
     def _series_data(self) -> list[dict[str, object]]:
@@ -1076,27 +1167,51 @@ class KrownBenchmarkRunner:
         ]
 
     def save_results(
-        self, scenario_runs: dict[str, list[dict[str, object]]]
+        self,
+        scenario_runs: dict[str, list[dict[str, object]]],
     ) -> tuple[Path, Path, dict[str, object]]:
-        timestamp = int(time.time())
-        raw_file = self.results_dir / f"krown_benchmark_results_raw_{timestamp}.json"
+        raw_file = (
+            self.session_dir / f"krown_benchmark_results_raw_{self.timestamp}.json"
+        )
         stats_file = (
-            self.results_dir / f"krown_benchmark_results_stats_{timestamp}.json"
+            self.session_dir / f"krown_benchmark_results_stats_{self.timestamp}.json"
         )
         failed_scenarios = sum(
             any(run["status"] == "failed" for run in runs)
             for runs in scenario_runs.values()
         )
         common = {
-            "timestamp": timestamp,
+            "timestamp": self.timestamp,
             "benchmark_type": "KROWN",
-            "framework": "Knowledge Graph Inversion",
-            "environment": "Docker",
+            "framework": "KROWN Executor with local inversion",
+            "environment": "KROWN Executor and Docker Compose",
+            "mode": self.mode,
+            "measurement_scope": "system",
+            "sample_interval_seconds": self.sample_interval,
             "sparql_engine": SPARQL_ENGINE,
             "iterations": self.iterations,
             "failed_scenarios": failed_scenarios,
             "suites": list(self.suites),
             "series": self._series_data(),
+            "provenance": {
+                "krown_repository": KROWN_REPOSITORY,
+                "krown_commit": self.krown_commit,
+                "rmlmapper_version": RMLMAPPER_VERSION,
+                "forward_executor": "KROWN Executor",
+                "backward_executor": "local inversion adapter",
+                "metrics_implementation": "KROWN Collector and Stats",
+                "forward_postgresql_version": "14.5",
+                "backward_postgresql_version": "13",
+                "rdf_serialization": "KROWN scenario metadata",
+                "measured_stages": list(self.measured_stages),
+                "excluded_from_measurement": [
+                    "generation",
+                    "database_setup",
+                    "backward_rdf_preparation",
+                    "validation",
+                    "cooldown",
+                ],
+            },
         }
         raw_data = {**common, "scenarios": scenario_runs}
         raw_file.write_text(json.dumps(raw_data, indent=2) + "\n", encoding="utf-8")
@@ -1111,12 +1226,18 @@ class KrownBenchmarkRunner:
                 "generator": scenario.generator,
                 "expected_outcome": scenario.expected_outcome,
                 "parameters": scenario.parameters,
+                "source_configuration": {
+                    "identifier": scenario.identifier,
+                    "file": scenario.source_config,
+                    "overrides": scenario.configuration_overrides,
+                },
                 "raw_runs": runs,
             }
             if failed_run is not None:
                 scenario_data["status"] = "failed"
                 scenario_data["failure"] = failed_run["failure"]
                 scenario_data["statistics"] = None
+                scenario_data["resource_summary"] = None
             else:
                 statistics = aggregate_scenario_statistics(runs)
                 throughputs = [
@@ -1139,6 +1260,9 @@ class KrownBenchmarkRunner:
                     )
                 scenario_data["status"] = "completed"
                 scenario_data["statistics"] = statistics
+                scenario_data["resource_summary"] = self.resource_summaries[
+                    scenario.generated_name
+                ]
             aggregated_scenarios[scenario.generated_name] = scenario_data
 
         stats_data: dict[str, object] = {
@@ -1152,21 +1276,22 @@ class KrownBenchmarkRunner:
         scenarios_data = stats_data["scenarios"]
         if not isinstance(scenarios_data, dict):
             raise TypeError("Invalid KROWN statistics")
-        iteration_label = "iteration" if self.iterations == 1 else "iterations"
         for series in self.series:
             table = Table(
                 title=(
-                    f"KROWN {series.title} "
-                    f"({SPARQL_ENGINE}, {self.iterations} {iteration_label})"
+                    f"KROWN {series.title} ({self.mode}; {self.iterations} iterations)"
                 )
             )
             table.add_column(series.parameter_label, justify="right")
             table.add_column("CSV MiB", justify="right")
             table.add_column("RDF statements", justify="right")
-            table.add_column("RMLMapper", justify="right")
-            table.add_column("Inversion", justify="right")
-            table.add_column("Overhead", justify="right")
-            table.add_column("Rows/s", justify="right")
+            if self.mode in ("forward", "roundtrip"):
+                table.add_column("RMLMapper", justify="right")
+            if self.mode in ("backward", "roundtrip"):
+                table.add_column("Inversion", justify="right")
+                table.add_column("Rows/s", justify="right")
+            if self.mode == "roundtrip":
+                table.add_column("Overhead", justify="right")
             table.add_column("Outcome")
 
             for scenario_name, parameter_value in series.points:
@@ -1178,81 +1303,81 @@ class KrownBenchmarkRunner:
                 )
                 if scenario_data["status"] == "failed":
                     failure = _dictionary(scenario_data["failure"])
+                    empty_columns = len(table.columns) - 2
                     table.add_row(
                         parameter_label,
-                        "-",
-                        "-",
-                        "-",
-                        "-",
-                        "-",
-                        "-",
+                        *(["-"] * empty_columns),
                         str(failure["outcome"]),
                     )
                     continue
 
                 statistics = _dictionary(scenario_data["statistics"])
                 metadata = _dictionary(statistics["metadata"])
-                data_size_mib = _number(metadata["data_size_bytes"]) / (1024**2)
                 raw_runs = scenario_data["raw_runs"]
                 if not isinstance(raw_runs, list) or not raw_runs:
                     raise TypeError("Invalid KROWN runs")
-                first_run = _dictionary(raw_runs[0])
-                validation = _dictionary(first_run["validation_results"])
-                rows_per_second = "-"
-                if "rows_per_second" in statistics:
-                    rows_statistics = _dictionary(statistics["rows_per_second"])
-                    rows_per_second = f"{_number(rows_statistics['mean']):,.0f}"
-                table.add_row(
+                validation = _dictionary(_dictionary(raw_runs[0])["validation_results"])
+                row = [
                     parameter_label,
-                    f"{data_size_mib:.2f}",
+                    f"{_number(metadata['data_size_bytes']) / (1024**2):.2f}",
                     f"{int(_number(metadata['rdf_statements'])):,}",
-                    _format_confidence_interval(
-                        _dictionary(statistics["rmlmapper_time"])
-                    ),
-                    _format_confidence_interval(
-                        _dictionary(statistics["inversion_time"])
-                    ),
-                    _format_percentage_confidence_interval(
-                        _dictionary(statistics["inversion_overhead_percentage"])
-                    ),
-                    rows_per_second,
-                    str(validation["outcome"]),
-                )
+                ]
+                if self.mode in ("forward", "roundtrip"):
+                    row.append(
+                        _format_confidence_interval(
+                            _dictionary(statistics["rmlmapper_time"])
+                        )
+                    )
+                if self.mode in ("backward", "roundtrip"):
+                    row.append(
+                        _format_confidence_interval(
+                            _dictionary(statistics["inversion_time"])
+                        )
+                    )
+                    if "rows_per_second" in statistics:
+                        rows_statistics = _dictionary(statistics["rows_per_second"])
+                        row.append(f"{_number(rows_statistics['mean']):,.0f}")
+                    else:
+                        row.append("-")
+                if self.mode == "roundtrip":
+                    row.append(
+                        _format_percentage_confidence_interval(
+                            _dictionary(statistics["inversion_overhead_percentage"])
+                        )
+                    )
+                row.append(str(validation["outcome"]))
+                table.add_row(*row)
             console.print(table)
 
     def cleanup(self) -> None:
         self.validator.dispose()
         if self.scenarios_root.exists():
             shutil.rmtree(self.scenarios_root)
-        if not self.cleanup_tables:
+        if not self.cleanup_tables or not self.local_database_started:
             return
-
-        engine = create_engine(self.connection_string)
+        engine = create_engine(self.database.sqlalchemy_url())
         try:
-            self.cleanup_database_tables(engine)
+            with engine.begin() as connection:
+                connection.execute(
+                    text(f"DROP SCHEMA IF EXISTS {_quoted(SOURCE_SCHEMA)} CASCADE")
+                )
+                connection.execute(
+                    text(f"DROP SCHEMA IF EXISTS {_quoted(DESTINATION_SCHEMA)} CASCADE")
+                )
         finally:
             engine.dispose()
 
-    @staticmethod
-    def cleanup_database_tables(engine: Engine) -> None:
-        with engine.begin() as connection:
-            table_rows = connection.execute(
-                text("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
-            )
-            for row in table_rows:
-                connection.execute(
-                    text(f"DROP TABLE IF EXISTS {_quoted(str(row[0]))} CASCADE")
-                )
-
     def run_benchmark(self) -> int:
-        suite_label = ", ".join(self.suites)
-        console.print(f"Starting KROWN benchmark ({suite_label}; {SPARQL_ENGINE})")
+        console.print(
+            f"Starting KROWN benchmark "
+            f"({', '.join(self.suites)}; {self.mode}; system metrics)"
+        )
+        failed_scenarios: list[str] = []
         try:
             self.prepare_output_directories()
             scenario_runs: dict[str, list[dict[str, object]]] = {
                 scenario.generated_name: [] for scenario in self.scenarios
             }
-            failed_scenarios: list[str] = []
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
@@ -1261,58 +1386,112 @@ class KrownBenchmarkRunner:
                 TimeElapsedColumn(),
                 console=console,
             ) as progress:
+                stages_per_iteration = 2 if self.mode == "roundtrip" else 1
                 task = progress.add_task(
-                    "Scenarios", total=len(self.scenarios) * self.iterations
+                    "Scenarios",
+                    total=(
+                        len(self.scenarios) * self.iterations * stages_per_iteration
+                    ),
                 )
                 for scenario in self.scenarios:
                     scenario_path = generate_scenario(
-                        scenario, self.scenarios_root, self.data_generator_dir
+                        scenario,
+                        self.scenarios_root,
+                        self.data_generator_dir,
                     )
+                    operations = ScenarioOperations(
+                        scenario, scenario_path, self.database
+                    )
+                    report_forward = self.mode in ("forward", "roundtrip")
+                    forward_runs = self.iterations if report_forward else 1
+                    forward_phase = "forward" if report_forward else "preparation"
+                    try:
+                        forward_measurements = self._run_forward_phase(
+                            scenario,
+                            operations,
+                            forward_runs,
+                            forward_phase,
+                            report_forward,
+                            progress,
+                            task,
+                        )
+                    except ScenarioExecutionFailure as error:
+                        result = self._build_failure_result(scenario, error)
+                        result["iteration"] = error.iteration or 1
+                        scenario_runs[scenario.generated_name].append(result)
+                        failed_scenarios.append(scenario.generated_name)
+                        skipped = self.iterations - int(result["iteration"])
+                        console.print(
+                            f"{scenario.generated_name}: {error.outcome} "
+                            f"during {error.stage}; skipped {skipped} "
+                            "remaining iterations"
+                        )
+                        progress.advance(
+                            task,
+                            advance=self.iterations * stages_per_iteration,
+                        )
+                        continue
+
+                    if report_forward:
+                        progress.advance(task, advance=self.iterations)
+                    if self.mode == "forward":
+                        for measurement in forward_measurements:
+                            result = self._build_forward_result(
+                                scenario,
+                                operations,
+                                measurement,
+                            )
+                            result["iteration"] = measurement.iteration
+                            scenario_runs[scenario.generated_name].append(result)
+                        continue
+
+                    self._prepare_local_source(scenario, operations)
+                    scenario_failed = False
                     for iteration in range(1, self.iterations + 1):
                         progress.update(
                             task,
                             description=(
                                 f"{scenario.generated_name} "
-                                f"({iteration}/{self.iterations})"
+                                f"backward ({iteration}/{self.iterations})"
                             ),
                         )
-                        iteration_started = time.perf_counter()
+                        forward = (
+                            forward_measurements[iteration - 1]
+                            if self.mode == "roundtrip"
+                            else forward_measurements[0]
+                        )
                         try:
-                            result = self.execute_krown_scenario(
-                                scenario, scenario_path
+                            result = self._execute_backward_iteration(
+                                scenario,
+                                operations,
+                                iteration,
+                                forward,
                             )
                         except ScenarioExecutionFailure as error:
-                            result = self.build_failure_result(
-                                scenario,
-                                time.perf_counter() - iteration_started,
-                                error,
-                            )
+                            result = self._build_failure_result(scenario, error)
                             result["iteration"] = iteration
                             scenario_runs[scenario.generated_name].append(result)
                             failed_scenarios.append(scenario.generated_name)
-                            skipped_iterations = self.iterations - iteration
-                            failure_message = (
+                            skipped = self.iterations - iteration
+                            console.print(
                                 f"{scenario.generated_name}: {error.outcome} "
-                                f"during {error.stage}"
+                                f"during {error.stage}; skipped {skipped} "
+                                "remaining iterations"
                             )
-                            if skipped_iterations:
-                                failure_message += (
-                                    f"; skipped {skipped_iterations} "
-                                    "remaining iterations"
-                                )
-                            console.print(failure_message)
-                            progress.advance(task, advance=skipped_iterations + 1)
+                            progress.advance(task, advance=skipped + 1)
+                            scenario_failed = True
                             break
                         result["iteration"] = iteration
                         scenario_runs[scenario.generated_name].append(result)
                         progress.advance(task)
+                    if not scenario_failed:
+                        self._generate_backward_statistics(scenario)
 
             raw_file, stats_file, stats_data = self.save_results(scenario_runs)
             console.print(f"Raw results saved to {raw_file}")
             console.print(f"Statistics saved to {stats_file}")
             self.print_aggregated_summary(stats_data)
-            plot_files = plot_timing_charts(stats_data, self.results_dir)
-            for plot_file in plot_files:
+            for plot_file in plot_timing_charts(stats_data, self.session_dir):
                 console.print(f"Plot saved to {plot_file}")
             if failed_scenarios:
                 console.print(
@@ -1325,10 +1504,19 @@ class KrownBenchmarkRunner:
             self.cleanup()
 
 
-def positive_integer(value: str) -> int:
+def parse_iterations(value: str) -> int:
     parsed = int(value)
+    if parsed < 3 or parsed % 2 == 0:
+        raise argparse.ArgumentTypeError(
+            "Iterations must be odd and greater than or equal to 3"
+        )
+    return parsed
+
+
+def parse_sample_interval(value: str) -> float:
+    parsed = float(value)
     if parsed <= 0:
-        raise argparse.ArgumentTypeError("Iterations must be positive")
+        raise argparse.ArgumentTypeError("Sample interval must be positive")
     return parsed
 
 
@@ -1345,36 +1533,52 @@ def parse_suites(value: str) -> tuple[str, ...]:
     return tuple(suite for suite in SUITES if suite in requested)
 
 
-def main() -> int:  # pragma: no cover
+def _benchmark_main(arguments: list[str]) -> int:
     parser = argparse.ArgumentParser(
-        description="Run the official KROWN scenarios relevant to KG inversion"
+        description="Run the KROWN scenarios relevant to KG inversion"
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("forward", "backward", "roundtrip"),
+        default="roundtrip",
     )
     parser.add_argument(
         "--iterations",
-        type=positive_integer,
-        default=1,
-        help="Number of times to run each scenario",
+        type=parse_iterations,
+        default=5,
+        help="Odd number of runs per scenario, at least 3",
+    )
+    parser.add_argument(
+        "--interval",
+        type=parse_sample_interval,
+        default=0.1,
+        help="System metric sample interval in seconds",
     )
     parser.add_argument(
         "--suites",
         type=parse_suites,
         default=SUITES,
-        help="Comma-separated suites: raw,mappings,named-graphs,joins (default: all)",
+        help="Comma-separated suites: raw,mappings,named-graphs,joins",
     )
-    parser.add_argument(
-        "--scenario",
-        help="Exact generated name of one scenario to run",
-    )
-    args = parser.parse_args()
+    parser.add_argument("--scenario")
+    args = parser.parse_args(arguments)
     try:
         runner = KrownBenchmarkRunner(
+            mode=args.mode,
             iterations=args.iterations,
+            sample_interval=args.interval,
             suites=args.suites,
             scenario_name=args.scenario,
         )
     except ValueError as error:
         parser.error(str(error))
     return runner.run_benchmark()
+
+
+def main() -> int:  # pragma: no cover
+    if len(sys.argv) > 1 and sys.argv[1] == "_stage":
+        return _internal_stage_main(sys.argv[2:])
+    return _benchmark_main(sys.argv[1:])
 
 
 if __name__ == "__main__":  # pragma: no cover

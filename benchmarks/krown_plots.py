@@ -77,6 +77,13 @@ def _timing_points(
 def plot_timing_charts(stats_data: dict, output_dir: Path) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     plot_files = []
+    mode = str(stats_data["mode"])
+    metrics = []
+    if mode in ("forward", "roundtrip"):
+        metrics.append(("rmlmapper_time", "RMLMapper", "#1f77b4", "o"))
+    if mode in ("backward", "roundtrip"):
+        metrics.append(("inversion_time", "Inversion", "#d62728", "s"))
+
     for series_value in stats_data["series"]:
         series = _dictionary(series_value)
         figure, axis = plt.subplots(figsize=(8, 5))
@@ -84,10 +91,7 @@ def plot_timing_charts(stats_data: dict, output_dir: Path) -> list[Path]:
         failure_labels: list[str | None] = []
         x_values: list[float] = []
 
-        for metric_name, label, color, marker in (
-            ("rmlmapper_time", "RMLMapper", "#1f77b4", "o"),
-            ("inversion_time", "Inversion", "#d62728", "s"),
-        ):
+        for metric_name, label, color, marker in metrics:
             (
                 parameter_values,
                 means,

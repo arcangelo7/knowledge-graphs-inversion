@@ -24,18 +24,6 @@ cd knowledge-graphs-inversion
 uv sync
 ```
 
-Conformance tests and benchmarks also require [Docker](https://www.docker.com/) for the PostgreSQL and GTFS MySQL databases and Java 21 or newer for RMLMapper v8.1.0. The root Makefile initializes submodules automatically for benchmark runs:
-
-```bash
-make benchmark-krown I=1 KROWN_SUITES=mappings
-```
-
-Omit `KROWN_SUITES` to run every official-scale KROWN scenario.
-
-```bash
-make benchmark-gtfs I=10 S=1,5,10
-```
-
 ## Dependencies
 
 The library pulls in a few things worth knowing about:

@@ -20,7 +20,7 @@ case "${1:-app}" in
     "krown-benchmark")
         echo "Starting KROWN benchmark..."
         cd /app
-        exec uv run python benchmarks/run_krown_benchmark.py "${@:2}"
+        exec uv run python -m benchmarks.run_krown_benchmark "${@:2}"
         ;;
     "gtfs-benchmark")
         echo "Starting GTFS benchmark..."

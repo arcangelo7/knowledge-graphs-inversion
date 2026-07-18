@@ -44,6 +44,11 @@ benchmarks/*/results/
 benchmarks/*/scenarios/
 test_logs/
 
+KROWN/
+gtfs-bench/
+r2rml_test_cases/
+rml_io_registry/
+
 # Logs
 *.log
 inversion.log
