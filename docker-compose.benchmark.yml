@@ -43,7 +43,6 @@ services:
     volumes:
       - .:/app
       - benchmark-venv:/app/.venv
-      - ./benchmarks/krown/results:/app/benchmarks/krown/results
     working_dir: /app
     depends_on:
       benchmark_postgresql:

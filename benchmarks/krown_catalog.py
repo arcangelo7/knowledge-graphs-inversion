@@ -8,7 +8,7 @@ from pathlib import Path
 
 ParameterValue = bool | int | float | str
 
-KROWN_REPOSITORY = "https://github.com/arcangelo7/KROWN.git"
+KROWN_REPOSITORY = "https://github.com/kg-construct/KROWN.git"
 SUITES = ("raw", "mappings", "named-graphs", "joins")
 GENERATOR_SUITES = {
     "RawData": "raw",
