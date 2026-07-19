@@ -4,6 +4,7 @@
 
 import csv
 import importlib
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -76,6 +77,22 @@ def _add_framework_path(project_root: Path) -> None:
     framework_path = str(project_root / "KROWN" / "execution-framework")
     if framework_path not in sys.path:
         sys.path.insert(0, framework_path)
+
+
+def _wait_for_container_exit(_docker: object, container_id: str) -> int:
+    process = subprocess.run(
+        ["docker", "wait", container_id],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return int(process.stdout.strip())
+
+
+def _use_container_exit_status() -> None:
+    docker_module = importlib.import_module("bench_executor.docker")
+    docker_class = getattr(docker_module, "Docker")
+    setattr(docker_class, "wait", _wait_for_container_exit)
 
 
 class SynchronousCollector:
@@ -190,6 +207,7 @@ class OfficialKrownExecutor:
         rmlmapper_version: str,
     ):
         _add_framework_path(project_root)
+        _use_container_exit_status()
         rmlmapper_module = importlib.import_module("bench_executor.rmlmapper")
         setattr(rmlmapper_module, "VERSION", rmlmapper_version)
         executor_module = importlib.import_module("bench_executor.executor")
