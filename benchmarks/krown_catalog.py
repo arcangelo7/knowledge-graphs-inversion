@@ -5,6 +5,7 @@
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 ParameterValue = bool | int | float | str
 
@@ -26,27 +27,6 @@ OFFICIAL_CONFIG_FILES = (
 )
 
 
-def _integer_parameter(parameters: dict[str, ParameterValue], name: str) -> int:
-    value = parameters[name]
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise TypeError(f"KROWN parameter {name} must be an integer")
-    return value
-
-
-def _float_parameter(parameters: dict[str, ParameterValue], name: str) -> float:
-    value = parameters[name]
-    if not isinstance(value, (int, float)) or isinstance(value, bool):
-        raise TypeError(f"KROWN parameter {name} must be numeric")
-    return float(value)
-
-
-def _boolean_parameter(parameters: dict[str, ParameterValue], name: str) -> bool:
-    value = parameters[name]
-    if not isinstance(value, bool):
-        raise TypeError(f"KROWN parameter {name} must be boolean")
-    return value
-
-
 @dataclass(frozen=True)
 class KrownScenario:
     identifier: str
@@ -64,9 +44,9 @@ class KrownScenario:
     def expected_outcome(self) -> str:
         if self.generator == "RawData":
             return "FULL"
-        if self.generator == "Mappings" and _integer_parameter(
-            self.parameters, "number_of_tms"
-        ) > _integer_parameter(self.parameters, "number_of_poms"):
+        if self.generator == "Mappings" and cast(
+            int, self.parameters["number_of_tms"]
+        ) > cast(int, self.parameters["number_of_poms"]):
             return "NON_INVERTIBLE"
         return "PARTIAL"
 
@@ -75,38 +55,38 @@ class KrownScenario:
         parameters = self.parameters
         if self.generator == "RawData":
             return (
-                f"raw_{_integer_parameter(parameters, 'number_of_members')}_"
-                f"{_integer_parameter(parameters, 'number_of_properties')}_"
-                f"{_integer_parameter(parameters, 'value_size')}"
+                f"raw_{cast(int, parameters['number_of_members'])}_"
+                f"{cast(int, parameters['number_of_properties'])}_"
+                f"{cast(int, parameters['value_size'])}"
             )
         if self.generator == "Mappings":
             return (
-                f"mappings_{_integer_parameter(parameters, 'number_of_tms')}_"
-                f"{_integer_parameter(parameters, 'number_of_poms')}"
+                f"mappings_{cast(int, parameters['number_of_tms'])}_"
+                f"{cast(int, parameters['number_of_poms'])}"
             )
         if self.generator == "NamedGraph":
             return (
                 "namedgraph_"
-                f"{_integer_parameter(parameters, 'number_of_ng_s')}SM-NG_"
-                f"{_integer_parameter(parameters, 'number_of_ng_pom')}POM-NG_"
-                f"{_integer_parameter(parameters, 'number_of_tms')}TM_"
-                f"{_integer_parameter(parameters, 'number_of_poms')}POM_"
-                f"{_boolean_parameter(parameters, 'static')}"
+                f"{cast(int, parameters['number_of_ng_s'])}SM-NG_"
+                f"{cast(int, parameters['number_of_ng_pom'])}POM-NG_"
+                f"{cast(int, parameters['number_of_tms'])}TM_"
+                f"{cast(int, parameters['number_of_poms'])}POM_"
+                f"{cast(bool, parameters['static'])}"
             )
         if self.generator == "JoinsRelation":
             return (
                 "joins_relations_"
-                f"{_integer_parameter(parameters, 'n')}-"
-                f"{_integer_parameter(parameters, 'm')}_"
-                f"{_float_parameter(parameters, 'percentage')}"
+                f"{cast(int, parameters['n'])}-"
+                f"{cast(int, parameters['m'])}_"
+                f"{cast(float, parameters['percentage'])}"
             )
         if self.generator == "JoinsMultiple":
             return (
                 "joins_mutiple_"
-                f"{_integer_parameter(parameters, 'n')}-"
-                f"{_integer_parameter(parameters, 'm')}_"
-                f"{_integer_parameter(parameters, 'jc')}jc_"
-                f"{_float_parameter(parameters, 'percentage')}"
+                f"{cast(int, parameters['n'])}-"
+                f"{cast(int, parameters['m'])}_"
+                f"{cast(int, parameters['jc'])}jc_"
+                f"{cast(float, parameters['percentage'])}"
             )
         raise ValueError(f"Unsupported KROWN generator: {self.generator}")
 
@@ -116,36 +96,29 @@ class KrownScenario:
 
     @property
     def source_rows(self) -> int:
-        return (
-            _integer_parameter(self.parameters, "number_of_members")
-            * self.source_table_count
-        )
+        return cast(int, self.parameters["number_of_members"]) * self.source_table_count
 
     @property
     def source_cells(self) -> int:
-        columns = _integer_parameter(self.parameters, "number_of_properties") + 1
+        columns = cast(int, self.parameters["number_of_properties"]) + 1
         return self.source_rows * columns
 
     @property
     def expected_rdf_statements(self) -> int | None:
-        rows = _integer_parameter(self.parameters, "number_of_members")
+        rows = cast(int, self.parameters["number_of_members"])
         if self.generator == "RawData":
-            return rows * _integer_parameter(self.parameters, "number_of_properties")
+            return rows * cast(int, self.parameters["number_of_properties"])
         if self.generator == "Mappings":
             return (
                 rows
-                * _integer_parameter(self.parameters, "number_of_tms")
-                * _integer_parameter(self.parameters, "number_of_poms")
+                * cast(int, self.parameters["number_of_tms"])
+                * cast(int, self.parameters["number_of_poms"])
             )
         if self.generator == "NamedGraph":
-            graph_count = _integer_parameter(
-                self.parameters, "number_of_ng_s"
-            ) + _integer_parameter(self.parameters, "number_of_ng_pom")
-            return (
-                rows
-                * _integer_parameter(self.parameters, "number_of_poms")
-                * graph_count
+            graph_count = cast(int, self.parameters["number_of_ng_s"]) + cast(
+                int, self.parameters["number_of_ng_pom"]
             )
+            return rows * cast(int, self.parameters["number_of_poms"]) * graph_count
         return None
 
     @property
@@ -334,37 +307,23 @@ SERIES = (
 )
 
 
-def _parse_parameters(value: object) -> dict[str, ParameterValue]:
-    if not isinstance(value, dict):
-        raise TypeError("Invalid KROWN scenario parameters")
-    parameters: dict[str, ParameterValue] = {}
-    for name, parameter_value in value.items():
-        if not isinstance(name, str) or not isinstance(
-            parameter_value, (bool, int, float, str)
-        ):
-            raise TypeError("Invalid KROWN scenario parameter")
-        parameters[name] = parameter_value
-    return parameters
-
-
 def _load_config(config_file: Path) -> list[KrownScenario]:
-    catalog = json.loads(config_file.read_text(encoding="utf-8"))
-    if not isinstance(catalog, dict) or not isinstance(catalog["instances"], list):
-        raise TypeError(f"Invalid KROWN configuration: {config_file}")
+    catalog = cast(
+        dict[str, list[dict[str, object]]],
+        json.loads(config_file.read_text(encoding="utf-8")),
+    )
 
     scenarios = []
     for value in catalog["instances"]:
-        if not isinstance(value, dict):
-            raise TypeError(f"Invalid KROWN scenario: {config_file}")
-        parameters = _parse_parameters(value["parameters"])
-        original_data_format = str(parameters["data_format"])
+        parameters = cast(dict[str, ParameterValue], value["parameters"])
+        original_data_format = cast(str, parameters["data_format"])
         parameters["data_format"] = "postgresql"
         parameters["engine"] = "RMLMapper"
         scenarios.append(
             KrownScenario(
-                identifier=str(value["@id"]),
-                display_name=str(value["name"]),
-                generator=str(value["generator"]),
+                identifier=cast(str, value["@id"]),
+                display_name=cast(str, value["name"]),
+                generator=cast(str, value["generator"]),
                 parameters=parameters,
                 source_config=f"data-generator/config/{config_file.name}",
                 original_data_format=original_data_format,

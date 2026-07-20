@@ -5,7 +5,6 @@
 """Utility functions and classes."""
 
 import json
-import logging
 import re
 from decimal import Decimal
 from datetime import datetime
@@ -14,6 +13,7 @@ from urllib.parse import ParseResult, unquote, urlparse
 import pandas as pd
 
 from kgi.constants import REF_TEMPLATE_REGEX
+from kgi.exceptions import UnsupportedMappingError
 
 
 def normalize_sql_identifier(identifier: str) -> str:
@@ -44,25 +44,8 @@ class Validator:
     @staticmethod
     def url(x) -> bool:
         """Check if a string is a valid URL."""
-        try:
-            result: ParseResult = urlparse(x)
-            return all([result.scheme, result.netloc])
-        except Exception:
-            return False
-
-
-class Identifier:
-    """Identifier generation utilities."""
-
-    @staticmethod
-    def generate_plain_identifier(rule: pd.Series, value: str) -> str | None:
-        source_type = str(rule["source_type"])
-
-        if source_type in ("CSV", "RDB"):
-            return value
-        else:
-            logging.getLogger("kgi").error(f"Unsupported source type: {source_type}")
-            return None
+        result: ParseResult = urlparse(x)
+        return all([result.scheme, result.netloc])
 
 
 class Codex:
@@ -160,36 +143,31 @@ class Codex:
 def sparql_to_python_type(value, datatype):
     """Convert SPARQL datatype to Python type."""
     datatype = str(datatype)
-    try:
-        if datatype == "http://www.w3.org/2001/XMLSchema#integer":
-            return int(value)
-        elif datatype == "http://www.w3.org/2001/XMLSchema#decimal":
-            return Decimal(value)
-        elif datatype == "http://www.w3.org/2001/XMLSchema#float":
-            return float(value)
-        elif datatype == "http://www.w3.org/2001/XMLSchema#double":
-            return float(value)
-        elif datatype == "http://www.w3.org/2001/XMLSchema#boolean":
-            return value.lower() == "true"
-        elif datatype == "http://www.w3.org/2001/XMLSchema#dateTime":
-            return datetime.fromisoformat(value)
-        elif datatype == "http://www.w3.org/2001/XMLSchema#date":
-            return datetime.strptime(value, "%Y-%m-%d").date()
-        else:
-            return value
-    except (ValueError, TypeError) as e:
-        logging.getLogger("kgi").warning(
-            f"Type conversion failed for value '{value}' to datatype '{datatype}': {e}. Returning original value."
-        )
-        return value
+    if datatype == "http://www.w3.org/2001/XMLSchema#integer":
+        return int(value)
+    if datatype == "http://www.w3.org/2001/XMLSchema#decimal":
+        return Decimal(value)
+    if datatype == "http://www.w3.org/2001/XMLSchema#float":
+        return float(value)
+    if datatype == "http://www.w3.org/2001/XMLSchema#double":
+        return float(value)
+    if datatype == "http://www.w3.org/2001/XMLSchema#boolean":
+        return {
+            "true": True,
+            "1": True,
+            "false": False,
+            "0": False,
+        }[value]
+    if datatype == "http://www.w3.org/2001/XMLSchema#dateTime":
+        return datetime.fromisoformat(value)
+    if datatype == "http://www.w3.org/2001/XMLSchema#date":
+        return datetime.strptime(value, "%Y-%m-%d").date()
+    return value
 
 
 def url_decode(url):
     """URL decode a string."""
-    try:
-        return unquote(url) if isinstance(url, str) else url
-    except Exception:
-        return url
+    return unquote(url) if isinstance(url, str) else url
 
 
 def signature_value(value: object) -> str:
@@ -263,6 +241,10 @@ def insert_columns(df: pd.DataFrame, pure=False) -> pd.DataFrame:
                     r"([^/]*)",
                     df.at[index, "subject_map_value"],
                 )
+            case subject_map_type:
+                raise UnsupportedMappingError(
+                    f"Unsupported subject map type: {subject_map_type}"
+                )
 
         # Predicate references
         match df.at[index, "predicate_map_type"]:
@@ -284,6 +266,10 @@ def insert_columns(df: pd.DataFrame, pure=False) -> pd.DataFrame:
                     REF_TEMPLATE_REGEX,
                     r"([^/]*)",
                     df.at[index, "predicate_map_value"],
+                )
+            case predicate_map_type:
+                raise UnsupportedMappingError(
+                    f"Unsupported predicate map type: {predicate_map_type}"
                 )
 
         # Object references
@@ -315,6 +301,10 @@ def insert_columns(df: pd.DataFrame, pure=False) -> pd.DataFrame:
                 else:
                     df.at[index, "object_references"] = []
                     df.at[index, "object_reference_count"] = 0
+            case object_map_type:
+                raise UnsupportedMappingError(
+                    f"Unsupported object map type: {object_map_type}"
+                )
 
         # Graph references
         graph_map_type = df.at[index, "graph_map_type"]
@@ -334,6 +324,10 @@ def insert_columns(df: pd.DataFrame, pure=False) -> pd.DataFrame:
                     df.at[index, "graph_reference_count"] = len(references_list)
                     df.at[index, "graph_references_template"] = re.sub(
                         REF_TEMPLATE_REGEX, r"([^/]*)", df.at[index, "graph_map_value"]
+                    )
+                case unsupported_graph_map_type:
+                    raise UnsupportedMappingError(
+                        f"Unsupported graph map type: {unsupported_graph_map_type}"
                     )
 
     return df

@@ -4,8 +4,8 @@
 
 """SPARQL query generation and execution."""
 
-import logging
 from collections.abc import Iterator
+from typing import cast
 
 import pandas as pd
 from pyoxigraph import BlankNode, Literal, NamedNode, QuerySolutions, Triple
@@ -18,11 +18,11 @@ from kgi.constants import (
     RML_REFERENCE,
     RML_TEMPLATE,
 )
+from kgi.exceptions import UnsupportedMappingError
 from kgi.triples import QueryTriple, SubjectTriple, extract_from_iri_template
 from kgi.utils import (
     Codex,
     IdGenerator,
-    Identifier,
     signature_value,
     sparql_to_python_type,
     url_decode,
@@ -102,7 +102,6 @@ class Query:
         all_references = self.references
 
         if not all_references:
-            logging.getLogger("kgi").warning("No references found, no query generated")
             return None
 
         triple_strings = []
@@ -187,12 +186,12 @@ class Query:
                 all_graph_refs.update(g_refs)
                 if graph_info is None:
                     graph_info = {
-                        "graph_map_type": triple.rule.get("graph_map_type"),
-                        "graph_map_value": triple.rule.get("graph_map_value"),
-                        "graph_references": triple.rule.get("graph_references", []),
-                        "graph_references_template": triple.rule.get(
+                        "graph_map_type": triple.rule["graph_map_type"],
+                        "graph_map_value": triple.rule["graph_map_value"],
+                        "graph_references": triple.rule["graph_references"],
+                        "graph_references_template": triple.rule[
                             "graph_references_template"
-                        ),
+                        ],
                     }
 
         exclusive = all_graph_refs - all_other_refs
@@ -210,10 +209,8 @@ class Query:
         rule = self.triples[0].rule
 
         if graph_map_type == RML_REFERENCE:
-            ref = list(graph_info["exclusive_references"])  # type: ignore[arg-type]
-            ref_id = Identifier.generate_plain_identifier(rule, str(ref[0])) or str(
-                ref[0]
-            )
+            ref = list(cast(set[str], graph_info["exclusive_references"]))
+            ref_id = str(ref[0])
             ref_var = self.codex.get_id(ref_id)
             return f"BIND(STR(?{graph_var}) AS ?{ref_var})\n"
 
@@ -222,7 +219,7 @@ class Query:
                 extract_from_iri_template(
                     template_value=str(graph_info["graph_map_value"]),
                     references_template=str(graph_info["graph_references_template"]),
-                    references=list(graph_info["graph_references"]),  # type: ignore[arg-type]
+                    references=cast(list[str], graph_info["graph_references"]),
                     rule=rule,
                     codex=self.codex,
                     id_generator=self.id_generator,
@@ -231,7 +228,7 @@ class Query:
                 + "\n"
             )
 
-        return ""
+        raise UnsupportedMappingError(f"Unsupported graph map type: {graph_map_type}")
 
     def decode_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
         """Decode query results DataFrame."""
@@ -351,7 +348,6 @@ def retrieve_data(
     generated_query = query.generate(mapping_rules)
 
     if generated_query is None:
-        logging.getLogger("kgi").warning("No query generated (no references found)")
         return None, None
 
     chunks = _solutions_to_dataframes(endpoint.query(generated_query))

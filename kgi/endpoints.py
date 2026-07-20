@@ -4,12 +4,11 @@
 
 """SPARQL endpoint implementations."""
 
-import logging
 import os
 import tempfile
 from collections.abc import Iterable, Iterator
 from itertools import islice
-from typing import TypeAlias
+from typing import TypeAlias, cast
 
 from pyoxigraph import (
     BlankNode,
@@ -128,26 +127,21 @@ class LocalSparqlGraphStore(Endpoint):
             prefix=".kgi_pyoxigraph_", dir=os.getcwd()
         )
         self._store: Store | None = Store(self._temporary_directory.name)
+        loaded = False
         try:
             normalize_blank_nodes = _has_explicit_blank_nodes(url)
             _bulk_extend_in_batches(
                 self._store,
                 _quads_with_default_graph_union(url, rdf_format, normalize_blank_nodes),
             )
-        except BaseException:
-            self.close()
-            raise
+            loaded = True
+        finally:
+            if not loaded:
+                self.close()
 
     def query(self, query: str) -> QuerySolutions:
-        assert self._store is not None
-        try:
-            results = self._store.query(query)
-            assert isinstance(results, QuerySolutions)
-            return results
-        except Exception as e:
-            logging.getLogger("kgi").error(f"Query execution error: {e}")
-            logging.getLogger("kgi").error(f"Failed query: {query}")
-            raise
+        store = cast(Store, self._store)
+        return cast(QuerySolutions, store.query(query))
 
     def close(self) -> None:
         self._store = None

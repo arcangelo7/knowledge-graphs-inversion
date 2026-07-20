@@ -8,26 +8,15 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import cast
 
 import matplotlib.pyplot as plt
 import numpy as np
 
 
-def _dictionary(value: object) -> dict:
-    if not isinstance(value, dict):
-        raise TypeError("Expected a dictionary")
-    return value
-
-
-def _number(value: object) -> float:
-    if isinstance(value, (int, float)):
-        return float(value)
-    return float(str(value))
-
-
 def _timing_points(
-    stats_data: dict,
-    series: dict,
+    stats_data: dict[str, object],
+    series: dict[str, object],
     metric_name: str,
 ) -> tuple[
     list[float | str],
@@ -36,17 +25,16 @@ def _timing_points(
     list[float],
     list[str | None],
 ]:
-    scenarios = _dictionary(stats_data["scenarios"])
+    scenarios = cast(dict[str, dict[str, object]], stats_data["scenarios"])
     parameter_values = []
     means = []
     lower_errors = []
     upper_errors = []
     failure_labels = []
 
-    for point_data in series["points"]:
-        point = _dictionary(point_data)
-        scenario_name = str(point["scenario"])
-        scenario = _dictionary(scenarios[scenario_name])
+    for point in cast(list[dict[str, object]], series["points"]):
+        scenario_name = cast(str, point["scenario"])
+        scenario = scenarios[scenario_name]
         parameter_value = point["value"]
         if isinstance(parameter_value, (int, float)):
             parameter_values.append(float(parameter_value))
@@ -54,18 +42,18 @@ def _timing_points(
             parameter_values.append(str(parameter_value))
 
         if scenario["status"] == "failed":
-            failure = _dictionary(scenario["failure"])
+            failure = cast(dict[str, object], scenario["failure"])
             means.append(float("nan"))
             lower_errors.append(float("nan"))
             upper_errors.append(float("nan"))
             failure_labels.append(str(failure["outcome"]))
             continue
 
-        statistics = _dictionary(scenario["statistics"])
-        timing = _dictionary(statistics[metric_name])
-        mean = _number(timing["mean"])
-        lower = _number(timing["ci_95_lower"])
-        upper = _number(timing["ci_95_upper"])
+        statistics = cast(dict[str, object], scenario["statistics"])
+        timing = cast(dict[str, float], statistics[metric_name])
+        mean = timing["mean"]
+        lower = timing["ci_95_lower"]
+        upper = timing["ci_95_upper"]
         means.append(mean)
         lower_errors.append(mean - lower)
         upper_errors.append(upper - mean)
@@ -74,18 +62,20 @@ def _timing_points(
     return parameter_values, means, lower_errors, upper_errors, failure_labels
 
 
-def plot_timing_charts(stats_data: dict, output_dir: Path) -> list[Path]:
+def plot_timing_charts(
+    stats_data: dict[str, object],
+    output_dir: Path,
+) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     plot_files = []
-    mode = str(stats_data["mode"])
+    mode = cast(str, stats_data["mode"])
     metrics = []
     if mode in ("forward", "roundtrip"):
         metrics.append(("rmlmapper_time", "RMLMapper", "#1f77b4", "o"))
     if mode in ("backward", "roundtrip"):
         metrics.append(("inversion_time", "Inversion", "#d62728", "s"))
 
-    for series_value in stats_data["series"]:
-        series = _dictionary(series_value)
+    for series in cast(list[dict[str, object]], stats_data["series"]):
         figure, axis = plt.subplots(figsize=(8, 5))
         parameter_values: list[float | str] = []
         failure_labels: list[str | None] = []
@@ -126,8 +116,8 @@ def plot_timing_charts(stats_data: dict, output_dir: Path) -> list[Path]:
                     transform=axis.get_xaxis_transform(),
                 )
 
-        axis.set_title(f"KROWN {series['title']}")
-        axis.set_xlabel(str(series["parameter_label"]))
+        axis.set_title(f"KROWN {cast(str, series['title'])}")
+        axis.set_xlabel(cast(str, series["parameter_label"]))
         axis.set_ylabel("Time (s), mean with 95% CI")
         axis.set_xticks(
             x_values,
@@ -148,7 +138,7 @@ def plot_timing_charts(stats_data: dict, output_dir: Path) -> list[Path]:
             )
         figure.tight_layout()
 
-        output_file = output_dir / f"{series['name']}_timing.png"
+        output_file = output_dir / f"{cast(str, series['name'])}_timing.png"
         figure.savefig(output_file, dpi=300, bbox_inches="tight")
         plt.close(figure)
         plot_files.append(output_file)
@@ -162,7 +152,10 @@ def main() -> int:  # pragma: no cover
     parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args()
 
-    stats_data = json.loads(args.stats_file.read_text(encoding="utf-8"))
+    stats_data = cast(
+        dict[str, object],
+        json.loads(args.stats_file.read_text(encoding="utf-8")),
+    )
     output_dir = args.output_dir
     if output_dir is None:
         output_dir = args.stats_file.parent

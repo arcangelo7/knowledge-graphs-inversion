@@ -8,6 +8,8 @@ import os
 import pathlib
 import re
 import tempfile
+from collections.abc import Iterator
+from typing import cast
 from urllib.parse import quote_plus
 
 import pandas as pd
@@ -82,22 +84,17 @@ def _extract_db_url_from_mapping(store: Store) -> str | None:
         return None
     db_node = databases[0].subject
     dsn_quads = list(store.quads_for_pattern(db_node, D2RQ_JDBC_DSN, None))
-    if not dsn_quads:
-        return None
     jdbc_dsn = _literal_value(dsn_quads[0])
     match = re.match(r"jdbc:(\w+)://(.+)", jdbc_dsn)
-    if not match:
-        return None
+    if match is None:
+        raise ValueError(f"Invalid JDBC DSN: {jdbc_dsn}")
     db_type, host_and_db = match.group(1), match.group(2)
-    driver = JDBC_DRIVERS.get(db_type)
-    if not driver:
-        get_logger().warning(f"Unsupported JDBC driver type: {db_type}")
-        return None
+    driver = JDBC_DRIVERS[db_type]
     user_quads = list(store.quads_for_pattern(db_node, D2RQ_USERNAME, None))
     pass_quads = list(store.quads_for_pattern(db_node, D2RQ_PASSWORD, None))
-    username = _literal_value(user_quads[0]) if user_quads else ""
-    password = _literal_value(pass_quads[0]) if pass_quads else ""
-    credentials = f"{quote_plus(username)}:{quote_plus(password)}@" if username else ""
+    username = _literal_value(user_quads[0])
+    password = _literal_value(pass_quads[0])
+    credentials = f"{quote_plus(username)}:{quote_plus(password)}@"
     return f"{driver}://{credentials}{host_and_db}"
 
 
@@ -189,29 +186,23 @@ def _check_for_column_iri_term_maps(mappings: pd.DataFrame) -> bool:
 
 
 def _check_for_constant_only_mappings(mappings: pd.DataFrame) -> bool:
-    try:
-        for _, rule in mappings.iterrows():
-            subject_map_type = rule.get("subject_map_type")
-            predicate_map_type = rule.get("predicate_map_type")
-            object_map_type = rule.get("object_map_type")
+    for _, rule in mappings.iterrows():
+        subject_map_type = rule["subject_map_type"]
+        predicate_map_type = rule["predicate_map_type"]
+        object_map_type = rule["object_map_type"]
 
-            if (
-                subject_map_type in [RML_REFERENCE, RML_TEMPLATE]
-                or predicate_map_type in [RML_REFERENCE, RML_TEMPLATE]
-                or object_map_type in [RML_REFERENCE, RML_TEMPLATE]
-            ):
-                return False
+        if (
+            subject_map_type in [RML_REFERENCE, RML_TEMPLATE]
+            or predicate_map_type in [RML_REFERENCE, RML_TEMPLATE]
+            or object_map_type in [RML_REFERENCE, RML_TEMPLATE]
+        ):
+            return False
 
-        return True
-    except Exception as e:
-        get_logger().warning(f"Could not check for constant-only mappings: {e}")
-        return False
+    return True
 
 
 def _reference_set(value: object) -> set[str]:
-    if not isinstance(value, list):
-        return set()
-    return {str(item) for item in value}
+    return {str(item) for item in cast(list[object], value)}
 
 
 def _subject_signature(subject_rules: pd.DataFrame) -> frozenset[tuple[str, ...]]:
@@ -282,7 +273,7 @@ def _build_morph_config(
         "logging_level": "ERROR",
     }
     data_source: dict[str, str] = {"mappings": str(mapping)}
-    if source_db_url:
+    if source_db_url is not None:
         data_source["db_url"] = source_db_url
     config["DataSource1"] = data_source
 
@@ -316,9 +307,9 @@ def reconstruct(
     if _check_for_multiple_subject_maps(mapping_store):
         raise MappingError("TriplesMap contains multiple subjectMaps")
 
-    if not source_db_url:
+    if source_db_url is None:
         extracted_url = _extract_db_url_from_mapping(mapping_store)
-        if extracted_url:
+        if extracted_url is not None:
             source_db_url = extracted_url
             logger.info(f"Extracted source database URL from mapping: {extracted_url}")
 
@@ -328,16 +319,13 @@ def reconstruct(
     try:
         config = load_config_from_argument(config_file)
 
-        try:
-            mappings, _, _ = retrieve_mappings(config)
-        except ValueError as e:
-            raise MappingError(f"Invalid mapping: {e}") from e
-        except KeyError as e:
-            if str(e) == "'object_map'":
-                raise MappingError("Mapping with missing object_map information") from e
-            raise MappingError(f"Mapping error: {e}") from e
+        mappings, _, _ = retrieve_mappings(config)
 
         _normalize_sql_table_sources(mappings)
+        if (mappings["logical_source_type"] == RML_SOURCE).any():
+            raise UnsupportedMappingError(
+                "rml:source logical sources are not supported"
+            )
 
         if _check_for_constant_only_mappings(mappings):
             raise NonInvertibleError(
@@ -350,49 +338,30 @@ def reconstruct(
             )
 
         insert_columns(mappings)
-        mappings = mappings[mappings["logical_source_type"] != RML_SOURCE]
         _check_for_ambiguous_subject_templates(mappings)
 
-        if source_db_url:
+        if source_db_url is not None:
             schema_retrievers["DataSource1"] = DatabaseSchemaRetriever(source_db_url)
 
-        try:
-            endpoint = EndpointFactory.create_from_url(rdf_graph_str)
-        except FileNotFoundError as e:
-            raise NoDataError(
-                "No RDF input file found, likely due to mapping errors"
-            ) from e
-        except ValueError as e:
-            raise NonInvertibleError(f"Output RDF contains invalid data: {e}") from e
+        endpoint = EndpointFactory.create_from_url(rdf_graph_str)
 
         reconstructed_table_count = 0
         for table_name_value, source_rules in mappings.groupby("logical_source_value"):
             table_name = str(table_name_value)
-            source_section = (
-                str(source_rules.iloc[0]["source_section"])
-                if "source_section" in source_rules.columns
-                else "DataSource1"
-            )
+            source_section = str(source_rules.iloc[0]["source_name"])
             template = _generate_template(source_rules, dest_db_url)
 
             source_data_chunks, _ = retrieve_data(
                 mappings, source_rules, endpoint, decode_columns=True
             )
-
-            if source_data_chunks is None:
-                logger.warning(f"No data generated for {table_name}")
-                continue
-
-            if source_section in schema_retrievers:
-                schema_retriever = schema_retrievers[source_section]
-                table_schema = schema_retriever.get_table_schema(table_name)
-                if table_schema:
-                    source_data_chunks = (
-                        apply_schema_ordering(
-                            apply_schema_types(chunk, table_schema), table_schema
-                        )
-                        for chunk in source_data_chunks
-                    )
+            schema_retriever = schema_retrievers[source_section]
+            table_schema = schema_retriever.get_table_schema(table_name)
+            source_data_chunks = (
+                apply_schema_ordering(
+                    apply_schema_types(chunk, table_schema), table_schema
+                )
+                for chunk in cast(Iterator[pd.DataFrame], source_data_chunks)
+            )
 
             template.fill_data(source_data_chunks, table_name)
             reconstructed_table_count += 1

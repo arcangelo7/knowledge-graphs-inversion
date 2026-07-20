@@ -124,34 +124,12 @@ class SynchronousCollector:
         self._collector._thread.join()
 
 
-def _convert_csv_value(value: str) -> int | float | str:
-    try:
-        return int(value)
-    except ValueError:
-        try:
-            return float(value)
-        except ValueError:
-            return value
-
-
 def read_official_statistics(
     results_path: Path,
     number_of_steps: int,
 ) -> list[dict[str, MetricValue]]:
-    expected_files = (
-        results_path / "stats.csv",
-        results_path / "summary.csv",
-        results_path / "aggregated.csv",
-    )
-    missing_files = [str(path) for path in expected_files if not path.is_file()]
-    if missing_files:
-        raise RuntimeError(f"KROWN statistics files are missing: {missing_files}")
-
     with (results_path / "summary.csv").open(newline="", encoding="utf-8") as file:
-        rows = [
-            {name: _convert_csv_value(value) for name, value in row.items()}
-            for row in csv.DictReader(file)
-        ]
+        rows = cast(list[dict[str, MetricValue]], list(csv.DictReader(file)))
     if len(rows) != number_of_steps:
         raise RuntimeError(
             f"KROWN summary contains {len(rows)} steps instead of {number_of_steps}"
@@ -237,15 +215,8 @@ class OfficialKrownExecutor:
 
     @property
     def steps(self) -> list[dict[str, object]]:
-        data = self.case["data"]
-        if not isinstance(data, dict):
-            raise TypeError("Invalid KROWN case data")
-        steps = data["steps"]
-        if not isinstance(steps, list) or not all(
-            isinstance(step, dict) for step in steps
-        ):
-            raise TypeError("Invalid KROWN case steps")
-        return steps
+        data = cast(dict[str, object], self.case["data"])
+        return cast(list[dict[str, object]], data["steps"])
 
     @property
     def mapping_step(self) -> int:
@@ -261,10 +232,8 @@ class OfficialKrownExecutor:
     @property
     def output_file(self) -> str:
         step = self.steps[self.mapping_step - 1]
-        parameters = step["parameters"]
-        if not isinstance(parameters, dict):
-            raise TypeError("Invalid KROWN mapping parameters")
-        return str(parameters["output_file"])
+        parameters = cast(dict[str, str], step["parameters"])
+        return parameters["output_file"]
 
     @property
     def results_path(self) -> Path:
@@ -280,7 +249,7 @@ class OfficialKrownExecutor:
         self._failed_step = None
         success = self._executor.run(self.case, interval, run, checkpoint)
         log_file = self.results_path / f"run_{run}" / "log.txt"
-        diagnostic = log_file.read_text(encoding="utf-8") if log_file.is_file() else ""
+        diagnostic = log_file.read_text(encoding="utf-8")
         return OfficialRunResult(
             success,
             self._failed_resource,

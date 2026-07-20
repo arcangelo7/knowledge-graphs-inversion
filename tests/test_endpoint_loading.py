@@ -259,3 +259,16 @@ def test_local_endpoint_rejects_unsupported_rdf_extension(tmp_path) -> None:
         endpoints.LocalSparqlGraphStore(str(rdf_file))
 
     assert str(error.value) == f"Unsupported RDF file format: {rdf_file}"
+
+
+def test_local_endpoint_propagates_malformed_rdf(tmp_path) -> None:
+    rdf_file = tmp_path / "broken.nq"
+    rdf_file.write_text("not rdf\n")
+
+    with pytest.raises(SyntaxError) as error:
+        endpoints.LocalSparqlGraphStore(str(rdf_file))
+
+    assert error.value.msg == (
+        "Parser error at line 1 between columns 1 and 4: "
+        "The subject of a triple must be an IRI or a blank node"
+    )

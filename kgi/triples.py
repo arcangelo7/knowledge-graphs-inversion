@@ -5,7 +5,7 @@
 """Triple classes for SPARQL query generation."""
 
 import json
-import logging
+from typing import cast
 
 import pandas as pd
 
@@ -20,7 +20,8 @@ from kgi.constants import (
     RML_REFERENCE,
     RML_TEMPLATE,
 )
-from kgi.utils import Codex, IdGenerator, Identifier
+from kgi.exceptions import UnsupportedMappingError
+from kgi.utils import Codex, IdGenerator
 
 
 def _same_value_filter(left_var: str, right_var: str) -> str:
@@ -61,9 +62,7 @@ def extract_from_iri_template(
         current_pre_string = evaluated_template.split("(", 1)[0]
         current_post_string = evaluated_template.split(")", 1)[1]
         ref_str = str(reference)
-        reference_identifier = (
-            Identifier.generate_plain_identifier(rule, ref_str) or ref_str
-        )
+        reference_identifier = ref_str
         current_reference, already_bound = codex.get_id_and_is_bound(
             reference_identifier
         )
@@ -130,8 +129,8 @@ class QueryTriple(Triple):
         refs = set.union(self.subject_references, self.predicate_references)
         if self.rule["object_map_type"] == RML_TEMPLATE:
             refs = refs.union(self.object_references)
-        graph_map_type = self.rule.get("graph_map_type")
-        if isinstance(graph_map_type, str) and graph_map_type == RML_TEMPLATE:
+        graph_map_type = self.rule["graph_map_type"]
+        if graph_map_type == RML_TEMPLATE:
             refs = refs.union(self.graph_references)
         return refs
 
@@ -141,53 +140,31 @@ class QueryTriple(Triple):
         refs: set[str] = set()
         if self.rule["object_map_type"] in (RML_REFERENCE, RML_PARENT_TRIPLES_MAP):
             refs = set(self.object_references)
-        graph_map_type = self.rule.get("graph_map_type")
-        if isinstance(graph_map_type, str) and graph_map_type == RML_REFERENCE:
+        graph_map_type = self.rule["graph_map_type"]
+        if graph_map_type == RML_REFERENCE:
             refs = refs.union(self.graph_references)
         return refs
 
     @property
     def subject_references(self) -> set[str]:
         """Get subject references."""
-        return {
-            ident
-            for value in self.rule["subject_references"]
-            if (ident := Identifier.generate_plain_identifier(self.rule, str(value)))
-            is not None
-        }
+        return {str(value) for value in self.rule["subject_references"]}
 
     @property
     def predicate_references(self) -> set[str]:
         """Get predicate references."""
-        return {
-            ident
-            for value in self.rule["predicate_references"]
-            if (ident := Identifier.generate_plain_identifier(self.rule, str(value)))
-            is not None
-        }
+        return {str(value) for value in self.rule["predicate_references"]}
 
     @property
     def object_references(self) -> set[str]:
         """Get object references."""
-        return {
-            ident
-            for value in self.rule["object_references"]
-            if (ident := Identifier.generate_plain_identifier(self.rule, str(value)))
-            is not None
-        }
+        return {str(value) for value in self.rule["object_references"]}
 
     @property
     def graph_references(self) -> set[str]:
         """Get graph map references."""
-        graph_refs = self.rule.get("graph_references")
-        if not isinstance(graph_refs, list):
-            return set()
-        return {
-            ident
-            for value in graph_refs
-            if (ident := Identifier.generate_plain_identifier(self.rule, str(value)))
-            is not None
-        }
+        graph_refs = cast(list[object], self.rule["graph_references"])
+        return {str(value) for value in graph_refs}
 
     def _wrap_in_graph(self, pattern: str) -> str:
         graph_iri = self._graph_iri()
@@ -196,8 +173,8 @@ class QueryTriple(Triple):
         return pattern
 
     def _graph_iri(self) -> str | None:
-        graph_map_type = self.rule.get("graph_map_type")
-        if isinstance(graph_map_type, str) and graph_map_type == RML_CONSTANT:
+        graph_map_type = self.rule["graph_map_type"]
+        if graph_map_type == RML_CONSTANT:
             graph_iri = str(self.rule["graph_map_value"])
             if graph_iri != RML_DEFAULT_GRAPH:
                 return graph_iri
@@ -228,16 +205,15 @@ class QueryTriple(Triple):
             if object_term_type == RML_IRI:
                 object_map_value = f"<{object_map_value}>"
             elif object_term_type == RML_BLANK_NODE:
-                return None
+                raise UnsupportedMappingError(
+                    "Blank node constant object maps are not supported"
+                )
             elif object_term_type == RML_LITERAL:
                 object_map_value = f'"{object_map_value}"'
             return f"?{subject_reference} {predicate} {object_map_value} ."
 
         if object_map_type == RML_REFERENCE:
-            object_identifier = (
-                Identifier.generate_plain_identifier(self.rule, object_map_value)
-                or object_map_value
-            )
+            object_identifier = object_map_value
             object_reference, already_bound = codex.get_id_and_is_bound(
                 object_identifier
             )
@@ -259,10 +235,7 @@ class QueryTriple(Triple):
             return "\n".join(lines)
 
         elif object_map_type == RML_TEMPLATE:
-            object_identifier = (
-                Identifier.generate_plain_identifier(self.rule, object_map_value)
-                or object_map_value
-            )
+            object_identifier = object_map_value
             object_reference, already_bound = codex.get_id_and_is_bound(
                 object_identifier
             )
@@ -277,9 +250,7 @@ class QueryTriple(Triple):
                 current_post_string = evaluated_template.split(")", 1)[1]
                 next_pre_string = current_post_string.split("(", 1)[0]
                 obj_str = str(obj)
-                object_identifier = (
-                    Identifier.generate_plain_identifier(self.rule, obj_str) or obj_str
-                )
+                object_identifier = obj_str
                 object_reference, already_bound = codex.get_id_and_is_bound(
                     object_identifier
                 )
@@ -333,20 +304,14 @@ class QueryTriple(Triple):
                 ]
 
             raw_join_value = self.rule["object_join_conditions"]
-            if isinstance(raw_join_value, str):
-                join_conditions = json.loads(raw_join_value.replace("'", '"'))
-            else:
-                join_conditions = {}
+            join_conditions = json.loads(cast(str, raw_join_value).replace("'", '"'))
             parent_template = object_rule["subject_references_template"]
             parent_references = object_rule["subject_references"]
 
             for jc in join_conditions.values():
-                child_value = jc["child_value"]
+                child_value = str(jc["child_value"])
                 parent_value = jc["parent_value"]
-                child_identifier = (
-                    Identifier.generate_plain_identifier(self.rule, child_value)
-                    or child_value
-                )
+                child_identifier = child_value
                 child_ref, child_already_bound = codex.get_id_and_is_bound(
                     child_identifier
                 )
@@ -389,11 +354,7 @@ class QueryTriple(Triple):
                 lines.append("}")
             return "\n".join(lines)
 
-        else:
-            logging.getLogger("kgi").error(
-                f"Unsupported object map type: {object_map_type}"
-            )
-            return None
+        raise UnsupportedMappingError(f"Unsupported object map type: {object_map_type}")
 
 
 class SubjectTriple(QueryTriple):
@@ -430,9 +391,7 @@ class SubjectTriple(QueryTriple):
 
         if subject_map_type == RML_TEMPLATE:
             all_already_bound = all(
-                (Identifier.generate_plain_identifier(self.rule, str(ref)) or str(ref))
-                in codex.codex
-                for ref in self.rule["subject_references"]
+                str(ref) in codex.codex for ref in self.rule["subject_references"]
             )
             if all_already_bound:
                 if subject_term_type == RML_BLANK_NODE:
@@ -447,10 +406,10 @@ class SubjectTriple(QueryTriple):
             elif subject_term_type == RML_BLANK_NODE:
                 return self._generate_blank_node_template(codex, id_generator)
 
-        logging.getLogger("kgi").error(
-            f"Unsupported subject map type: {subject_map_type} or subject term type: {subject_term_type}"
+        raise UnsupportedMappingError(
+            f"Unsupported subject map type: {subject_map_type} or "
+            f"subject term type: {subject_term_type}"
         )
-        return None
 
     def _generate_iri_template(self, codex: Codex, id_generator: IdGenerator):
         """Generate SPARQL for IRI template."""
@@ -491,9 +450,7 @@ class SubjectTriple(QueryTriple):
             next_slice_reference = codex.get_id(next_slice_reference_identifier)
 
             ref_str = str(reference)
-            reference_identifier = (
-                Identifier.generate_plain_identifier(self.rule, ref_str) or ref_str
-            )
+            reference_identifier = ref_str
             current_reference, already_bound = codex.get_id_and_is_bound(
                 reference_identifier
             )

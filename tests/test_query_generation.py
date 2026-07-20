@@ -16,8 +16,9 @@ from kgi.constants import (
 from kgi.core import _check_for_ambiguous_subject_templates
 from kgi.exceptions import NonInvertibleError
 from kgi.query import Query, _select_query_source_rules, _solutions_to_dataframes
+from kgi.schema import ColumnInfo, infer_type_from_value_with_schema
 from kgi.triples import QueryTriple, SubjectTriple
-from kgi.utils import Codex, IdGenerator, insert_columns
+from kgi.utils import Codex, IdGenerator, insert_columns, sparql_to_python_type
 
 
 def _rule(subject_column: str, object_column: str) -> dict[str, object]:
@@ -218,6 +219,21 @@ def test_empty_query_solutions_produce_one_empty_chunk() -> None:
     assert len(chunks) == 1
     assert chunks[0].columns.tolist() == ["subject"]
     assert chunks[0].to_dict(orient="records") == []
+
+
+def test_incompatible_rdf_conversion_propagates() -> None:
+    with pytest.raises(ValueError):
+        sparql_to_python_type(
+            "not-an-integer",
+            "http://www.w3.org/2001/XMLSchema#integer",
+        )
+
+
+def test_incompatible_schema_conversion_propagates() -> None:
+    column = ColumnInfo("id", "INTEGER", int)
+
+    with pytest.raises(ValueError):
+        infer_type_from_value_with_schema("not-an-integer", column)
 
 
 def _predicate_rule(subject_column: str, object_column: str) -> dict[str, object]:
