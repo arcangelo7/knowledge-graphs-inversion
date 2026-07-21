@@ -38,11 +38,19 @@ kgi.reconstruct(
 
 ## Testing
 
-Conformance tests require [Docker](https://www.docker.com/) to run the PostgreSQL databases and Java 21 or newer for RMLMapper v8.1.0. Use the root Makefile entry point:
+Conformance tests require [Docker](https://www.docker.com/) to run the databases and Java 21 or newer for RMLMapper v8.1.0. PostgreSQL is the default and runs all 121 cases across the R2RML and RML suites:
 
 ```bash
 make test-conformance
 ```
+
+MySQL 9.7.1 runs the 62 R2RML cases. The RML cases are skipped because the RML Core RDB test suite does not yet provide MySQL variants:
+
+```bash
+make test-conformance DATABASE=mysql
+```
+
+`DATABASE` accepts `postgresql` and `mysql`.
 
 ## Benchmarking
 

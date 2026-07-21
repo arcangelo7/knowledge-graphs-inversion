@@ -8,6 +8,8 @@ from typing import Union
 
 from pyoxigraph import BlankNode, Literal, NamedNode, RdfFormat, Store, Triple
 
+from conformance_config import SUITE_LABELS
+
 RdfSubject = Union[NamedNode, BlankNode, Triple]
 RdfTerm = Union[NamedNode, BlankNode, Literal, Triple]
 
@@ -28,8 +30,6 @@ class TestSuite:
     name: str
     base_dir: str
     test_id_prefix: str
-    source_db_host: str
-    dest_db_system: str
 
     def list_test_ids(self) -> list[str]:
         raise NotImplementedError
@@ -61,11 +61,9 @@ class TestSuite:
 class R2RMLTestSuite(TestSuite):
     def __init__(self, base_dir: str, project_root: str):
         self.suite_id = "r2rml"
-        self.name = "R2RML"
+        self.name = SUITE_LABELS[self.suite_id]
         self.base_dir = base_dir
         self.test_id_prefix = "R2RMLTC"
-        self.source_db_host = "postgresql_r2rml"
-        self.dest_db_system = "dest_postgresql_r2rml"
         self.databases_dir = os.path.join(base_dir, "databases")
         self.manifest_store = Store()
         self.manifest_store.load(
@@ -187,11 +185,9 @@ class R2RMLTestSuite(TestSuite):
 class RMLTestSuite(TestSuite):
     def __init__(self, base_dir: str, project_root: str):
         self.suite_id = "rml"
-        self.name = "RML"
+        self.name = SUITE_LABELS[self.suite_id]
         self.base_dir = base_dir
         self.test_id_prefix = "RMLTC"
-        self.source_db_host = "postgresql_rml"
-        self.dest_db_system = "dest_postgresql_rml"
         self.test_cases_dir = os.path.join(base_dir, "test-cases")
         self._metadata = self._load_metadata()
 

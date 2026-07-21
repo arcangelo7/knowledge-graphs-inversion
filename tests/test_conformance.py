@@ -10,12 +10,12 @@ import pytest
 from kgi import MappingError, NoDataError, NonInvertibleError, UnsupportedMappingError
 from kgi.comparison import compare_databases
 from kgi.core import reconstruct
+from test_suites import R2RMLTestSuite, RMLTestSuite, TestSuite
 
 from .conftest import (
-    DEST_R2RML_DB,
+    Database,
     R2RML_TEST_IDS,
     RML_TEST_IDS,
-    SOURCE_R2RML_DB,
     drop_all_tables,
     get_db_content,
     load_sql_script,
@@ -25,7 +25,8 @@ from .conftest import (
 
 def _run_conformance_test(
     test_id: str,
-    suite: object,
+    suite: TestSuite,
+    database: Database,
     source_db: str,
     dest_db: str,
     tmp_dir: str,
@@ -33,19 +34,19 @@ def _run_conformance_test(
     drop_all_tables(source_db)
     drop_all_tables(dest_db)
 
-    sql_path = suite.get_sql_script_path(test_id, "postgresql")  # type: ignore[union-attr]
+    sql_path = suite.get_sql_script_path(test_id, database)
     load_sql_script(source_db, sql_path)
 
-    mapping_path = suite.get_mapping_path(test_id)  # type: ignore[union-attr]
+    mapping_path = suite.get_mapping_path(test_id)
     output_path = os.path.join(tmp_dir, "output.nq")
 
-    run_forward_mapping(mapping_path, output_path, source_db, suite.suite_id, tmp_dir)  # type: ignore[union-attr]
+    run_forward_mapping(mapping_path, output_path, source_db, suite.suite_id, tmp_dir)
 
     forward_mapping_produced_output = (
         os.path.isfile(output_path) and os.path.getsize(output_path) > 0
     )
     if not forward_mapping_produced_output:
-        metadata = suite.get_test_metadata(test_id)  # type: ignore[union-attr]
+        metadata = suite.get_test_metadata(test_id)
         expects_output = metadata and metadata["expected_output"]
         if not expects_output:
             pytest.skip("Forward mapping produced no RDF output (error test case)")
@@ -84,16 +85,28 @@ def _run_conformance_test(
 
 
 @pytest.mark.parametrize("test_id", R2RML_TEST_IDS)
-def test_r2rml_conformance(test_id: str, r2rml_suite: object) -> None:
+def test_r2rml_conformance(
+    test_id: str,
+    r2rml_suite: R2RMLTestSuite,
+    database: Database,
+    database_urls: tuple[str, str],
+) -> None:
+    source_db, dest_db = database_urls
     with tempfile.TemporaryDirectory() as tmp_dir:
         _run_conformance_test(
-            test_id, r2rml_suite, SOURCE_R2RML_DB, DEST_R2RML_DB, tmp_dir
+            test_id, r2rml_suite, database, source_db, dest_db, tmp_dir
         )
 
 
 @pytest.mark.parametrize("test_id", RML_TEST_IDS)
-def test_rml_conformance(test_id: str, rml_suite: object) -> None:
+def test_rml_conformance(
+    test_id: str,
+    rml_suite: RMLTestSuite,
+    database: Database,
+    database_urls: tuple[str, str],
+) -> None:
+    if database == "mysql":
+        pytest.skip("RML Core RDB test cases do not yet provide MySQL variants")
+    source_db, dest_db = database_urls
     with tempfile.TemporaryDirectory() as tmp_dir:
-        _run_conformance_test(
-            test_id, rml_suite, SOURCE_R2RML_DB, DEST_R2RML_DB, tmp_dir
-        )
+        _run_conformance_test(test_id, rml_suite, database, source_db, dest_db, tmp_dir)

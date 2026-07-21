@@ -12,7 +12,15 @@ import pandas as pd
 import sqlalchemy
 from sqlalchemy import Column, MetaData, Table
 from sqlalchemy.engine import Connection, Engine
-from sqlalchemy.sql.sqltypes import Boolean, Date, DateTime, Integer, Numeric, String
+from sqlalchemy.sql.sqltypes import (
+    Boolean,
+    Date,
+    DateTime,
+    Integer,
+    Numeric,
+    String,
+    Text,
+)
 
 
 class RDBTemplate:
@@ -96,6 +104,7 @@ class RDBTemplate:
                 converted[column.name] = converted[column.name].map(
                     lambda value: str(value) if value is not None else None
                 )
+        converted = converted.astype(object).where(pd.notna(converted), None)
         connection.execute(table.insert(), converted.to_dict(orient="records"))
 
     @staticmethod
@@ -108,7 +117,7 @@ class RDBTemplate:
             has_strings = any(isinstance(value, str) for value in column_values)
 
             if has_strings:
-                column_type = String()
+                column_type = Text()
             elif "int" in str(dtype):
                 column_type = Integer()
             elif "float" in str(dtype):
@@ -120,7 +129,7 @@ class RDBTemplate:
             elif "date" in str(dtype):
                 column_type = Date()
             else:
-                column_type = String()
+                column_type = Text()
 
             columns.append(
                 Column(

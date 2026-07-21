@@ -5,70 +5,168 @@
 import os
 import subprocess
 import time
+from collections.abc import Iterator
+from dataclasses import dataclass
+from typing import Literal, cast
 
-import pandas as pd
 import pytest
 from sqlalchemy import MetaData, create_engine, text
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import OperationalError
 
 import rmlmapper
-from database_connection import hex_encode_binary_columns
+from conformance_config import get_database_config
+from database_connection import DatabaseConnection
 from test_suites import R2RMLTestSuite, RMLTestSuite
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-SOURCE_CONTAINER = "kgi-test-r2rml-source"
-DEST_CONTAINER = "kgi-test-r2rml-dest"
-SOURCE_PORT = 5440
-DEST_PORT = 5441
-SOURCE_R2RML_DB = f"postgresql+psycopg2://r2rml:r2rml@localhost:{SOURCE_PORT}/r2rml"
-DEST_R2RML_DB = f"postgresql+psycopg2://r2rml:r2rml@localhost:{DEST_PORT}/r2rml"
+Database = Literal["postgresql", "mysql"]
 
 
-def _wait_for_postgres(port: int, timeout: int = 60) -> None:
-    start = time.monotonic()
-    while time.monotonic() - start < timeout:
-        result = subprocess.run(
-            ["pg_isready", "-h", "localhost", "-p", str(port), "-U", "r2rml"],
-            capture_output=True,
-        )
-        if result.returncode == 0:
-            return
-        time.sleep(1)
-    raise RuntimeError(f"PostgreSQL on port {port} not ready after {timeout}s")
+@dataclass(frozen=True)
+class DatabaseConfig:
+    name: Database
+    sqlalchemy_driver: str
+    image: str
+    container_port: int
+    source_port: int
+    dest_port: int
+    environment: tuple[str, ...]
+    server_options: tuple[str, ...] = ()
+
+    def url(self, port: int) -> str:
+        return f"{self.sqlalchemy_driver}://r2rml:r2rml@localhost:{port}/r2rml"
 
 
-def _start_postgres(container_name: str, port: int) -> None:
-    subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
-    subprocess.run(
-        [
-            "docker",
-            "run",
-            "-d",
-            "--name",
-            container_name,
-            "-e",
+DATABASE_CONFIGS: dict[Database, DatabaseConfig] = {
+    "postgresql": DatabaseConfig(
+        name="postgresql",
+        sqlalchemy_driver="postgresql+psycopg2",
+        image="postgres:13",
+        container_port=5432,
+        source_port=5440,
+        dest_port=5441,
+        environment=(
             "POSTGRES_USER=r2rml",
-            "-e",
             "POSTGRES_PASSWORD=r2rml",
-            "-e",
             "POSTGRES_DB=r2rml",
+        ),
+    ),
+    "mysql": DatabaseConfig(
+        name="mysql",
+        sqlalchemy_driver="mysql+pymysql",
+        image="mysql:9.7.1",
+        container_port=3306,
+        source_port=3307,
+        dest_port=3308,
+        environment=(
+            "MYSQL_ROOT_PASSWORD=r2rml",
+            "MYSQL_USER=r2rml",
+            "MYSQL_PASSWORD=r2rml",
+            "MYSQL_DATABASE=r2rml",
+        ),
+        server_options=("--sql-mode=ANSI_QUOTES",),
+    ),
+}
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--database",
+        choices=tuple(DATABASE_CONFIGS),
+        default="postgresql",
+        help="database used by conformance tests",
+    )
+
+
+@pytest.fixture(scope="session")
+def database(request: pytest.FixtureRequest) -> Database:
+    return cast(Database, request.config.getoption("database"))
+
+
+@pytest.fixture(scope="session")
+def database_config(database: Database) -> DatabaseConfig:
+    return DATABASE_CONFIGS[database]
+
+
+@pytest.fixture(scope="session")
+def database_urls(database_config: DatabaseConfig) -> tuple[str, str]:
+    return (
+        database_config.url(database_config.source_port),
+        database_config.url(database_config.dest_port),
+    )
+
+
+def _wait_for_database(
+    db_url: str, database: Database, port: int, timeout: int = 60
+) -> None:
+    engine = create_engine(db_url)
+    start = time.monotonic()
+    try:
+        while time.monotonic() - start < timeout:
+            try:
+                with engine.connect() as connection:
+                    connection.execute(text("SELECT 1"))
+                return
+            except OperationalError:
+                time.sleep(1)
+    finally:
+        engine.dispose()
+    raise RuntimeError(f"{database} on port {port} not ready after {timeout}s")
+
+
+def _start_database(
+    container_name: str,
+    port: int,
+    db_url: str,
+    database_config: DatabaseConfig,
+) -> None:
+    subprocess.run(["docker", "rm", "-f", container_name], capture_output=True)
+    command = ["docker", "run", "-d", "--name", container_name]
+    for variable in database_config.environment:
+        command.extend(["-e", variable])
+    command.extend(
+        [
             "-p",
-            f"{port}:5432",
-            "postgres:13",
-        ],
+            f"{port}:{database_config.container_port}",
+            database_config.image,
+            *database_config.server_options,
+        ]
+    )
+    subprocess.run(
+        command,
         check=True,
         capture_output=True,
     )
-    _wait_for_postgres(port)
+    _wait_for_database(db_url, database_config.name, port)
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _postgres_containers():
-    _start_postgres(SOURCE_CONTAINER, SOURCE_PORT)
-    _start_postgres(DEST_CONTAINER, DEST_PORT)
-    yield
-    subprocess.run(["docker", "rm", "-f", SOURCE_CONTAINER], capture_output=True)
-    subprocess.run(["docker", "rm", "-f", DEST_CONTAINER], capture_output=True)
+def _database_containers(
+    database_config: DatabaseConfig,
+    database_urls: tuple[str, str],
+) -> Iterator[None]:
+    source_container = f"kgi-test-r2rml-{database_config.name}-source"
+    dest_container = f"kgi-test-r2rml-{database_config.name}-dest"
+    source_url, dest_url = database_urls
+    try:
+        _start_database(
+            source_container,
+            database_config.source_port,
+            source_url,
+            database_config,
+        )
+        _start_database(
+            dest_container,
+            database_config.dest_port,
+            dest_url,
+            database_config,
+        )
+        yield
+    finally:
+        subprocess.run(["docker", "rm", "-f", source_container], capture_output=True)
+        subprocess.run(["docker", "rm", "-f", dest_container], capture_output=True)
 
 
 def drop_all_tables(db_url: str) -> None:
@@ -96,27 +194,7 @@ def load_sql_script(db_url: str, script_path: str) -> None:
 
 
 def get_db_content(db_url: str) -> dict[str, dict[str, list[str]]]:
-    engine = create_engine(db_url)
-    try:
-        with engine.connect() as conn:
-            tables_query = (
-                "SELECT tablename FROM pg_catalog.pg_tables "
-                "WHERE schemaname != 'pg_catalog' AND schemaname != 'information_schema';"
-            )
-            tables = pd.read_sql(tables_query, conn)
-            table_names = tables.values.flatten()
-            content: dict[str, dict[str, list[str]]] = {}
-            for table in table_names:
-                df = pd.read_sql(f'SELECT * FROM "{table}";', conn)
-                df = df.where(pd.notnull(df), None)
-                hex_encode_binary_columns(df)
-                content[table] = {
-                    "columns": df.columns.tolist(),
-                    "data": df.values.tolist(),
-                }
-            return content
-    finally:
-        engine.dispose()
+    return DatabaseConnection().get_database_content(db_url)
 
 
 def run_forward_mapping(
@@ -126,7 +204,10 @@ def run_forward_mapping(
     suite_id: str,
     tmp_dir: str,
 ) -> int:
-    jdbc_dsn, username, password = rmlmapper.sqlalchemy_to_jdbc(db_url)
+    database = get_database_config(make_url(db_url).get_backend_name())
+    jdbc_dsn, username, password = rmlmapper.sqlalchemy_to_jdbc(
+        db_url, database.jdbc_properties
+    )
     if suite_id == "rml":
         prepared = rmlmapper.prepare_rml_mapping(
             mapping_path,

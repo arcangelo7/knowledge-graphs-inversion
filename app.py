@@ -24,6 +24,12 @@ from flask import (
 from pyoxigraph import BlankNode, Quad, RdfFormat, Store
 
 import rmlmapper
+from conformance_config import (
+    DATABASE_CONFIGS,
+    RML_MYSQL_UNAVAILABLE,
+    get_database_config,
+    validate_database_suite,
+)
 from database_connection import DatabaseConnection
 from kgi import (
     MappingError,
@@ -116,7 +122,29 @@ def index():
     all_tests: dict[str, list[str]] = {}
     for suite_id, suite in SUITES.items():
         all_tests[suite_id] = suite.list_test_ids()
-    return render_template("index.jinja", suites=SUITES, all_tests=all_tests)
+    database_options = {
+        database_system: {
+            "label": database.label,
+            "suite_ids": list(database.suite_hosts),
+        }
+        for database_system, database in DATABASE_CONFIGS.items()
+    }
+    return render_template(
+        "index.jinja",
+        suites=SUITES,
+        all_tests=all_tests,
+        database_options=database_options,
+        rml_mysql_unavailable=RML_MYSQL_UNAVAILABLE,
+    )
+
+
+def _validate_request(database_system: str, suite_ids: list[str]) -> str | None:
+    try:
+        for suite_id in suite_ids:
+            validate_database_suite(database_system, suite_id)
+    except ValueError as error:
+        return str(error)
+    return None
 
 
 @app.route("/run_test", methods=["POST"])
@@ -124,6 +152,9 @@ def run_test():
     test_id = request.form["test_id"]
     database_system = request.form["database_system"]
     suite_id = request.form["suite_id"]
+    validation_error = _validate_request(database_system, [suite_id])
+    if validation_error:
+        return jsonify({"error": validation_error}), 400
     suite = get_suite(suite_id)
     result = run_single_test(test_id, database_system, suite)
 
@@ -182,6 +213,9 @@ def _run_suite_tests(
 def run_all_tests():
     database_system = request.args.get("database_system", "postgresql")
     suite_ids = request.args.get("suite_id", "r2rml").split(",")
+    validation_error = _validate_request(database_system, suite_ids)
+    if validation_error:
+        return jsonify({"error": validation_error}), 400
     use_parallel = len(suite_ids) > 1
 
     all_results: list[dict[str, object]] = []
@@ -249,6 +283,9 @@ def get_file_content():
     file_type = request.args.get("type")
     database_system = request.args.get("database_system", "postgresql")
     suite_id = request.args.get("suite_id", "r2rml")
+    validation_error = _validate_request(database_system, [suite_id])
+    if validation_error:
+        return jsonify({"error": validation_error}), 400
     suite = get_suite(suite_id)
 
     if file_type == "expected":
@@ -276,6 +313,7 @@ PASSED = "passed"
 def test_one(
     test_id: str, database_system: str, config: ConfigParser, suite: TestSuite
 ) -> list[list[str]]:
+    database_label = get_database_config(database_system).label
     try:
         metadata = suite.get_test_metadata(test_id)
         if metadata is None:
@@ -284,7 +322,7 @@ def test_one(
                 [
                     config["tester"]["tester_name"],
                     config["engine"]["engine_name"],
-                    "PostgreSQL",
+                    database_label,
                     test_id,
                     "error",
                 ],
@@ -297,7 +335,7 @@ def test_one(
             [
                 config["tester"]["tester_name"],
                 config["engine"]["engine_name"],
-                "PostgreSQL",
+                database_label,
                 test_id,
                 "error",
             ],
@@ -332,14 +370,18 @@ def _run_test(
             )
 
     mapping_path = suite.get_mapping_path(t_identifier)
-    jdbc_dsn = f"jdbc:postgresql://{suite.source_db_host}:5432/r2rml"
+    database = validate_database_suite(database_system, suite.suite_id)
+    source_db_url, _ = database.connection_urls(suite.suite_id)
+    jdbc_dsn, username, password = rmlmapper.sqlalchemy_to_jdbc(
+        source_db_url, database.jdbc_properties
+    )
     with tempfile.TemporaryDirectory() as tmp_dir:
         if suite.suite_id == "rml":
             prepared = rmlmapper.prepare_rml_mapping(
                 mapping_path,
                 jdbc_dsn,
-                "r2rml",
-                "r2rml",
+                username,
+                password,
                 tmp_dir,
             )
             exit_code = rmlmapper.run(prepared, output_file)
@@ -348,8 +390,8 @@ def _run_test(
                 mapping_path,
                 output_file,
                 dsn=jdbc_dsn,
-                username="r2rml",
-                password="r2rml",
+                username=username,
+                password=password,
             )
 
     output_file_has_data = (
@@ -392,7 +434,7 @@ def _run_test(
         [
             config["tester"]["tester_name"],
             config["engine"]["engine_name"],
-            "PostgreSQL",
+            database.label,
             t_identifier,
             result,
         ]
@@ -403,15 +445,15 @@ def _run_test(
 def run_single_test(
     test_id: str, database_system: str, suite: TestSuite
 ) -> dict[str, object]:
-    source_db = suite.source_db_host
-    dest_db = suite.dest_db_system
+    database = validate_database_suite(database_system, suite.suite_id)
+    source_db_url, dest_db_url = database.connection_urls(suite.suite_id)
 
     try:
-        db_connection.drop_all_tables(source_db)
-        db_connection.drop_all_tables(dest_db)
+        db_connection.drop_all_tables(source_db_url)
+        db_connection.drop_all_tables(dest_db_url)
 
         sql_path = suite.get_sql_script_path(test_id, database_system)
-        db_connection.load_sql_script(source_db, sql_path)
+        db_connection.load_sql_script(source_db_url, sql_path)
 
         mapping_file = suite.get_mapping_path(test_id)
         with open(mapping_file, "r", encoding="utf-8") as f:
@@ -423,10 +465,6 @@ def run_single_test(
 
         raw_results = test_one(test_id, database_system, config, suite)
 
-        dest_db_url = db_connection.get_connection_string(dest_db)
-        source_db_url = (
-            f"postgresql+psycopg2://r2rml:r2rml@{suite.source_db_host}:5432/r2rml"
-        )
         output_format = config["properties"].get("output_format", "ntriples")
         rdf_output_path = suite.get_output_file_path(output_format)
 
@@ -437,8 +475,8 @@ def run_single_test(
             os.path.isfile(rdf_output_path) and os.path.getsize(rdf_output_path) > 0
         )
         if not rdf_file_has_data:
-            source_content = db_connection.get_database_content(source_db)
-            dest_content = db_connection.get_database_content(dest_db)
+            source_content = db_connection.get_database_content(source_db_url)
+            dest_content = db_connection.get_database_content(dest_db_url)
             if not metadata["expected_output"]:
                 inversion_status = "forward_mapping_failed"
                 databases_equal = None
@@ -468,8 +506,8 @@ def run_single_test(
                     source_db_url=source_db_url,
                     dest_db_url=dest_db_url,
                 )
-                source_content = db_connection.get_database_content(source_db)
-                dest_content = db_connection.get_database_content(dest_db)
+                source_content = db_connection.get_database_content(source_db_url)
+                dest_content = db_connection.get_database_content(dest_db_url)
                 databases_equal, comparison_message, comparison_status = (
                     compare_databases(source_content, dest_content, mapping_content)
                 )
@@ -481,21 +519,21 @@ def run_single_test(
                 dest_content = None
             except NonInvertibleError as e:
                 inversion_status = "non_invertible"
-                source_content = db_connection.get_database_content(source_db)
-                dest_content = db_connection.get_database_content(dest_db)
+                source_content = db_connection.get_database_content(source_db_url)
+                dest_content = db_connection.get_database_content(dest_db_url)
                 databases_equal = None
                 comparison_message = f"Non-invertible mapping detected: {e}"
                 comparison_status = "non_invertible"
             except MappingError as e:
                 inversion_status = "forward_mapping_failed"
-                source_content = db_connection.get_database_content(source_db)
-                dest_content = db_connection.get_database_content(dest_db)
+                source_content = db_connection.get_database_content(source_db_url)
+                dest_content = db_connection.get_database_content(dest_db_url)
                 databases_equal = None
                 comparison_message = f"Forward mapping failed: {e}"
                 comparison_status = "forward_mapping_failed"
             except NoDataError:
-                source_content = db_connection.get_database_content(source_db)
-                dest_content = db_connection.get_database_content(dest_db)
+                source_content = db_connection.get_database_content(source_db_url)
+                dest_content = db_connection.get_database_content(dest_db_url)
                 forward_mapping_result = (
                     raw_results[1][4] if len(raw_results) > 1 else None
                 )
@@ -539,7 +577,12 @@ def run_single_test(
             error_test=not metadata["expected_output"],
         )
 
-        return {"status": "success", "test_id": test_id, "results": processed_results}
+        return {
+            "status": "success",
+            "test_id": test_id,
+            "database_system": database.label,
+            "results": processed_results,
+        }
     except Exception as e:
         error_traceback = traceback.format_exc()
         return {
@@ -588,6 +631,7 @@ def process_results(
 
         processed_row = {
             "testid": row[3],
+            "database_system": row[2],
             "purpose": purpose,
             "result": row[4],
             "expected_result": expected_content,
@@ -644,9 +688,10 @@ def read_file_content(file_path: str) -> str:
 
 def generate_test_report(
     results: list[dict[str, object]],
-    database_system: str | None,
+    database_system: str,
     suite: TestSuite,
 ) -> None:
+    database_label = get_database_config(database_system).label
     results_dir = os.path.join(PROJECT_ROOT, "test_results")
     os.makedirs(results_dir, exist_ok=True)
 
@@ -735,7 +780,7 @@ def generate_test_report(
             "timestamp": timestamp,
             "test_suite": suite.suite_id,
             "suite_name": suite.name,
-            "database_system": database_system,
+            "database_system": database_label,
             "total_tests": total_tests,
             "execution_date": datetime.now().isoformat(),
         },
@@ -771,7 +816,7 @@ def generate_test_report(
     with open(markdown_path, "w", encoding="utf-8") as f:
         f.write(f"# {suite.name} inversion test report\n\n")
         f.write(f"**Test suite:** {suite.name}\n")
-        f.write(f"**Database system:** {database_system}\n")
+        f.write(f"**Database system:** {database_label}\n")
         f.write(f"**Execution date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"**Total tests:** {total_tests}\n\n")
 

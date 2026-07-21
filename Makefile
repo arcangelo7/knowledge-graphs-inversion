@@ -10,6 +10,7 @@ KROWN_SUITES ?= all
 KROWN_SCENARIO ?=
 KROWN_MODE ?= roundtrip
 KROWN_INTERVAL ?= 0.1
+DATABASE ?= postgresql
 KROWN_RMLMAPPER_IMAGE = kgconstruct/rmlmapper:v8.1.0
 KROWN_I = $(if $(strip $(I)),$(I),5)
 GTFS_I = $(if $(strip $(I)),$(I),10)
@@ -46,4 +47,4 @@ benchmark-all: submodules
 	$(COMPOSE_GTFS) run --rm benchmark gtfs-benchmark --iterations $(GTFS_I) --scales $(S)
 
 test-conformance:
-	uv run pytest tests/test_conformance.py -v
+	uv run pytest tests/test_conformance.py -v --database=$(DATABASE)

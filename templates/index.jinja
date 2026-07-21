@@ -351,6 +351,14 @@ SPDX-License-Identifier: ISC
         <h1 class="mb-4">RML inversion test interface</h1>
         <div class="row">
             <div class="col-md-3">
+                <label for="databaseSelect" class="form-label">Database</label>
+                <select id="databaseSelect" class="form-select mb-3">
+                    {% for database_system, database in database_options.items() %}
+                    <option value="{{ database_system }}">{{ database.label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
                 <label for="suiteSelect" class="form-label">Test suite</label>
                 <select id="suiteSelect" class="form-select mb-3">
                     <option value="all">All suites</option>
@@ -358,8 +366,9 @@ SPDX-License-Identifier: ISC
                     <option value="{{ suite_id }}">{{ suite.name }}</option>
                     {% endfor %}
                 </select>
+                <div id="suiteAvailabilityMessage" class="form-text mb-3" role="status"></div>
             </div>
-            <div class="col-md-5">
+            <div class="col-md-6">
                 <label for="testSelect" class="form-label">Test case</label>
                 <select id="testSelect" class="form-select mb-3">
                     <option value="">Select a test</option>
@@ -474,6 +483,8 @@ SPDX-License-Identifier: ISC
         });
 
         const allTests = {{ all_tests | tojson }};
+        const databaseOptions = {{ database_options | tojson }};
+        const rmlMysqlUnavailable = {{ rml_mysql_unavailable | tojson }};
         const testResults = {};
         let testStats = {
             total: 0,
@@ -492,20 +503,45 @@ SPDX-License-Identifier: ISC
             return $('#suiteSelect').val();
         }
 
+        function getSelectedDatabaseSystem() {
+            return $('#databaseSelect').val();
+        }
+
+        function getAvailableSuiteIds() {
+            return databaseOptions[getSelectedDatabaseSystem()].suite_ids;
+        }
+
+        function updateSuiteAvailability() {
+            const availableSuiteIds = getAvailableSuiteIds();
+            $('#suiteSelect option').each(function() {
+                const suiteId = $(this).val();
+                $(this).prop('disabled', suiteId !== 'all' && !availableSuiteIds.includes(suiteId));
+            });
+
+            if (!availableSuiteIds.includes(getSelectedSuiteId()) && getSelectedSuiteId() !== 'all') {
+                $('#suiteSelect').val('all');
+            }
+
+            const message = availableSuiteIds.includes('rml') ? '' : rmlMysqlUnavailable;
+            $('#suiteAvailabilityMessage').text(message);
+        }
+
         function updateTestSelect() {
             const suiteId = getSelectedSuiteId();
+            const availableSuiteIds = getAvailableSuiteIds();
             const testSelect = $('#testSelect');
             testSelect.empty();
             testSelect.append('<option value="">Select a test</option>');
 
             if (suiteId === 'all') {
-                for (const [sid, tests] of Object.entries(allTests)) {
+                for (const sid of availableSuiteIds) {
+                    const tests = allTests[sid];
                     const suiteName = sid.toUpperCase();
                     tests.forEach(test => {
                         testSelect.append(`<option value="${test}" data-suite="${sid}">${test} [${suiteName}]</option>`);
                     });
                 }
-            } else if (allTests[suiteId]) {
+            } else if (availableSuiteIds.includes(suiteId) && allTests[suiteId]) {
                 allTests[suiteId].forEach(test => {
                     testSelect.append(`<option value="${test}" data-suite="${suiteId}">${test}</option>`);
                 });
@@ -565,7 +601,7 @@ SPDX-License-Identifier: ISC
         function runTest() {
             const testId = $('#testSelect').val();
             const suiteId = getSuiteForTest();
-            const dbSystem = 'postgresql';
+            const dbSystem = getSelectedDatabaseSystem();
             const resultsDiv = $('#results');
 
             resultsDiv.children().not('#stats-box').remove();
@@ -585,7 +621,8 @@ SPDX-License-Identifier: ISC
                 displayTestResults(response);
             })
             .fail(function(jqXHR, textStatus, errorThrown) {
-                resultsDiv.html('<p class="text-danger">Error: ' + textStatus + '</p>');
+                const message = jqXHR.responseJSON && jqXHR.responseJSON.error ? jqXHR.responseJSON.error : textStatus;
+                resultsDiv.html('<p class="text-danger">Error: ' + escapeHtml(message) + '</p>');
             })
             .always(function() {
                 $('#spinner').remove();
@@ -594,11 +631,12 @@ SPDX-License-Identifier: ISC
         }
 
         function runAllTests() {
-            const dbSystem = 'postgresql';
+            const dbSystem = getSelectedDatabaseSystem();
             const suiteId = getSelectedSuiteId();
-            const suiteParam = suiteId === 'all' ? Object.keys(allTests).join(',') : suiteId;
+            const selectedSuiteIds = suiteId === 'all' ? getAvailableSuiteIds() : [suiteId];
+            const suiteParam = selectedSuiteIds.join(',');
             const resultsDiv = $('#results');
-            const isDualPanel = suiteId === 'all' && Object.keys(allTests).length > 1;
+            const isDualPanel = selectedSuiteIds.length > 1;
 
             resultsDiv.children().not('#stats-box').remove();
             $('#stats-box').hide();
@@ -607,11 +645,11 @@ SPDX-License-Identifier: ISC
             resultsDiv.append(spinnerElement);
 
             if (isDualPanel) {
-                resetAllSuiteStats();
+                resetAllSuiteStats(selectedSuiteIds);
                 let wrapperHtml = '<div id="dual-panel-wrapper" style="display:none;">';
                 wrapperHtml += '<h2>Test results (All suites)</h2>';
                 wrapperHtml += '<div class="suite-panels">';
-                Object.keys(allTests).forEach(sid => {
+                selectedSuiteIds.forEach(sid => {
                     wrapperHtml += createSuitePanelHtml(sid);
                 });
                 wrapperHtml += '</div></div>';
@@ -633,7 +671,7 @@ SPDX-License-Identifier: ISC
                     spinnerElement.hide();
                     if (isDualPanel) {
                         $('#dual-panel-wrapper').show();
-                        Object.keys(allTests).forEach(sid => {
+                        selectedSuiteIds.forEach(sid => {
                             const cols = compactHeaders.length;
                             $(`#panel-body-${sid}`).append(`<tr class="loading-row"><td colspan="${cols}">Loading<span class="loading-dots"></span></td></tr>`);
                         });
@@ -651,7 +689,7 @@ SPDX-License-Identifier: ISC
                     }
                 }
 
-                const sid = testResult.suite_id || Object.keys(allTests)[0];
+                const sid = testResult.suite_id || selectedSuiteIds[0];
                 const hasData = testResult.results && testResult.results.data && testResult.results.data[0];
                 const isError = testResult.status === 'error';
 
@@ -695,7 +733,7 @@ SPDX-License-Identifier: ISC
                 eventSource.close();
                 resultsDiv.append('<p class="text-danger">Error: Failed to receive all test results</p>');
                 if (isDualPanel) {
-                    Object.keys(allTests).forEach(sid => $(`#panel-body-${sid} .loading-row`).remove());
+                    selectedSuiteIds.forEach(sid => $(`#panel-body-${sid} .loading-row`).remove());
                 } else {
                     removeLoadingRow();
                 }
@@ -710,7 +748,7 @@ SPDX-License-Identifier: ISC
                 eventSource.close();
                 enableButtons();
                 if (isDualPanel) {
-                    Object.keys(allTests).forEach(sid => $(`#panel-body-${sid} .loading-row`).remove());
+                    selectedSuiteIds.forEach(sid => $(`#panel-body-${sid} .loading-row`).remove());
                 } else {
                     removeLoadingRow();
                 }
@@ -828,9 +866,9 @@ SPDX-License-Identifier: ISC
             return { cls: 'failed', text: 'Failure', category: 'failed', tooltip: '' };
         }
 
-        function resetAllSuiteStats() {
+        function resetAllSuiteStats(suiteIds) {
             suiteStats = {};
-            Object.keys(allTests).forEach(sid => {
+            suiteIds.forEach(sid => {
                 suiteStats[sid] = { total: 0, passed: 0, failed: 0, notSupported: 0, partiallyInverted: 0, nonInvertible: 0, forwardMappingFailed: 0 };
             });
         }
@@ -1017,9 +1055,15 @@ SPDX-License-Identifier: ISC
         }
 
         $(document).ready(function() {
+            updateSuiteAvailability();
             updateTestSelect();
             updateHeaderRow();
             initializeTooltips();
+
+            $('#databaseSelect').change(function() {
+                updateSuiteAvailability();
+                updateTestSelect();
+            });
 
             $('#suiteSelect').change(function() {
                 updateTestSelect();

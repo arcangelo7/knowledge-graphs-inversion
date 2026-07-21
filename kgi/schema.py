@@ -10,6 +10,7 @@ from typing import Optional, cast
 import pandas as pd
 import sqlalchemy
 from sqlalchemy import inspect
+from sqlalchemy.dialects.mysql import TINYINT, VARBINARY
 
 
 @dataclass
@@ -86,6 +87,8 @@ class DatabaseSchemaRetriever:
 
     def _sql_to_python_type(self, sql_type: object) -> type[object]:
         """Convert SQLAlchemy type to Python type."""
+        if isinstance(sql_type, TINYINT) and sql_type.display_width == 1:
+            return bool
         if isinstance(
             sql_type,
             (sqlalchemy.Integer, sqlalchemy.BigInteger, sqlalchemy.SmallInteger),
@@ -103,7 +106,7 @@ class DatabaseSchemaRetriever:
             return pd.Timestamp
         elif isinstance(sql_type, sqlalchemy.String):
             return str
-        elif isinstance(sql_type, sqlalchemy.LargeBinary):
+        elif isinstance(sql_type, (sqlalchemy.LargeBinary, VARBINARY)):
             return str
         raise TypeError(f"Unsupported SQL type: {sql_type}")
 

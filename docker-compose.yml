@@ -24,6 +24,10 @@ services:
         condition: service_healthy
       dest_postgresql_rml:
         condition: service_healthy
+      mysql_r2rml:
+        condition: service_healthy
+      dest_mysql_r2rml:
+        condition: service_healthy
     restart: unless-stopped
 
   postgresql_r2rml:
@@ -96,6 +100,42 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
+
+  mysql_r2rml:
+    image: mysql:9.7.1
+    container_name: kgi-mysql-r2rml
+    command: --sql-mode=ANSI_QUOTES
+    environment:
+      MYSQL_ROOT_PASSWORD: r2rml
+      MYSQL_USER: r2rml
+      MYSQL_PASSWORD: r2rml
+      MYSQL_DATABASE: r2rml
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  dest_mysql_r2rml:
+    image: mysql:9.7.1
+    container_name: kgi-dest-mysql-r2rml
+    command: --sql-mode=ANSI_QUOTES
+    environment:
+      MYSQL_ROOT_PASSWORD: r2rml
+      MYSQL_USER: r2rml
+      MYSQL_PASSWORD: r2rml
+      MYSQL_DATABASE: r2rml
+    ports:
+      - "3308:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
 volumes:
   app-venv:

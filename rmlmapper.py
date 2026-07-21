@@ -7,19 +7,26 @@ import re
 import subprocess
 import sys
 import urllib.request
-from urllib.parse import urlparse
+from urllib.parse import urlencode
+
+from sqlalchemy.engine import make_url
 
 RMLMAPPER_VERSION = "8.1.0"
 JAR_FILENAME = "rmlmapper-8.1.0-r380-all.jar"
 JAR_URL = f"https://github.com/RMLio/rmlmapper-java/releases/download/v{RMLMAPPER_VERSION}/{JAR_FILENAME}"
 
 
-def sqlalchemy_to_jdbc(url: str) -> tuple[str, str, str]:
-    parsed = urlparse(url.split("+")[0] + url[url.index("://") :])
-    host = parsed.hostname
+def sqlalchemy_to_jdbc(
+    url: str, connection_properties: tuple[tuple[str, str], ...] = ()
+) -> tuple[str, str, str]:
+    parsed = make_url(url)
+    dialect = parsed.get_backend_name()
+    host = parsed.host
     port = parsed.port
-    database = parsed.path.lstrip("/")
-    jdbc_dsn = f"jdbc:postgresql://{host}:{port}/{database}"
+    database = parsed.database
+    jdbc_dsn = f"jdbc:{dialect}://{host}:{port}/{database}"
+    if connection_properties:
+        jdbc_dsn = f"{jdbc_dsn}?{urlencode(connection_properties)}"
     username = str(parsed.username)
     password = str(parsed.password)
     return jdbc_dsn, username, password

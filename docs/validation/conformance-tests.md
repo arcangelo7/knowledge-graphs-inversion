@@ -35,45 +35,73 @@ Use the root Makefile entry point. Docker must be running, and Java 21 or newer 
 make test-conformance
 ```
 
+`DATABASE` accepts `postgresql` and `mysql`. PostgreSQL is the default and runs all 121 cases:
+
+```bash
+make test-conformance DATABASE=postgresql
+```
+
+MySQL 9.7.1 runs the 62 R2RML cases:
+
+```bash
+make test-conformance DATABASE=mysql
+```
+
+The 59 RML cases are skipped with MySQL because the RML Core RDB test suite does not yet provide MySQL variants.
+
+To pass the conformance tests, MySQL is configured to interpret double-quoted table and column names as identifiers (`ANSI_QUOTES`). Moreover, the JDBC connection is configured to preserve trailing spaces when reading fixed-width `CHAR` values (`padCharsWithSpace=true`); this padding is required by R2RMLTC0018a.
+
+### Dashboard
+
+Start the dashboard and its PostgreSQL and MySQL databases with Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+Open [http://localhost:5000](http://localhost:5000), then choose the database and test suite.
+
 ## W3C R2RML test suite
 
 The [R2RML test suite](https://www.w3.org/2001/sw/rdb2rdf/test-cases/) contains 62 test cases.
 
-| Outcome | Count |
-|---|---|
-| Fully inverted | 22 |
-| Partially inverted | 14 |
-| Non-invertible | 4 |
-| Not supported | 13 |
-| Forward mapping failed | 9 |
+| Outcome | PostgreSQL | MySQL |
+|---|---:|---:|
+| Fully inverted | 22 | 22 |
+| Partially inverted | 14 | 14 |
+| Non-invertible | 4 | 4 |
+| Not supported | 13 | 14 |
+| Forward mapping failed | 9 | 8 |
 
 ### Partially inverted (14)
 
 Each case recovers the information preserved in the RDF graph, but the forward mapping discards part of the source. Sub-categories are counted per tag: a test may contribute to more than one sub-category when multiple forms of loss co-occur, so the counts below sum to more than the number of tests.
 
-| Sub-category | Count |
-|---|---|
-| Columns lost (unmapped columns) | 10 |
-| Rows lost (NULL in subject template) | 1 |
-| Multiplicity lost (duplicate rows collapsed) | 4 |
-| Tables lost (unmapped tables) | 1 |
+| Sub-category | PostgreSQL | MySQL |
+|---|---:|---:|
+| Columns lost (unmapped columns) | 10 | 10 |
+| Rows lost (NULL in subject template) | 1 | 1 |
+| Multiplicity lost (duplicate rows collapsed) | 4 | 4 |
+| Tables lost (unmapped tables) | 1 | 1 |
 
 One test (R2RMLTC0012a) is tagged with three sub-categories simultaneously: the `Lives` table has no triples map, `IOUs` has non-unique subject identifiers that collapse duplicates, and the column coverage check also flags unmapped columns.
 
 ### Non-invertible (4)
 
-| Reason | Count |
-|---|---|
-| Constant-only mapping | 1 |
-| IRI column term type (ambiguous base IRI resolution) | 3 |
+| Reason | PostgreSQL | MySQL |
+|---|---:|---:|
+| Constant-only mapping | 1 | 1 |
+| IRI column term type (ambiguous base IRI resolution) | 3 | 3 |
 
-### Not supported (13)
+### Not supported
 
 These test cases use SQL queries as logical sources (`rr:sqlQuery`), which the algorithm does not handle.
 
-### Forward mapping failed (9)
+The difference concerns R2RMLTC0002h, which stops at different stages of the test pipeline. With PostgreSQL, forward mapping produces no RDF, so inversion cannot be attempted. With MySQL, RDF is produced and inversion proceeds until it encounters the unsupported SQL query. The databases therefore provide the same inversion support; only the stage at which this test stops changes.
 
-In nine test cases the forward mapping produces no RDF output, so inversion cannot be attempted.
+### Forward mapping failed
+
+The forward mapping produces no RDF output for nine PostgreSQL cases and eight MySQL cases, so inversion cannot be attempted. R2RMLTC0002h accounts for the difference.
 
 ## RML test suite
 
