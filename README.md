@@ -58,13 +58,7 @@ Benchmark targets initialize submodules, run the needed Docker Compose services,
 
 ```bash
 make benchmark-krown
-make benchmark-krown KROWN_MODE=forward KROWN_SUITES=mappings
-make benchmark-krown I=3 KROWN_MODE=backward KROWN_SCENARIO=namedgraph_0SM-NG_5POM-NG_1TM_1POM_True
-make benchmark-gtfs I=10 S=1,5,10
-make benchmark-all I=5 S=1,5,10 KROWN_SUITES=mappings
 ```
-
-The KROWN runner supports `forward`, `backward`, and `roundtrip` measurement modes. The forward phase uses KROWN's `Executor`; the local inversion phase uses KROWN's `Collector` and `Stats`. It defaults to five iterations in `roundtrip` mode and requires an odd `I` of at least 3. `KROWN_SUITES` accepts `raw`, `mappings`, `named-graphs`, and `joins`; omitting it selects all 58 scenarios. Set `KROWN_SCENARIO` to an exact generated scenario name to run only that case.
 
 The KROWN collector runs on the Linux host and reports system-wide CPU, memory, disk, and network activity. Avoid unrelated workloads while collecting results.
 

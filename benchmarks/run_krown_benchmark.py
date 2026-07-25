@@ -54,6 +54,17 @@ from benchmarks.krown_stats import (
     calculate_timing_statistics,
 )
 from benchmarks.krown_validator import KrownValidator
+from benchmarks.souffle_inversion import (
+    SUPPORT_REPORT,
+    SouffleInversionError,
+    assemble_rows,
+    attach_database_to_krown_network,
+    load_relation,
+    parse_source_relations,
+    resource_config_directory,
+    reverse_souffle_resource,
+    write_rdf_facts,
+)
 from kgi.core import reconstruct
 from kgi.exceptions import NonInvertibleError
 
@@ -70,7 +81,10 @@ RMLMAPPER_TIMEOUT_SECONDS = 3 * 60 * 60
 KROWN_COOLDOWN_SECONDS = 15
 SOURCE_SCHEMA = "source"
 DESTINATION_SCHEMA = "destination"
+BENCHMARK_DATABASE_CONTAINER = "kgi-benchmark-postgresql"
+BENCHMARK_DATABASE_INTERNAL_PORT = 5432
 BenchmarkMode = Literal["forward", "backward", "roundtrip"]
+InversionEngine = Literal["kgi", "souffle"]
 
 EXIT_TIMEOUT = 20
 EXIT_OUT_OF_MEMORY = 21
@@ -437,6 +451,52 @@ class ScenarioOperations:
             source_db_url=self.database.sqlalchemy_url(SOURCE_SCHEMA),
         )
 
+    def backward_souffle(self, rdf_file: Path) -> None:
+        """Invert with the Datalog approach of the KROWN_Extended submodule.
+
+        The reverse Datalog program consumes the RDF graph as tab separated facts
+        and derives one tuple per recovered triple, so the tuples are assembled
+        into rows before they reach the destination schema.
+        """
+        project_root = Path(__file__).resolve().parent.parent
+        write_rdf_facts(rdf_file, self.shared_dir)
+        resource = reverse_souffle_resource(project_root)(
+            str(self.scenario_path / "data"),
+            str(resource_config_directory(project_root)),
+            str(self.scenario_path),
+            False,
+        )
+        attach_database_to_krown_network(BENCHMARK_DATABASE_CONTAINER)
+        source_database = f"{self.database.database}?currentSchema={SOURCE_SCHEMA}"
+        if not resource.execute_mapping(
+            self.mapping_file.name,
+            "out.nt",
+            "ntriples",
+            support_report=SUPPORT_REPORT,
+            rdb_username=self.database.username,
+            rdb_password=self.database.password,
+            rdb_host=BENCHMARK_DATABASE_CONTAINER,
+            rdb_port=BENCHMARK_DATABASE_INTERNAL_PORT,
+            rdb_name=source_database,
+            rdb_type="PostgreSQL",
+        ):
+            raise SouffleInversionError(
+                f"ReverseSouffle failed for {self.scenario.generated_name}"
+            )
+
+        engine = create_engine(self.database.sqlalchemy_url())
+        try:
+            for relation in parse_source_relations(self.shared_dir):
+                load_relation(
+                    engine,
+                    relation,
+                    assemble_rows(self.shared_dir, relation),
+                    SOURCE_SCHEMA,
+                    DESTINATION_SCHEMA,
+                )
+        finally:
+            engine.dispose()
+
 
 def _scenario_by_name(project_root: Path, name: str) -> KrownScenario:
     matching = [
@@ -509,6 +569,7 @@ class KrownBenchmarkRunner:
         sample_interval: float,
         suites: tuple[str, ...],
         scenario_name: str | None,
+        engine: InversionEngine = "kgi",
         cleanup_tables: bool = True,
     ):
         self.project_root = Path(__file__).resolve().parent.parent
@@ -517,6 +578,7 @@ class KrownBenchmarkRunner:
         self.scenarios_root = benchmark_dir / "scenarios"
         self.results_dir = benchmark_dir / "results"
         self.mode = mode
+        self.engine = engine
         self.iterations = iterations
         self.sample_interval = sample_interval
         self.cleanup_tables = cleanup_tables
@@ -529,7 +591,9 @@ class KrownBenchmarkRunner:
         )
         self.compose_file = self.project_root / "docker-compose.benchmark.yml"
         self.timestamp = int(time.time())
-        self.session_dir = self.results_dir / f"krown_{self.timestamp}_{self.mode}"
+        self.session_dir = (
+            self.results_dir / f"krown_{self.timestamp}_{self.mode}_{self.engine}"
+        )
         self.resource_summaries: dict[str, list[dict[str, int | float | str]]] = {}
 
         catalog = load_scenarios(self.project_root)
@@ -1015,13 +1079,16 @@ class KrownBenchmarkRunner:
         scenario_failure: ScenarioExecutionFailure | None = None
         non_invertible_error: NonInvertibleError | None = None
         try:
-            self.run_stage(
-                "backward",
-                "inversion",
-                scenario,
-                operations.scenario_path,
-                forward.rdf_file,
-            )
+            if self.engine == "souffle":
+                operations.backward_souffle(forward.rdf_file)
+            else:
+                self.run_stage(
+                    "backward",
+                    "inversion",
+                    scenario,
+                    operations.scenario_path,
+                    forward.rdf_file,
+                )
         except ScenarioExecutionFailure as error:
             if error.kind not in ("timeout", "out_of_memory"):
                 raise
@@ -1141,6 +1208,7 @@ class KrownBenchmarkRunner:
             "framework": "KROWN Executor with local inversion",
             "environment": "KROWN Executor and Docker Compose",
             "mode": self.mode,
+            "inversion_engine": self.engine,
             "measurement_scope": "system",
             "sample_interval_seconds": self.sample_interval,
             "sparql_engine": SPARQL_ENGINE,
@@ -1153,7 +1221,11 @@ class KrownBenchmarkRunner:
                 "krown_commit": self.krown_commit,
                 "rmlmapper_version": RMLMAPPER_VERSION,
                 "forward_executor": "KROWN Executor",
-                "backward_executor": "local inversion adapter",
+                "backward_executor": (
+                    "KROWN_Extended ReverseSouffle"
+                    if self.engine == "souffle"
+                    else "local inversion adapter"
+                ),
                 "metrics_implementation": "KROWN Collector and Stats",
                 "forward_postgresql_version": "14.5",
                 "backward_postgresql_version": "13",
@@ -1518,6 +1590,12 @@ def _benchmark_main(arguments: list[str]) -> int:
         help="Comma-separated suites: raw,mappings,named-graphs,joins",
     )
     parser.add_argument("--scenario")
+    parser.add_argument(
+        "--engine",
+        choices=("kgi", "souffle"),
+        default="kgi",
+        help="Inversion engine: kgi (SPARQL) or souffle (Datalog)",
+    )
     args = parser.parse_args(arguments)
     try:
         runner = KrownBenchmarkRunner(
@@ -1526,6 +1604,7 @@ def _benchmark_main(arguments: list[str]) -> int:
             sample_interval=args.interval,
             suites=args.suites,
             scenario_name=args.scenario,
+            engine=args.engine,
         )
     except ValueError as error:
         parser.error(str(error))

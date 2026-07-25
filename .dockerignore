@@ -45,6 +45,7 @@ benchmarks/*/scenarios/
 test_logs/
 
 KROWN/
+KROWN_Extended/
 gtfs-bench/
 r2rml_test_cases/
 rml_io_registry/
