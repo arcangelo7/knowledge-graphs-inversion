@@ -865,20 +865,29 @@ class KrownBenchmarkRunner:
         original_rdf: Path,
         iteration: int,
     ) -> dict[str, object]:
-        roundtrip_rdf = operations.shared_dir / f"roundtrip_{iteration}.nq"
-        self.run_stage(
-            "forward-destination",
-            "roundtrip_mapping",
-            scenario,
-            operations.scenario_path,
-            roundtrip_rdf,
+        expected_tables = [table.name for table in operations.source_tables]
+        # The mapping reads columns the reconstruction could not recover, so it cannot
+        # rebuild the graph and running it would only fail on the absent columns
+        missing_mapped_columns = self.validator.missing_mapped_columns(
+            expected_tables, operations.mapping_file
         )
+        roundtrip_rdf = None
+        if not missing_mapped_columns:
+            roundtrip_rdf = operations.shared_dir / f"roundtrip_{iteration}.nq"
+            self.run_stage(
+                "forward-destination",
+                "roundtrip_mapping",
+                scenario,
+                operations.scenario_path,
+                roundtrip_rdf,
+            )
         validation = self.validator.validate_inversion(
-            expected_tables=[table.name for table in operations.source_tables],
+            expected_tables=expected_tables,
             scenario_name=scenario.generated_name,
             expected_outcome=scenario.expected_outcome,
             original_rdf=original_rdf,
             roundtrip_rdf=roundtrip_rdf,
+            missing_mapped_columns=missing_mapped_columns,
         )
         if validation["validation_passed"] is not True:
             raise ValueError(f"Unexpected inversion result: {validation}")
@@ -1188,16 +1197,10 @@ class KrownBenchmarkRunner:
             for series in self.series
         ]
 
-    def save_results(
+    def _common_payload(
         self,
         scenario_runs: dict[str, list[dict[str, object]]],
-    ) -> tuple[Path, Path, dict[str, object]]:
-        raw_file = (
-            self.session_dir / f"krown_benchmark_results_raw_{self.timestamp}.json"
-        )
-        stats_file = (
-            self.session_dir / f"krown_benchmark_results_stats_{self.timestamp}.json"
-        )
+    ) -> dict[str, object]:
         failed_scenarios = sum(
             any(run["status"] == "failed" for run in runs)
             for runs in scenario_runs.values()
@@ -1240,8 +1243,44 @@ class KrownBenchmarkRunner:
                 ],
             },
         }
+        return common
+
+    def _write_raw_results(
+        self,
+        scenario_runs: dict[str, list[dict[str, object]]],
+        raw_file: Path,
+    ) -> dict[str, object]:
+        common = self._common_payload(scenario_runs)
         raw_data = {**common, "scenarios": scenario_runs}
         raw_file.write_text(json.dumps(raw_data, indent=2) + "\n", encoding="utf-8")
+        return common
+
+    def save_partial_results(
+        self,
+        scenario_runs: dict[str, list[dict[str, object]]],
+    ) -> Path:
+        """Record the runs measured before an aborted benchmark stopped.
+
+        Statistics are omitted: aggregation assumes every iteration completed.
+        """
+        partial_file = (
+            self.session_dir / f"krown_benchmark_results_partial_{self.timestamp}.json"
+        )
+        measured = {name: runs for name, runs in scenario_runs.items() if runs}
+        self._write_raw_results(measured, partial_file)
+        return partial_file
+
+    def save_results(
+        self,
+        scenario_runs: dict[str, list[dict[str, object]]],
+    ) -> tuple[Path, Path, dict[str, object]]:
+        raw_file = (
+            self.session_dir / f"krown_benchmark_results_raw_{self.timestamp}.json"
+        )
+        stats_file = (
+            self.session_dir / f"krown_benchmark_results_stats_{self.timestamp}.json"
+        )
+        common = self._write_raw_results(scenario_runs, raw_file)
 
         aggregated_scenarios = {}
         for scenario in self.scenarios:
@@ -1402,11 +1441,12 @@ class KrownBenchmarkRunner:
             f"({', '.join(self.suites)}; {self.mode}; system metrics)"
         )
         failed_scenarios: list[str] = []
+        scenario_runs: dict[str, list[dict[str, object]]] = {
+            scenario.generated_name: [] for scenario in self.scenarios
+        }
+        results_saved = False
         try:
             self.prepare_output_directories()
-            scenario_runs: dict[str, list[dict[str, object]]] = {
-                scenario.generated_name: [] for scenario in self.scenarios
-            }
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
@@ -1517,6 +1557,7 @@ class KrownBenchmarkRunner:
                         self._generate_backward_statistics(scenario)
 
             raw_file, stats_file, stats_data = self.save_results(scenario_runs)
+            results_saved = True
             console.print(f"Raw results saved to {raw_file}")
             console.print(f"Statistics saved to {stats_file}")
             self.print_aggregated_summary(stats_data)
@@ -1530,6 +1571,9 @@ class KrownBenchmarkRunner:
             console.print("Benchmark completed with the expected outcomes")
             return 0
         finally:
+            if not results_saved and any(scenario_runs.values()):
+                partial_file = self.save_partial_results(scenario_runs)
+                console.print(f"Partial results saved to {partial_file}")
             self.cleanup()
 
 

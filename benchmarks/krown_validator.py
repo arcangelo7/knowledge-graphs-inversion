@@ -4,15 +4,109 @@
 
 import filecmp
 import os
+import re
 import subprocess
 from pathlib import Path
 
+from pyoxigraph import BlankNode, Literal, NamedNode, RdfFormat, Store
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
+
+from kgi.constants import (
+    REF_TEMPLATE_REGEX,
+    RML_CHILD,
+    RML_ITERATOR,
+    RML_LOGICAL_SOURCE,
+    RML_OLD_LOGICAL_SOURCE,
+    RML_OLD_REFERENCE,
+    RML_PARENT_TRIPLES_MAP,
+    RML_REFERENCE_NODE,
+    RML_TEMPLATE_NODE,
+    RR_CHILD,
+    RR_COLUMN,
+    RR_LOGICAL_TABLE,
+    RR_PARENT_TRIPLES_MAP,
+    RR_TABLE_NAME,
+    RR_TEMPLATE,
+)
+from kgi.utils import normalize_sql_identifier
+
+LOGICAL_SOURCE_PREDICATES = (
+    RR_LOGICAL_TABLE,
+    RML_LOGICAL_SOURCE,
+    RML_OLD_LOGICAL_SOURCE,
+)
+TABLE_NAME_PREDICATES = (RR_TABLE_NAME, RML_ITERATOR)
+TEMPLATE_PREDICATES = (RR_TEMPLATE, RML_TEMPLATE_NODE)
+COLUMN_PREDICATES = (
+    RR_COLUMN,
+    RML_REFERENCE_NODE,
+    RML_OLD_REFERENCE,
+    RR_CHILD,
+    RML_CHILD,
+)
+# A referencing object map reads columns of the parent triples map's own table
+PARENT_TRIPLES_MAP_PREDICATES = (
+    RR_PARENT_TRIPLES_MAP,
+    NamedNode(RML_PARENT_TRIPLES_MAP),
+)
 
 
 def _quoted(identifier: str) -> str:
     return '"' + identifier.replace('"', '""') + '"'
+
+
+def _table_name(store: Store, logical_source: NamedNode | BlankNode) -> str | None:
+    for predicate in TABLE_NAME_PREDICATES:
+        for quad in store.quads_for_pattern(logical_source, predicate, None):
+            if isinstance(quad.object, Literal):
+                return normalize_sql_identifier(quad.object.value)
+    return None
+
+
+def _term_map_columns(store: Store, triples_map: NamedNode | BlankNode) -> set[str]:
+    """Source columns the term maps of one triples map read."""
+    columns: set[str] = set()
+    visited: set[NamedNode | BlankNode] = {triples_map}
+    pending = [triples_map]
+    while pending:
+        node = pending.pop()
+        for quad in store.quads_for_pattern(node, None, None):
+            if quad.predicate in PARENT_TRIPLES_MAP_PREDICATES:
+                continue
+            value = quad.object
+            if isinstance(value, Literal):
+                if quad.predicate in TEMPLATE_PREDICATES:
+                    columns.update(
+                        normalize_sql_identifier(reference)
+                        for reference in re.findall(REF_TEMPLATE_REGEX, value.value)
+                    )
+                elif quad.predicate in COLUMN_PREDICATES:
+                    columns.add(normalize_sql_identifier(value.value))
+            elif isinstance(value, (NamedNode, BlankNode)) and value not in visited:
+                visited.add(value)
+                pending.append(value)
+    return columns
+
+
+def _mapped_columns(mapping_file: Path) -> dict[str, set[str]]:
+    """Source columns the mapping reads, per logical table."""
+    store = Store()
+    store.load(path=str(mapping_file), format=RdfFormat.TURTLE)
+    columns: dict[str, set[str]] = {}
+    for predicate in LOGICAL_SOURCE_PREDICATES:
+        for quad in store.quads_for_pattern(None, predicate, None):
+            if not isinstance(quad.object, (NamedNode, BlankNode)) or not isinstance(
+                quad.subject, (NamedNode, BlankNode)
+            ):
+                continue
+            table_name = _table_name(store, quad.object)
+            if table_name is None:
+                continue
+            columns.setdefault(table_name, set()).update(
+                _term_map_columns(store, quad.subject)
+            )
+    return columns
 
 
 class KrownValidator:
@@ -35,6 +129,20 @@ class KrownValidator:
             column["name"]
             for column in inspect(self.engine).get_columns(table_name, schema=schema)
         ]
+
+    def _populated_columns(self, schema: str, table_name: str) -> list[str]:
+        """Columns the reconstruction filled with at least one value.
+
+        An engine that recreates the whole source schema pads unrecovered cells with
+        NULL. Such a column carries nothing the graph provided, so it counts as not
+        reconstructed, exactly like a column the engine leaves out.
+        """
+        columns = self._columns(schema, table_name)
+        counts = ", ".join(f"COUNT({_quoted(column)})" for column in columns)
+        query = text(f"SELECT {counts} FROM {self._qualified(schema, table_name)}")
+        with self.engine.connect() as connection:
+            populated = connection.execute(query).one()
+        return [column for column, count in zip(columns, populated) if count]
 
     def _row_count(self, schema: str, table_name: str) -> int:
         with self.engine.connect() as connection:
@@ -70,7 +178,9 @@ class KrownValidator:
 
     def _table_result(self, table_name: str) -> dict[str, object]:
         original_columns = self._columns(self.source_schema, table_name)
-        reconstructed_columns = self._columns(self.destination_schema, table_name)
+        reconstructed_columns = self._populated_columns(
+            self.destination_schema, table_name
+        )
         original_rows = self._row_count(self.source_schema, table_name)
         reconstructed_rows = self._row_count(self.destination_schema, table_name)
         extra_columns = [
@@ -181,13 +291,40 @@ class KrownValidator:
             original_sorted.unlink(missing_ok=True)
             roundtrip_sorted.unlink(missing_ok=True)
 
+    def missing_mapped_columns(
+        self, expected_tables: list[str], mapping_file: Path
+    ) -> dict[str, list[str]]:
+        """Columns the mapping reads that the reconstruction does not provide.
+
+        The mapping cannot rebuild the graph from tables that lack them, so the round
+        trip is not attempted and the reconstruction is reported as `AMBIGUOUS`.
+        """
+        columns = _mapped_columns(mapping_file)
+        destination_tables = set(
+            inspect(self.engine).get_table_names(schema=self.destination_schema)
+        )
+        missing: dict[str, list[str]] = {}
+        for table_name in expected_tables:
+            if table_name not in columns:
+                continue
+            reconstructed = (
+                set(self._populated_columns(self.destination_schema, table_name))
+                if table_name in destination_tables
+                else set()
+            )
+            absent = sorted(columns[table_name] - reconstructed)
+            if absent:
+                missing[table_name] = absent
+        return missing
+
     def validate_inversion(
         self,
         expected_tables: list[str],
         scenario_name: str,
         expected_outcome: str,
         original_rdf: Path,
-        roundtrip_rdf: Path,
+        roundtrip_rdf: Path | None,
+        missing_mapped_columns: dict[str, list[str]],
     ) -> dict[str, object]:
         inspector = inspect(self.engine)
         source_tables = set(inspector.get_table_names(schema=self.source_schema))
@@ -204,28 +341,33 @@ class KrownValidator:
             for table_name in expected_tables:
                 table_results[table_name] = self._table_result(table_name)
 
-        rdf_round_trip = self._rdf_datasets_equal(original_rdf, roundtrip_rdf)
-        exact = (
-            table_names_match
-            and rdf_round_trip
-            and all(bool(result["exact"]) for result in table_results.values())
+        if missing_mapped_columns:
+            rdf_round_trip = None
+        else:
+            assert roundtrip_rdf is not None
+            rdf_round_trip = self._rdf_datasets_equal(original_rdf, roundtrip_rdf)
+
+        sound = table_names_match and all(
+            bool(result["partial_valid"]) for result in table_results.values()
         )
-        partial_valid = (
-            table_names_match
-            and rdf_round_trip
-            and all(bool(result["partial_valid"]) for result in table_results.values())
+        exact = (
+            sound
+            and rdf_round_trip is True
+            and all(bool(result["exact"]) for result in table_results.values())
         )
         if exact:
             outcome = "FULL"
-        elif partial_valid:
+        elif sound and rdf_round_trip is True:
             outcome = "PARTIAL"
+        elif sound and rdf_round_trip is None:
+            outcome = "AMBIGUOUS"
         else:
             outcome = "MISMATCH"
 
         errors = []
         if not table_names_match:
             errors.append("tables")
-        if not rdf_round_trip:
+        if rdf_round_trip is False:
             errors.append("rdf_round_trip")
         for table_name, result in table_results.items():
             checks = result["checks"]
@@ -246,6 +388,7 @@ class KrownValidator:
                 "tables": table_names_match,
                 "rdf_round_trip": rdf_round_trip,
             },
+            "missing_mapped_columns": missing_mapped_columns,
             "source_tables": sorted(source_tables),
             "destination_tables": sorted(destination_tables),
             "tables": table_results,

@@ -8,7 +8,6 @@ import os
 import pathlib
 import re
 import tempfile
-from collections.abc import Iterator
 from typing import cast
 from urllib.parse import quote_plus
 
@@ -166,23 +165,41 @@ def _is_column_only_iri(map_type: object, map_value: object, term_type: object) 
     return False
 
 
-def _check_for_column_iri_term_maps(mappings: pd.DataFrame) -> bool:
-    for _, rule in mappings.iterrows():
-        if _is_column_only_iri(
+def _term_map_references(rule: pd.Series) -> tuple[set[str], set[str]]:
+    """Split the rule's references into the opaque ones and the exposed ones.
+
+    A term map that builds an IRI out of a bare column reference names a column
+    without exposing it, because the base IRI it resolves against cannot be
+    separated from the column value.
+    """
+    opaque: set[str] = set()
+    exposed: set[str] = set()
+    for references, map_type, map_value, term_type in (
+        (
+            rule["subject_references"],
             rule["subject_map_type"],
             rule["subject_map_value"],
             rule["subject_termtype"],
-        ):
-            return True
-        if _is_column_only_iri(
-            rule["object_map_type"], rule["object_map_value"], rule["object_termtype"]
-        ):
-            return True
-        if _is_column_only_iri(
-            rule["predicate_map_type"], rule["predicate_map_value"], RML_IRI
-        ):
-            return True
-    return False
+        ),
+        (
+            rule["predicate_references"],
+            rule["predicate_map_type"],
+            rule["predicate_map_value"],
+            RML_IRI,
+        ),
+        (
+            rule["object_references"],
+            rule["object_map_type"],
+            rule["object_map_value"],
+            rule["object_termtype"],
+        ),
+    ):
+        target = (
+            opaque if _is_column_only_iri(map_type, map_value, term_type) else exposed
+        )
+        target.update(_reference_set(references))
+    exposed.update(_reference_set(rule["graph_references"]))
+    return opaque, exposed
 
 
 def _check_for_constant_only_mappings(mappings: pd.DataFrame) -> bool:
@@ -223,42 +240,115 @@ def _subject_signature(subject_rules: pd.DataFrame) -> frozenset[tuple[str, ...]
     return frozenset(signature)
 
 
-def _check_for_ambiguous_subject_templates(mappings: pd.DataFrame) -> None:
+def _all_references(rule: pd.Series) -> set[str]:
+    return (
+        _reference_set(rule["subject_references"])
+        | _reference_set(rule["predicate_references"])
+        | _reference_set(rule["object_references"])
+        | _reference_set(rule["graph_references"])
+    )
+
+
+def _ambiguous_subject_references(source_rules: pd.DataFrame) -> set[str]:
+    """Columns reachable only through subject templates that cannot be told apart.
+
+    Subject maps sharing a template skeleton and a predicate-object signature build
+    interchangeable IRIs, so a value found in one of them could belong to any of the
+    columns those templates reference.
+    """
+    observed_refs: set[str] = set()
+    for _, rule in source_rules.iterrows():
+        observed_refs.update(_reference_set(rule["predicate_references"]))
+        observed_refs.update(_reference_set(rule["object_references"]))
+        observed_refs.update(_reference_set(rule["graph_references"]))
+
+    buckets: dict[tuple[str, frozenset[tuple[str, ...]]], list[set[str]]] = {}
+    for _, subject_rules in source_rules.groupby("subject_map_value", dropna=False):
+        first_rule = subject_rules.iloc[0]
+        if first_rule["subject_map_type"] != RML_TEMPLATE:
+            continue
+        subject_refs = _reference_set(first_rule["subject_references"])
+        key = (
+            _signature_value(first_rule["subject_references_template"]),
+            _subject_signature(subject_rules),
+        )
+        buckets.setdefault(key, []).append(subject_refs - observed_refs)
+
+    ambiguous: set[str] = set()
+    for subject_only_refs in buckets.values():
+        if len(subject_only_refs) > 1:
+            ambiguous.update(*subject_only_refs)
+    return ambiguous
+
+
+def _ambiguous_graph_references(source_rules: pd.DataFrame) -> set[str]:
+    """Columns reachable only through graph maps that cannot be told apart.
+
+    Graph maps sharing a template skeleton produce graph IRIs that cannot be traced
+    back to the term map that built them.
+    """
+    observable_refs: set[str] = set()
+    for _, rule in source_rules.iterrows():
+        observable_refs.update(_reference_set(rule["subject_references"]))
+        observable_refs.update(_reference_set(rule["predicate_references"]))
+        observable_refs.update(_reference_set(rule["object_references"]))
+
+    skeletons: dict[str, dict[str, set[str]]] = {}
+    for _, rule in source_rules.iterrows():
+        graph_refs = _reference_set(rule["graph_references"])
+        if not graph_refs:
+            continue
+        skeleton = _signature_value(rule["graph_references_template"])
+        graph_maps = skeletons.setdefault(skeleton, {})
+        graph_maps.setdefault(_signature_value(rule["graph_map_value"]), set()).update(
+            graph_refs
+        )
+
+    ambiguous: set[str] = set()
+    for graph_maps in skeletons.values():
+        if len(graph_maps) > 1:
+            ambiguous.update(set().union(*graph_maps.values()) - observable_refs)
+    return ambiguous
+
+
+def _unrecoverable_references(mappings: pd.DataFrame) -> dict[str, frozenset[str]]:
+    """Columns whose values the graph carries but cannot attribute to them.
+
+    They are left out of the reconstruction: the remaining columns are recovered as
+    usual, the same way columns the mapping never uses are simply absent.
+    """
+    unrecoverable: dict[str, frozenset[str]] = {}
     for table_name, source_rules in mappings.groupby("logical_source_value"):
-        observed_refs: set[str] = set()
+        ambiguous = _ambiguous_subject_references(source_rules)
+        ambiguous.update(_ambiguous_graph_references(source_rules))
+
+        opaque: set[str] = set()
+        exposed: set[str] = set()
         for _, rule in source_rules.iterrows():
-            observed_refs.update(_reference_set(rule["predicate_references"]))
-            observed_refs.update(_reference_set(rule["object_references"]))
-            observed_refs.update(_reference_set(rule["graph_references"]))
+            rule_opaque, rule_exposed = _term_map_references(rule)
+            opaque.update(rule_opaque)
+            exposed.update(rule_exposed)
 
-        subject_infos: list[tuple[str, frozenset[tuple[str, ...]], set[str]]] = []
-        for _, subject_rules in source_rules.groupby("subject_map_value", dropna=False):
-            first_rule = subject_rules.iloc[0]
-            if first_rule["subject_map_type"] != RML_TEMPLATE:
-                continue
-            subject_refs = _reference_set(first_rule["subject_references"])
-            subject_infos.append(
-                (
-                    _signature_value(first_rule["subject_references_template"]),
-                    _subject_signature(subject_rules),
-                    subject_refs - observed_refs,
-                )
+        unrecoverable[str(table_name)] = frozenset(
+            ambiguous | (opaque - (exposed - ambiguous))
+        )
+    return unrecoverable
+
+
+def _check_for_unrecoverable_tables(
+    mappings: pd.DataFrame, unrecoverable: dict[str, frozenset[str]]
+) -> None:
+    for table_name, source_rules in mappings.groupby("logical_source_value"):
+        references: set[str] = set()
+        for _, rule in source_rules.iterrows():
+            references.update(_all_references(rule))
+        excluded = unrecoverable[str(table_name)]
+        if not references - excluded:
+            columns = ", ".join(sorted(references))
+            raise NonInvertibleError(
+                f"No column of table '{table_name}' can be recovered from the "
+                f"graph: {columns}"
             )
-
-        buckets: dict[tuple[str, frozenset[tuple[str, ...]]], list[set[str]]] = {}
-        for template, signature, subject_only_refs in subject_infos:
-            buckets.setdefault((template, signature), []).append(subject_only_refs)
-
-        for subject_only_refs in buckets.values():
-            if len(subject_only_refs) <= 1:
-                continue
-            ambiguous_refs = sorted(set().union(*subject_only_refs))
-            if ambiguous_refs:
-                columns = ", ".join(ambiguous_refs)
-                raise NonInvertibleError(
-                    f"Subject templates for table '{table_name}' contain columns "
-                    f"that are not observable outside indistinguishable subjects: {columns}"
-                )
 
 
 def _build_morph_config(
@@ -332,13 +422,9 @@ def reconstruct(
                 "Mappings contain only constants (no column references) - original data cannot be recovered"
             )
 
-        if _check_for_column_iri_term_maps(mappings):
-            raise NonInvertibleError(
-                "Term map uses rr:column with IRI term type - base IRI resolution makes inversion ambiguous"
-            )
-
         insert_columns(mappings)
-        _check_for_ambiguous_subject_templates(mappings)
+        unrecoverable = _unrecoverable_references(mappings)
+        _check_for_unrecoverable_tables(mappings, unrecoverable)
 
         if source_db_url is not None:
             schema_retrievers["DataSource1"] = DatabaseSchemaRetriever(source_db_url)
@@ -351,16 +437,32 @@ def reconstruct(
             source_section = str(source_rules.iloc[0]["source_name"])
             template = _generate_template(source_rules, dest_db_url)
 
+            excluded_references = unrecoverable[table_name]
+            if excluded_references:
+                columns = ", ".join(sorted(excluded_references))
+                logger.warning(
+                    f"Columns of table '{table_name}' left out of the reconstruction "
+                    f"because the graph does not expose them unambiguously: {columns}"
+                )
+
             source_data_chunks, _ = retrieve_data(
-                mappings, source_rules, endpoint, decode_columns=True
+                mappings,
+                source_rules,
+                endpoint,
+                excluded_references,
+                decode_columns=True,
             )
+            if source_data_chunks is None:
+                raise NonInvertibleError(
+                    f"No column of table '{table_name}' can be recovered from the graph"
+                )
             schema_retriever = schema_retrievers[source_section]
             table_schema = schema_retriever.get_table_schema(table_name)
             source_data_chunks = (
                 apply_schema_ordering(
                     apply_schema_types(chunk, table_schema), table_schema
                 )
-                for chunk in cast(Iterator[pd.DataFrame], source_data_chunks)
+                for chunk in source_data_chunks
             )
 
             template.fill_data(source_data_chunks, table_name)

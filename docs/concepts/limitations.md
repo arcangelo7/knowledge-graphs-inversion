@@ -29,9 +29,17 @@ If a mapping selects only some columns from a table, the unmapped columns have n
 
 When a subject template maps multiple source rows to the same IRI, those rows collapse into a single RDF subject. Duplicate triples merge, and the original row count is lost. For example, a table with two identical rows `(Bob, Smith, 30)` mapped through a template `http://example.com/{fname};{lname}` produces one subject with one set of triples.
 
-## Indistinguishable subject templates
+## Unassignable columns
 
-When several triples maps for the same source table use compatible subject templates and emit the same predicate-object patterns, a subject-only column may not be recoverable. For example, if one triples map uses `http://example.com/{p4}` as its subject and no triple elsewhere exposes `p4`, the graph may contain several subjects with the same observable literals and no RDF-level discriminator that identifies which one represents `p4`.
+Some mappings put a column's values in the graph without recording which column they came from. The values are there, but nothing says where they belong, so the algorithm leaves those columns out of the reconstruction instead of filling them with values that could be wrong. The other columns are reconstructed as usual. When a table has no column left, inversion stops with `NonInvertibleError`.
+
+Three mapping patterns produce such columns.
+
+*Indistinguishable subject templates.* When several triples maps for the same source table use compatible subject templates and emit the same predicate-object patterns, a subject-only column is unassignable. For example, if one triples map uses `http://example.com/{p4}` as its subject and no triple elsewhere exposes `p4`, the graph contains several subjects with the same observable literals and no RDF-level discriminator that identifies which one represents `p4`.
+
+*Indistinguishable graph maps.* Graph maps that build named-graph IRIs from the same pattern, such as `http://example.org/graph{p2}` and `http://example.org/graph{p3}`, are interchangeable: a graph IRI does not say which graph map produced it. Columns that only those graph maps expose are unassignable. Graph maps with distinguishable patterns are inverted normally, one `GRAPH` clause each.
+
+*IRI term types over a bare column.* `rr:column` with `rr:termType rr:IRI`, or a template that is a single placeholder, turns the column value into an IRI resolved against a base IRI. The base cannot be separated from the value afterwards. The column is recovered anyway when another term map exposes it, for example an object map over the same column.
 
 ## NULL values in subject templates
 

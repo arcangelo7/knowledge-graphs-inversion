@@ -172,16 +172,19 @@ def load_relation(
 ) -> None:
     """Materialize the assembled rows in the destination schema.
 
-    The destination table mirrors the source definition so that the validator can
-    compare the two schemas column by column.
+    The destination table mirrors the source columns and types so that the validator
+    can compare the two schemas column by column. It is created from a query rather
+    than with LIKE because LIKE also copies NOT NULL, which the primary key of the
+    source table carries: the engine leaves unrecovered cells empty, so any table
+    whose mapping does not read that key could not be loaded.
     """
     qualified = f"{_quoted(destination_schema)}.{_quoted(relation.table)}"
     with engine.begin() as connection:
         connection.execute(text(f"DROP TABLE IF EXISTS {qualified} CASCADE"))
         connection.execute(
             text(
-                f"CREATE TABLE {qualified} (LIKE "
-                f"{_quoted(source_schema)}.{_quoted(relation.table)})"
+                f"CREATE TABLE {qualified} AS SELECT * FROM "
+                f"{_quoted(source_schema)}.{_quoted(relation.table)} WITH NO DATA"
             )
         )
 

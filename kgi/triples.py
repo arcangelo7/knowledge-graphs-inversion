@@ -41,7 +41,6 @@ def extract_from_iri_template(
     template_value: str,
     references_template: str,
     references: list[str],
-    rule: pd.Series,
     codex: Codex,
     id_generator: IdGenerator,
     slice_label: str,
@@ -110,8 +109,22 @@ def extract_from_iri_template(
 class QueryTriple(Triple):
     """Represents a query triple with subject, predicate, and object."""
 
-    def __init__(self, rule: pd.Series):
+    def __init__(
+        self, rule: pd.Series, excluded_references: frozenset[str] = frozenset()
+    ):
         self.rule = rule
+        self.excluded_references = excluded_references
+
+    def _variable_key(self, map_type: object, map_value: str, role: str) -> str:
+        """Codex key for a term variable.
+
+        A reference term map names a column, so the key is suffixed when that column
+        is left out of the reconstruction, to keep the term variable distinct from
+        the variable that would hold the column value.
+        """
+        if map_type == RML_REFERENCE and map_value in self.excluded_references:
+            return f"{map_value}_{role}"
+        return map_value
 
     @property
     def references(self) -> set[str]:
@@ -194,7 +207,13 @@ class QueryTriple(Triple):
     def _generate_pattern(
         self, id_generator: IdGenerator, codex: Codex, all_mapping_rules: pd.DataFrame
     ) -> str | None:
-        subject_reference = codex.get_id(str(self.rule["subject_map_value"]))
+        subject_reference = codex.get_id(
+            self._variable_key(
+                self.rule["subject_map_type"],
+                str(self.rule["subject_map_value"]),
+                "subject",
+            )
+        )
         predicate = f"<{self.rule['predicate_map_value']}>"
         object_map_value = str(self.rule["object_map_value"])
         object_map_type = str(self.rule["object_map_type"])
@@ -213,7 +232,9 @@ class QueryTriple(Triple):
             return f"?{subject_reference} {predicate} {object_map_value} ."
 
         if object_map_type == RML_REFERENCE:
-            object_identifier = object_map_value
+            object_identifier = self._variable_key(
+                RML_REFERENCE, object_map_value, "object"
+            )
             object_reference, already_bound = codex.get_id_and_is_bound(
                 object_identifier
             )
@@ -360,9 +381,6 @@ class QueryTriple(Triple):
 class SubjectTriple(QueryTriple):
     """Represents a subject triple for template extraction."""
 
-    def __init__(self, rule: pd.Series):
-        super().__init__(rule)
-
     @property
     def template_extracted_references(self) -> set[str]:
         """Subject references extracted from templates (not column references)."""
@@ -417,7 +435,6 @@ class SubjectTriple(QueryTriple):
             template_value=str(self.rule["subject_map_value"]),
             references_template=str(self.rule["subject_references_template"]),
             references=list(self.rule["subject_references"]),
-            rule=self.rule,
             codex=codex,
             id_generator=id_generator,
             slice_label="subject",

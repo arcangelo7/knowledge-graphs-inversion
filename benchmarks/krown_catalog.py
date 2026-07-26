@@ -41,13 +41,35 @@ class KrownScenario:
         return GENERATOR_SUITES[self.generator]
 
     @property
+    def hidden_graph_columns(self) -> int:
+        """Columns the named graphs expose but no predicate-object map does.
+
+        Dynamic graph maps of a KROWN NamedGraph scenario share a template that
+        differs only in the referenced column, so their graph IRIs carry values
+        without saying which column produced them. Any such column is therefore
+        unrecoverable, and the scenario cannot round-trip.
+        """
+        if cast(bool, self.parameters["static"]):
+            return 0
+        graph_columns = max(
+            cast(int, self.parameters["number_of_ng_s"]),
+            cast(int, self.parameters["number_of_ng_pom"]),
+        )
+        return max(graph_columns - cast(int, self.parameters["number_of_poms"]), 0)
+
+    @property
     def expected_outcome(self) -> str:
         if self.generator == "RawData":
             return "FULL"
+        # Scenarios whose surplus triples maps or graph maps carry columns the graph
+        # cannot attribute: those columns are left out, so the mapping can no longer
+        # rebuild the graph from the reconstruction
         if self.generator == "Mappings" and cast(
             int, self.parameters["number_of_tms"]
         ) > cast(int, self.parameters["number_of_poms"]):
-            return "NON_INVERTIBLE"
+            return "AMBIGUOUS"
+        if self.generator == "NamedGraph" and self.hidden_graph_columns > 0:
+            return "AMBIGUOUS"
         return "PARTIAL"
 
     @property

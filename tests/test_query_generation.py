@@ -2,18 +2,22 @@
 #
 # SPDX-License-Identifier: ISC
 
+from pathlib import Path
+
 import pandas as pd
 import pytest
 from pyoxigraph import Literal, NamedNode, Quad, QuerySolutions, Store
 
 from kgi.constants import (
     RML_BLANK_NODE,
+    RML_CONSTANT,
     RML_IRI,
     RML_LITERAL,
     RML_REFERENCE,
     RML_TEMPLATE,
 )
-from kgi.core import _check_for_ambiguous_subject_templates
+from kgi.core import _check_for_unrecoverable_tables, _unrecoverable_references
+from kgi.endpoints import LocalSparqlGraphStore
 from kgi.exceptions import NonInvertibleError
 from kgi.query import Query, _select_query_source_rules, _solutions_to_dataframes
 from kgi.schema import ColumnInfo, infer_type_from_value_with_schema
@@ -133,16 +137,217 @@ def test_blank_node_template_strips_internal_label_prefix_before_extraction() ->
     )
 
 
-def test_ambiguous_subject_only_columns_are_non_invertible() -> None:
-    mappings = pd.DataFrame([_rule("p1", "p1"), _rule("p2", "p1")])
+def test_indistinguishable_subject_templates_lose_their_exclusive_columns(
+    tmp_path,
+) -> None:
+    mappings = pd.DataFrame([_rule(f"p{index}", "p1") for index in (1, 2, 3)])
     insert_columns(mappings)
 
+    assert _unrecoverable_references(mappings) == {"data": frozenset({"p2", "p3"})}
+    generated = _query_for(mappings)
+    assert generated == (
+        "SELECT DISTINCT ?p1 WHERE {?p1_uri <http://example.com/p1> ?p1 .\n"
+        "FILTER(REGEX(STR(?p1_uri), 'http://example.com/table/([^/]*)'))\n"
+        "BIND(STRAFTER(STR(?p1_uri), 'http://example.com/table/') as ?p1_uri_slice)\n"
+        "FILTER(!BOUND(?p1) || STR(?p1) = STR(?p1_uri_slice) "
+        "|| ENCODE_FOR_URI(STR(?p1)) = STR(?p1_uri_slice) "
+        "|| STR(?p1) = ENCODE_FOR_URI(STR(?p1_uri_slice)))}"
+    )
+
+    rdf_file = tmp_path / "data.nq"
+    rdf_file.write_text(
+        "\n".join(
+            f'<http://example.com/table/{value}> <http://example.com/p1> "{row[0]}" .'
+            for row in (("a", "b", "c"), ("x", "y", "z"))
+            for value in row
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    reconstructed = _reconstruct(rdf_file, mappings)[["p1"]]
+    assert sorted(reconstructed.values.tolist()) == [["a"], ["x"]]
+
+
+def test_indistinguishable_graph_templates_lose_their_exclusive_columns() -> None:
+    mappings = pd.DataFrame(
+        [
+            _graph_rule("p1", f"http://example.org/graph{{{graph_column}}}")
+            for graph_column in ["p1", "p2", "p3", "p4", "p5"]
+        ]
+    )
+    insert_columns(mappings)
+
+    assert _unrecoverable_references(mappings) == {
+        "data": frozenset({"p2", "p3", "p4", "p5"})
+    }
+    select_variables, body = _graph_query(mappings)
+
+    assert select_variables == ["?p1"]
+    assert body == (
+        "?p1_uri <http://example.com/p1> ?p1 .\n"
+        "FILTER(REGEX(STR(?p1_uri), 'http://example.com/table/([^/]*)'))\n"
+        "BIND(STRAFTER(STR(?p1_uri), 'http://example.com/table/') as ?p1_uri_slice)\n"
+        "FILTER(!BOUND(?p1) || STR(?p1) = STR(?p1_uri_slice) "
+        "|| ENCODE_FOR_URI(STR(?p1)) = STR(?p1_uri_slice) "
+        "|| STR(?p1) = ENCODE_FOR_URI(STR(?p1_uri_slice)))}"
+    )
+
+
+def test_column_iri_term_map_loses_only_the_column_no_other_map_exposes() -> None:
+    opaque_rule = _rule("p1", "p1")
+    opaque_rule["subject_map_type"] = RML_REFERENCE
+    opaque_rule["subject_map_value"] = "p2"
+    mappings = pd.DataFrame([opaque_rule])
+    insert_columns(mappings)
+
+    assert _unrecoverable_references(mappings) == {"data": frozenset({"p2"})}
+    select_variables, body = _graph_query(mappings)
+
+    assert select_variables == ["?p1"]
+    assert body == "?p2_subject <http://example.com/p1> ?p1 .}"
+
+
+def test_table_without_recoverable_columns_is_non_invertible() -> None:
+    opaque_rule = _rule("p1", "p1")
+    opaque_rule["subject_map_type"] = RML_REFERENCE
+    opaque_rule["subject_map_value"] = "p1"
+    opaque_rule["object_map_type"] = RML_CONSTANT
+    opaque_rule["object_map_value"] = "http://example.com/Person"
+    opaque_rule["object_termtype"] = RML_IRI
+    mappings = pd.DataFrame([opaque_rule])
+    insert_columns(mappings)
+    unrecoverable = _unrecoverable_references(mappings)
+
+    assert unrecoverable == {"data": frozenset({"p1"})}
     with pytest.raises(NonInvertibleError) as exc_info:
-        _check_for_ambiguous_subject_templates(mappings)
+        _check_for_unrecoverable_tables(mappings, unrecoverable)
 
     assert str(exc_info.value) == (
-        "Subject templates for table 'data' contain columns that are not "
-        "observable outside indistinguishable subjects: p2"
+        "No column of table 'data' can be recovered from the graph: p1"
+    )
+
+
+def test_graph_columns_exposed_by_object_maps_are_read_from_the_default_graph() -> None:
+    mappings = pd.DataFrame(
+        [
+            _graph_rule(object_column, f"http://example.org/graph{{{graph_column}}}")
+            for object_column in ["p1", "p2", "p3"]
+            for graph_column in ["p1", "p2", "p3"]
+        ]
+    )
+    insert_columns(mappings)
+
+    select_variables, body = _graph_query(mappings)
+
+    assert select_variables == ["?p1", "?p2", "?p3"]
+    assert body == (
+        "?p1_uri <http://example.com/p1> ?p1 .\n"
+        "?p1_uri <http://example.com/p2> ?p2 .\n"
+        "?p1_uri <http://example.com/p3> ?p3 .\n"
+        "FILTER(REGEX(STR(?p1_uri), 'http://example.com/table/([^/]*)'))\n"
+        "BIND(STRAFTER(STR(?p1_uri), 'http://example.com/table/') as ?p1_uri_slice)\n"
+        "FILTER(!BOUND(?p1) || STR(?p1) = STR(?p1_uri_slice) "
+        "|| ENCODE_FOR_URI(STR(?p1)) = STR(?p1_uri_slice) "
+        "|| STR(?p1) = ENCODE_FOR_URI(STR(?p1_uri_slice)))}"
+    )
+
+
+def test_graph_template_column_is_extracted_from_the_named_graph() -> None:
+    mappings = pd.DataFrame([_graph_rule("p1", "http://example.org/graph{p2}")])
+    insert_columns(mappings)
+
+    select_variables, body = _graph_query(mappings)
+
+    assert select_variables == ["?p1", "?p2"]
+    assert body == (
+        "?p1_uri <http://example.com/p1> ?p1 .\n"
+        "FILTER(REGEX(STR(?p1_uri), 'http://example.com/table/([^/]*)'))\n"
+        "BIND(STRAFTER(STR(?p1_uri), 'http://example.com/table/') as ?p1_uri_slice)\n"
+        "FILTER(!BOUND(?p1) || STR(?p1) = STR(?p1_uri_slice) "
+        "|| ENCODE_FOR_URI(STR(?p1)) = STR(?p1_uri_slice) "
+        "|| STR(?p1) = ENCODE_FOR_URI(STR(?p1_uri_slice)))\n"
+        "GRAPH ?graph_p2_uri {\n"
+        "?p1_uri <http://example.com/p1> ?p1 .\n"
+        "}\n"
+        "FILTER(REGEX(STR(?graph_p2_uri), 'http://example.org/graph([^/]*)'))\n"
+        "BIND(STRAFTER(STR(?graph_p2_uri), 'http://example.org/graph') as ?p2)}"
+    )
+
+
+def test_reference_graph_map_binds_the_graph_iri_to_its_own_variable() -> None:
+    rule = _graph_rule("p1", "p2")
+    rule["graph_map_type"] = RML_REFERENCE
+    mappings = pd.DataFrame([rule])
+    insert_columns(mappings)
+
+    select_variables, body = _graph_query(mappings)
+
+    assert select_variables == ["?p1", "?p2"]
+    assert body == (
+        "?p1_uri <http://example.com/p1> ?p1 .\n"
+        "FILTER(REGEX(STR(?p1_uri), 'http://example.com/table/([^/]*)'))\n"
+        "BIND(STRAFTER(STR(?p1_uri), 'http://example.com/table/') as ?p1_uri_slice)\n"
+        "FILTER(!BOUND(?p1) || STR(?p1) = STR(?p1_uri_slice) "
+        "|| ENCODE_FOR_URI(STR(?p1)) = STR(?p1_uri_slice) "
+        "|| STR(?p1) = ENCODE_FOR_URI(STR(?p1_uri_slice)))\n"
+        "GRAPH ?p2_graph {\n"
+        "?p1_uri <http://example.com/p1> ?p1 .\n"
+        "}\n"
+        "BIND(STR(?p2_graph) AS ?p2)}"
+    )
+
+
+def test_several_graph_maps_are_inverted_on_separate_graph_variables(
+    tmp_path,
+) -> None:
+    mappings = pd.DataFrame(
+        [
+            _graph_rule("p1", "http://example.org/a/{p2}"),
+            _graph_rule("p1", "http://example.org/b/{p3}"),
+        ]
+    )
+    insert_columns(mappings)
+
+    rdf_file = tmp_path / "data.nq"
+    rdf_file.write_text(
+        "\n".join(
+            f'<http://example.com/table/{p1}> <http://example.com/p1> "{p1}" '
+            f"<http://example.org/{prefix}/{value}> ."
+            for p1, p2, p3 in (("a", "b", "c"), ("x", "y", "z"))
+            for prefix, value in (("a", p2), ("b", p3))
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    reconstructed = _reconstruct(rdf_file, mappings)[["p1", "p2", "p3"]]
+    assert sorted(reconstructed.values.tolist()) == [
+        ["a", "b", "c"],
+        ["x", "y", "z"],
+    ]
+
+
+def test_graph_maps_sharing_a_pattern_lose_their_exclusive_column() -> None:
+    mappings = pd.DataFrame(
+        [
+            _graph_rule("p1", "http://example.org/graph{p1}"),
+            _graph_rule("p1", "http://example.org/graph{p2}"),
+        ]
+    )
+    insert_columns(mappings)
+
+    assert _unrecoverable_references(mappings) == {"data": frozenset({"p2"})}
+    select_variables, body = _graph_query(mappings)
+
+    assert select_variables == ["?p1"]
+    assert body == (
+        "?p1_uri <http://example.com/p1> ?p1 .\n"
+        "FILTER(REGEX(STR(?p1_uri), 'http://example.com/table/([^/]*)'))\n"
+        "BIND(STRAFTER(STR(?p1_uri), 'http://example.com/table/') as ?p1_uri_slice)\n"
+        "FILTER(!BOUND(?p1) || STR(?p1) = STR(?p1_uri_slice) "
+        "|| ENCODE_FOR_URI(STR(?p1)) = STR(?p1_uri_slice) "
+        "|| STR(?p1) = ENCODE_FOR_URI(STR(?p1_uri_slice)))}"
     )
 
 
@@ -240,3 +445,52 @@ def _predicate_rule(subject_column: str, object_column: str) -> dict[str, object
     rule = _rule(subject_column, object_column)
     rule["predicate_map_value"] = f"http://example.com/{object_column}"
     return rule
+
+
+def _graph_rule(object_column: str, graph_template: str) -> dict[str, object]:
+    rule = _predicate_rule("p1", object_column)
+    rule["graph_map_type"] = RML_TEMPLATE
+    rule["graph_map_value"] = graph_template
+    return rule
+
+
+def _build_query(mappings: pd.DataFrame) -> tuple[Query, str]:
+    """Build the inversion query the way `retrieve_data` does."""
+    excluded = _unrecoverable_references(mappings)["data"]
+    query_source_rules = _select_query_source_rules(mappings, excluded)
+    triples = [QueryTriple(rule, excluded) for _, rule in query_source_rules.iterrows()]
+    triples.extend(
+        SubjectTriple(subject_rules.iloc[0], excluded)
+        for _, subject_rules in query_source_rules.groupby(
+            "subject_map_value", dropna=False
+        )
+    )
+    query = Query(triples, excluded)
+    generated = query.generate(mappings)
+    assert generated is not None
+    return query, generated
+
+
+def _query_for(mappings: pd.DataFrame) -> str:
+    return _build_query(mappings)[1]
+
+
+def _reconstruct(rdf_file: Path, mappings: pd.DataFrame) -> pd.DataFrame:
+    """Run the generated query against a store holding the given RDF."""
+    query, generated = _build_query(mappings)
+    endpoint = LocalSparqlGraphStore(str(rdf_file))
+    try:
+        chunks = [
+            query.decode_dataframe(chunk)
+            for chunk in _solutions_to_dataframes(endpoint.query(generated))
+        ]
+    finally:
+        endpoint.close()
+    return pd.concat(chunks)
+
+
+def _graph_query(mappings: pd.DataFrame) -> tuple[list[str], str]:
+    """Generate the query and split its unordered SELECT list from its body."""
+    select_part, _, body = _query_for(mappings).partition(" WHERE {")
+    variables = select_part.removeprefix("SELECT").removeprefix(" DISTINCT").split()
+    return sorted(variables), body

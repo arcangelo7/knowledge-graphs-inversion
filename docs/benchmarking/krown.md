@@ -37,13 +37,17 @@ Duplicate and empty-value scenarios, including `JoinsDuplicate`, are excluded: R
 
 The other suites omit source information. A recoverable scenario passes with `PARTIAL` only when its reconstructed columns are ordered subsets of the originals, contain no values absent from the corresponding source rows, and reproduce the same RDF dataset when mapped again.
 
-Mapping scenarios with more TMs than POMs must return `NON_INVERTIBLE` because identical subject templates cannot be assigned unambiguously to source columns. The `1 TM + 5 POM` scenario remains recoverable and must return `PARTIAL`. For rejected scenarios, inversion time is the time to rejection and throughput is omitted.
+A column that the reconstruction leaves entirely NULL counts as not reconstructed, the same as a column the engine omits. Engines differ in how they report what they could not recover, and this keeps the comparison on what was recovered. KROWN source tables hold a value in every cell, so an entirely NULL column always means the engine recovered nothing for it.
+
+Mapping scenarios with more TMs than POMs and dynamic named-graph scenarios whose graph maps reference a column no predicate-object map exposes return `AMBIGUOUS`. Their surplus subject templates and graph maps differ only in the referenced column, so the graph carries those values without saying which column produced them. Such columns are left out of the reconstruction, which stays sound but can no longer rebuild the graph: the round trip is not attempted, since the mapping reads columns the reconstruction does not provide. Everything else the scenario exposes is reconstructed and measured, so `AMBIGUOUS` scenarios report throughput like any other.
+
+`NON_INVERTIBLE` is reserved for mappings that leave no recoverable column at all. No KROWN scenario is expected to return it.
 
 Reported timings exclude validation. Results include source size, RDF statement counts, mapping structure, throughput, validation losses, summary statistics, and 95% confidence intervals.
 
 ## Inversion engines
 
-`KROWN_ENGINE` selects which implementation performs the backward phase. Both receive the same mapping and the same RDF graph produced by the forward phase, write into the same destination schema, and are checked by the same validator.
+`KROWN_ENGINE` selects which implementation performs the backward phase. Both receive the same mapping and the same RDF graph produced by the forward phase, write into the same destination schema, and are checked by the same validator. They differ in how they report a column they could not recover: `kgi` leaves it out of the destination table, `souffle` recreates the source schema and leaves the column NULL. The validator treats the two the same way, as described under [validation](#validation).
 
 | Engine | Implementation |
 | --- | --- |
