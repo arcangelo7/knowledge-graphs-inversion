@@ -55,13 +55,13 @@ from benchmarks.krown_stats import (
 )
 from benchmarks.krown_validator import KrownValidator
 from benchmarks.souffle_inversion import (
+    SUPPORT_REPORT,
     SouffleInversionError,
     assemble_rows,
     attach_database_to_krown_network,
     load_relation,
     parse_source_relations,
     resource_config_directory,
-    reverse_command,
     reverse_souffle_resource,
     write_rdf_facts,
 )
@@ -467,15 +467,18 @@ class ScenarioOperations:
             False,
         )
         attach_database_to_krown_network(BENCHMARK_DATABASE_CONTAINER)
-        command = reverse_command(
+        if not resource.execute_mapping(
             self.mapping_file.name,
+            "out.nt",
+            "ntriples",
+            support_report=SUPPORT_REPORT,
             rdb_username=self.database.username,
             rdb_password=self.database.password,
             rdb_host=BENCHMARK_DATABASE_CONTAINER,
             rdb_port=BENCHMARK_DATABASE_INTERNAL_PORT,
             rdb_name=f"{self.database.database}?currentSchema={SOURCE_SCHEMA}",
-        )
-        if not resource.execute([command]):
+            rdb_type="PostgreSQL",
+        ):
             raise SouffleInversionError(
                 f"ReverseSouffle failed for {self.scenario.generated_name}"
             )
