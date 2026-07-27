@@ -54,6 +54,8 @@ Reported timings exclude validation. Results include source size, RDF statement 
 | `kgi` | the local implementation, which generates SPARQL queries from the mapping |
 | `souffle` | the Datalog approach of [KROWN_Extended](https://github.com/alloka/KROWN_Extended) |
 
+`souffle` runs Soufflé in compiled mode for every scenario. Its interpreter instantiates relations only up to arity 22, so the recovered relation of a source table with more columns aborts the run. Compilation does not depend on the data, so enabling it only for wide tables would make the scenarios of a series incomparable with each other. The reported inversion time therefore includes generating the Datalog program and compiling it.
+
 ## Measurement modes
 
 Set `KROWN_MODE` to one of these values:

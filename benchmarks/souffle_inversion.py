@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
 
+import psutil
 from pyoxigraph import DefaultGraph, RdfFormat, parse
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
@@ -25,6 +26,8 @@ QUADRUPLE_FACTS = "quadruple.csv"
 FORWARD_PROGRAM = "Datalog_rules.rs"
 REVERSE_PROGRAM = "Datalog_reverse.rs"
 SUPPORT_REPORT = "support.json"
+SHARED_MOUNT = "/data/shared"
+FUNCTOR_DIRECTORY = "/souffle/lib"
 
 SOURCE_DECLARATION = re.compile(r"^\.decl (\w+)\((.*)\)$")
 SOURCE_INPUT = re.compile(r"^\.input (\w+)")
@@ -234,19 +237,35 @@ def attach_database_to_krown_network(container_name: str) -> None:
 
 
 class ReverseSouffleResource(Protocol):
-    def execute_mapping(
-        self,
-        mapping_file: str,
-        output_file: str,
-        serialization: str,
-        support_report: str,
-        rdb_username: str,
-        rdb_password: str,
-        rdb_host: str,
-        rdb_port: int,
-        rdb_name: str,
-        rdb_type: str,
-    ) -> bool: ...
+    def execute(self, arguments: list[str]) -> bool: ...
+
+
+def reverse_command(
+    mapping_file: str,
+    rdb_username: str,
+    rdb_password: str,
+    rdb_host: str,
+    rdb_port: int,
+    rdb_name: str,
+) -> str:
+    max_heap = int(psutil.virtual_memory().total * 0.5)
+    forward_program = f"{SHARED_MOUNT}/{FORWARD_PROGRAM}"
+    reverse_program = f"{SHARED_MOUNT}/{REVERSE_PROGRAM}"
+    dsn = f"jdbc:postgresql://{rdb_host}:{rdb_port}/{rdb_name}"
+    rulegen = (
+        f"java -Xmx{max_heap} -Xms{max_heap} -jar rulegen.jar "
+        f'-m "{SHARED_MOUNT}/{mapping_file}" '
+        f"-u {rdb_username} -p {rdb_password} -dsn '{dsn}'"
+    )
+    generate = (
+        f'python3 /souffle/reverseR2RML.py "{forward_program}" "{reverse_program}" '
+        f'--mode reverse --support-report "{SHARED_MOUNT}/{SUPPORT_REPORT}"'
+    )
+    solve = (
+        f'souffle "{reverse_program}" -c -L {FUNCTOR_DIRECTORY} '
+        f"-F {SHARED_MOUNT} -D {SHARED_MOUNT}"
+    )
+    return f'bash -lc "{rulegen} && {generate} && {solve}"'
 
 
 class ReverseSouffleFactory(Protocol):
