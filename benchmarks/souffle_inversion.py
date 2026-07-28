@@ -3,11 +3,10 @@
 # SPDX-License-Identifier: ISC
 
 import csv
-import importlib
 import io
 import re
+import shutil
 import subprocess
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
@@ -16,12 +15,12 @@ from pyoxigraph import DefaultGraph, RdfFormat, parse
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-FRAMEWORK_DIRECTORY = Path("KROWN_Extended") / "execution-framework"
-KROWN_FRAMEWORK_DIRECTORY = Path("KROWN") / "execution-framework"
-RESOURCE_PACKAGE = "bench_executor"
+from benchmarks.krown_metrics import load_fork_module
+
 KROWN_NETWORK = "bench_executor"
 TRIPLE_FACTS = "triple.csv"
 QUADRUPLE_FACTS = "quadruple.csv"
+FACT_FILES = (TRIPLE_FACTS, QUADRUPLE_FACTS)
 FORWARD_PROGRAM = "Datalog_rules.rs"
 REVERSE_PROGRAM = "Datalog_reverse.rs"
 SUPPORT_REPORT = "support.json"
@@ -80,6 +79,35 @@ def write_rdf_facts(rdf_file: Path, shared_directory: Path) -> None:
                 triples.write("\t".join(terms) + "\n")
             else:
                 quadruples.write("\t".join([*terms, str(quad.graph_name)]) + "\n")
+
+
+def write_rdf_dataset(facts_directory: Path, rdf_file: Path) -> None:
+    """Serialize the fact files a Datalog program wrote into an RDF dataset.
+
+    Every field already holds the N-Triples lexical form of its term, so the statements
+    are rebuilt by joining them. This is the inverse of ``write_rdf_facts``.
+    """
+    with rdf_file.open("w", encoding="utf-8") as dataset:
+        for name in FACT_FILES:
+            with (facts_directory / name).open(encoding="utf-8") as facts:
+                for line in facts:
+                    dataset.write(" ".join(line.rstrip("\n").split("\t")) + " .\n")
+
+
+def preserve_rdf_facts(shared_directory: Path, facts_directory: Path) -> None:
+    """Keep the facts of one run before the next one overwrites them.
+
+    KROWN collects only the RDF files a resource writes, and the Datalog resource
+    writes none.
+    """
+    facts_directory.mkdir(parents=True, exist_ok=True)
+    for name in FACT_FILES:
+        shutil.move(shared_directory / name, facts_directory / name)
+
+
+def restore_rdf_facts(facts_directory: Path, shared_directory: Path) -> None:
+    for name in FACT_FILES:
+        shutil.copy(facts_directory / name, shared_directory / name)
 
 
 def parse_source_relations(shared_directory: Path) -> tuple[SourceRelation, ...]:
@@ -259,24 +287,6 @@ class ReverseSouffleFactory(Protocol):
     ) -> ReverseSouffleResource: ...
 
 
-def resource_config_directory(project_root: Path) -> Path:
-    """The KROWN resource configuration directory the ReverseSouffle class expects."""
-    return project_root / FRAMEWORK_DIRECTORY / RESOURCE_PACKAGE / "config"
-
-
 def reverse_souffle_resource(project_root: Path) -> ReverseSouffleFactory:
-    """Import the ReverseSouffle resource from the KROWN_Extended submodule.
-
-    Both submodules ship a ``bench_executor`` package and the fork only adds this
-    resource on top of it, so the fork directory is appended to the search path of
-    the package already in use.
-    """
-    framework_path = str(project_root / KROWN_FRAMEWORK_DIRECTORY)
-    if framework_path not in sys.path:
-        sys.path.insert(0, framework_path)
-    package = importlib.import_module(RESOURCE_PACKAGE)
-    fork_path = str(project_root / FRAMEWORK_DIRECTORY / RESOURCE_PACKAGE)
-    if fork_path not in package.__path__:
-        package.__path__.append(fork_path)
-    module = importlib.import_module(f"{RESOURCE_PACKAGE}.reverse_souffle")
+    module = load_fork_module(project_root, "reverse_souffle")
     return cast(ReverseSouffleFactory, getattr(module, "ReverseSouffle"))

@@ -39,7 +39,7 @@ class ScenarioStatistics(TypedDict):
     execution_time: TimingStatistics
     n_runs: int
     metadata: ScenarioMetadata
-    rmlmapper_time: NotRequired[TimingStatistics]
+    forward_time: NotRequired[TimingStatistics]
     inversion_time: NotRequired[TimingStatistics]
     inversion_overhead_percentage: NotRequired[TimingStatistics]
     rows_per_second: NotRequired[TimingStatistics]
@@ -126,7 +126,7 @@ def aggregate_scenario_statistics(
         },
     }
     for metric_name in (
-        "rmlmapper_time",
+        "forward_time",
         "inversion_time",
         "inversion_overhead_percentage",
     ):

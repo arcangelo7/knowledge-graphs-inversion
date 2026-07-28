@@ -33,6 +33,11 @@ from sqlalchemy import URL, create_engine, text
 from sqlalchemy.engine import Engine
 
 import rmlmapper
+from benchmarks.forward_engines import (
+    FORWARD_ENGINES,
+    ForwardEngine,
+    ForwardEngineDefinition,
+)
 from benchmarks.krown_catalog import (
     KROWN_REPOSITORY,
     SERIES,
@@ -46,7 +51,9 @@ from benchmarks.krown_metrics import (
     OfficialRunResult,
     SynchronousCollector,
     generate_official_statistics,
+    load_mapping_resource,
     read_step_duration,
+    resource_config_directory,
 )
 from benchmarks.krown_plots import plot_timing_charts
 from benchmarks.krown_stats import (
@@ -61,8 +68,10 @@ from benchmarks.souffle_inversion import (
     attach_database_to_krown_network,
     load_relation,
     parse_source_relations,
-    resource_config_directory,
+    preserve_rdf_facts,
+    restore_rdf_facts,
     reverse_souffle_resource,
+    write_rdf_dataset,
     write_rdf_facts,
 )
 from kgi.core import reconstruct
@@ -72,7 +81,7 @@ console = Console(width=max(shutil.get_terminal_size().columns, 100))
 
 R2RML = Namespace("http://www.w3.org/ns/r2rml#")
 SPARQL_ENGINE = "pyoxigraph"
-RMLMAPPER_VERSION = "8.1.0"
+DATALOG_RDF_FILE = "out.nq"
 RMLMAPPER_JAVA_OPTIONS = (
     "-XX:InitialRAMPercentage=50.0",
     "-XX:MaxRAMPercentage=50.0",
@@ -123,6 +132,7 @@ class SourceTable:
 class ForwardMeasurement:
     iteration: int
     rdf_file: Path
+    facts_directory: Path | None
     duration: float
     rdf_statements: int
     run_path: Path
@@ -209,6 +219,7 @@ def generate_scenario(
     scenario: KrownScenario,
     scenarios_root: Path,
     data_generator_dir: Path,
+    resource: str,
 ) -> Path:
     if scenarios_root.exists():
         shutil.rmtree(scenarios_root)
@@ -218,7 +229,7 @@ def generate_scenario(
         "@id": "http://example.com/kg-inversion-benchmark/generated",
         "name": scenario.display_name,
         "description": "Single KROWN benchmark scenario",
-        "instances": [scenario.config_instance()],
+        "instances": [scenario.config_instance(resource)],
     }
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".json", encoding="utf-8"
@@ -443,6 +454,39 @@ class ScenarioOperations:
                 )
             process.check_returncode()
 
+    def forward_resource(
+        self,
+        definition: ForwardEngineDefinition,
+        schema: str,
+        rdf_file: Path,
+    ) -> None:
+        project_root = Path(__file__).resolve().parent.parent
+        resource = load_mapping_resource(project_root, definition)(
+            str(self.scenario_path / "data"),
+            str(resource_config_directory(project_root)),
+            str(self.scenario_path),
+            False,
+        )
+        attach_database_to_krown_network(BENCHMARK_DATABASE_CONTAINER)
+        rdf_file.unlink(missing_ok=True)
+        if not resource.execute_mapping(
+            self.mapping_file.name,
+            rdf_file.name,
+            "nquads",
+            rdb_username=self.database.username,
+            rdb_password=self.database.password,
+            rdb_host=BENCHMARK_DATABASE_CONTAINER,
+            rdb_port=BENCHMARK_DATABASE_INTERNAL_PORT,
+            rdb_name=definition.database_name(self.database.database, schema),
+            rdb_type="PostgreSQL",
+        ):
+            raise RuntimeError(
+                f"{definition.label} failed to map the {schema} schema of "
+                f"{self.scenario.generated_name}"
+            )
+        if definition.writes_facts:
+            write_rdf_dataset(self.shared_dir, rdf_file)
+
     def backward(self, rdf_file: Path) -> None:
         reconstruct(
             mapping=str(self.mapping_file),
@@ -451,15 +495,20 @@ class ScenarioOperations:
             source_db_url=self.database.sqlalchemy_url(SOURCE_SCHEMA),
         )
 
-    def backward_souffle(self, rdf_file: Path) -> None:
+    def backward_souffle(self, rdf_file: Path, facts_directory: Path | None) -> None:
         """Invert with the Datalog approach of the KROWN_Extended submodule.
 
         The reverse Datalog program consumes the RDF graph as tab separated facts
         and derives one tuple per recovered triple, so the tuples are assembled
-        into rows before they reach the destination schema.
+        into rows before they reach the destination schema. A Datalog forward phase
+        already wrote those facts, and reusing them keeps both directions on the terms
+        the forward program built.
         """
         project_root = Path(__file__).resolve().parent.parent
-        write_rdf_facts(rdf_file, self.shared_dir)
+        if facts_directory is None:
+            write_rdf_facts(rdf_file, self.shared_dir)
+        else:
+            restore_rdf_facts(facts_directory, self.shared_dir)
         resource = reverse_souffle_resource(project_root)(
             str(self.scenario_path / "data"),
             str(resource_config_directory(project_root)),
@@ -568,7 +617,8 @@ class KrownBenchmarkRunner:
         sample_interval: float,
         suites: tuple[str, ...],
         scenario_name: str | None,
-        engine: InversionEngine = "kgi",
+        forward_engine: ForwardEngine = "rmlmapper",
+        inversion_engine: InversionEngine = "kgi",
         cleanup_tables: bool = True,
     ):
         self.project_root = Path(__file__).resolve().parent.parent
@@ -577,7 +627,9 @@ class KrownBenchmarkRunner:
         self.scenarios_root = benchmark_dir / "scenarios"
         self.results_dir = benchmark_dir / "results"
         self.mode = mode
-        self.engine = engine
+        self.forward_engine = forward_engine
+        self.forward_definition = FORWARD_ENGINES[forward_engine]
+        self.inversion_engine = inversion_engine
         self.iterations = iterations
         self.sample_interval = sample_interval
         self.cleanup_tables = cleanup_tables
@@ -590,8 +642,9 @@ class KrownBenchmarkRunner:
         )
         self.compose_file = self.project_root / "docker-compose.benchmark.yml"
         self.timestamp = int(time.time())
-        self.session_dir = (
-            self.results_dir / f"krown_{self.timestamp}_{self.mode}_{self.engine}"
+        self.session_dir = self.results_dir / (
+            f"krown_{self.timestamp}_{self.mode}_"
+            f"{self.forward_engine}_{self.inversion_engine}"
         )
         self.resource_summaries: dict[str, list[dict[str, int | float | str]]] = {}
 
@@ -772,7 +825,7 @@ class KrownBenchmarkRunner:
         )
         execution_time = sum(
             timings[name]
-            for name in ("rmlmapper_time", "inversion_time")
+            for name in ("forward_time", "inversion_time")
             if name in timings
         )
         throughput = None
@@ -791,7 +844,7 @@ class KrownBenchmarkRunner:
         }
         if self.mode == "roundtrip":
             timing_breakdown["inversion_overhead_percentage"] = (
-                timings["inversion_time"] / timings["rmlmapper_time"] * 100
+                timings["inversion_time"] / timings["forward_time"] * 100
             )
 
         return {
@@ -873,13 +926,20 @@ class KrownBenchmarkRunner:
         roundtrip_rdf = None
         if not missing_mapped_columns:
             roundtrip_rdf = operations.shared_dir / f"roundtrip_{iteration}.nq"
-            self.run_stage(
-                "forward-destination",
-                "roundtrip_mapping",
-                scenario,
-                operations.scenario_path,
-                roundtrip_rdf,
-            )
+            if self.forward_engine == "rmlmapper":
+                self.run_stage(
+                    "forward-destination",
+                    "roundtrip_mapping",
+                    scenario,
+                    operations.scenario_path,
+                    roundtrip_rdf,
+                )
+            else:
+                operations.forward_resource(
+                    self.forward_definition,
+                    DESTINATION_SCHEMA,
+                    roundtrip_rdf,
+                )
         validation = self.validator.validate_inversion(
             expected_tables=expected_tables,
             scenario_name=scenario.generated_name,
@@ -909,9 +969,9 @@ class KrownBenchmarkRunner:
         executor: OfficialKrownExecutor,
         iteration: int,
     ) -> ScenarioExecutionFailure:
-        if result.failed_resource != "RMLMapper":
+        if result.failed_resource != executor.resource:
             raise RuntimeError(
-                "KROWN Executor failed outside RMLMapper: "
+                f"KROWN Executor failed outside {executor.resource}: "
                 f"resource={result.failed_resource}, step={result.failed_step}\n"
                 f"{result.diagnostic}"
             )
@@ -922,14 +982,14 @@ class KrownBenchmarkRunner:
             kind = "timeout"
         else:
             raise RuntimeError(
-                "KROWN Executor RMLMapper step failed:\n" + result.diagnostic
+                f"KROWN Executor {executor.resource} step failed:\n" + result.diagnostic
             )
         metrics_file = executor.results_path / f"run_{iteration}" / "metrics.csv"
         duration = read_step_duration(metrics_file, executor.mapping_step)
         return ScenarioExecutionFailure(
             "forward_mapping",
             kind,
-            "KROWN Executor RMLMapper step failed",
+            f"KROWN Executor {executor.resource} step failed",
             result.diagnostic,
             duration,
             iteration,
@@ -948,8 +1008,9 @@ class KrownBenchmarkRunner:
         executor = OfficialKrownExecutor(
             self.project_root,
             operations.scenario_path,
-            RMLMAPPER_VERSION,
+            self.forward_definition,
         )
+        engine_directory = self.forward_definition.module_name
         for iteration in range(1, runs + 1):
             progress.update(
                 task,
@@ -964,6 +1025,11 @@ class KrownBenchmarkRunner:
                 error = self._forward_failure(result, executor, iteration)
                 self._preserve_forward_results(scenario, executor, phase)
                 raise error
+            if self.forward_definition.writes_facts:
+                preserve_rdf_facts(
+                    operations.shared_dir,
+                    executor.results_path / f"run_{iteration}" / engine_directory,
+                )
 
         if report_statistics:
             summary = executor.statistics()
@@ -981,9 +1047,16 @@ class KrownBenchmarkRunner:
         measurements = []
         for iteration in range(1, runs + 1):
             run_path = results_path / f"run_{iteration}"
-            rdf_file = run_path / "rmlmapper" / executor.output_file
-            if scenario.generator == "NamedGraph":
-                rdf_file = _rename_nquads_output(rdf_file)
+            engine_path = run_path / engine_directory
+            facts_directory = None
+            if self.forward_definition.writes_facts:
+                facts_directory = engine_path
+                rdf_file = engine_path / DATALOG_RDF_FILE
+                write_rdf_dataset(facts_directory, rdf_file)
+            else:
+                rdf_file = engine_path / executor.output_file
+                if scenario.generator == "NamedGraph":
+                    rdf_file = _rename_nquads_output(rdf_file)
             rdf_statements = self.validate_forward_output(
                 scenario,
                 operations,
@@ -993,6 +1066,7 @@ class KrownBenchmarkRunner:
                 ForwardMeasurement(
                     iteration=iteration,
                     rdf_file=rdf_file,
+                    facts_directory=facts_directory,
                     duration=read_step_duration(
                         run_path / "metrics.csv",
                         executor.mapping_step,
@@ -1033,7 +1107,7 @@ class KrownBenchmarkRunner:
         return self._build_result(
             scenario,
             operations,
-            {"rmlmapper_time": measurement.duration},
+            {"forward_time": measurement.duration},
             measurement.rdf_statements,
             0,
             {
@@ -1087,8 +1161,8 @@ class KrownBenchmarkRunner:
         scenario_failure: ScenarioExecutionFailure | None = None
         non_invertible_error: NonInvertibleError | None = None
         try:
-            if self.engine == "souffle":
-                operations.backward_souffle(forward.rdf_file)
+            if self.inversion_engine == "souffle":
+                operations.backward_souffle(forward.rdf_file, forward.facts_directory)
             else:
                 self.run_stage(
                     "backward",
@@ -1122,7 +1196,7 @@ class KrownBenchmarkRunner:
 
         if self.mode == "roundtrip":
             timings = {
-                "rmlmapper_time": forward.duration,
+                "forward_time": forward.duration,
                 "inversion_time": inversion_time,
             }
             metrics = {
@@ -1210,7 +1284,8 @@ class KrownBenchmarkRunner:
             "framework": "KROWN Executor with local inversion",
             "environment": "KROWN Executor and Docker Compose",
             "mode": self.mode,
-            "inversion_engine": self.engine,
+            "forward_engine": self.forward_engine,
+            "inversion_engine": self.inversion_engine,
             "measurement_scope": "system",
             "sample_interval_seconds": self.sample_interval,
             "sparql_engine": SPARQL_ENGINE,
@@ -1221,11 +1296,11 @@ class KrownBenchmarkRunner:
             "provenance": {
                 "krown_repository": KROWN_REPOSITORY,
                 "krown_commit": self.krown_commit,
-                "rmlmapper_version": RMLMAPPER_VERSION,
+                "forward_engine_version": self.forward_definition.version,
                 "forward_executor": "KROWN Executor",
                 "backward_executor": (
                     "KROWN_Extended ReverseSouffle"
-                    if self.engine == "souffle"
+                    if self.inversion_engine == "souffle"
                     else "local inversion adapter"
                 ),
                 "metrics_implementation": "KROWN Collector and Stats",
@@ -1346,7 +1421,7 @@ class KrownBenchmarkRunner:
             table.add_column("CSV MiB", justify="right")
             table.add_column("RDF statements", justify="right")
             if self.mode in ("forward", "roundtrip"):
-                table.add_column("RMLMapper", justify="right")
+                table.add_column(self.forward_definition.label, justify="right")
             if self.mode in ("backward", "roundtrip"):
                 table.add_column("Inversion", justify="right")
                 table.add_column("Rows/s", justify="right")
@@ -1386,7 +1461,7 @@ class KrownBenchmarkRunner:
                 if self.mode in ("forward", "roundtrip"):
                     row.append(
                         _format_confidence_interval(
-                            cast(dict[str, object], statistics["rmlmapper_time"])
+                            cast(dict[str, object], statistics["forward_time"])
                         )
                     )
                 if self.mode in ("backward", "roundtrip"):
@@ -1466,6 +1541,7 @@ class KrownBenchmarkRunner:
                         scenario,
                         self.scenarios_root,
                         self.data_generator_dir,
+                        self.forward_definition.resource,
                     )
                     operations = ScenarioOperations(
                         scenario, scenario_path, self.database
@@ -1634,7 +1710,13 @@ def _benchmark_main(arguments: list[str]) -> int:
     )
     parser.add_argument("--scenario")
     parser.add_argument(
-        "--engine",
+        "--forward-engine",
+        choices=tuple(FORWARD_ENGINES),
+        default="rmlmapper",
+        help="Materialization engine, also used by the round trip validation",
+    )
+    parser.add_argument(
+        "--inversion-engine",
         choices=("kgi", "souffle"),
         default="kgi",
         help="Inversion engine: kgi (SPARQL) or souffle (Datalog)",
@@ -1647,7 +1729,8 @@ def _benchmark_main(arguments: list[str]) -> int:
             sample_interval=args.interval,
             suites=args.suites,
             scenario_name=args.scenario,
-            engine=args.engine,
+            forward_engine=args.forward_engine,
+            inversion_engine=args.inversion_engine,
         )
     except ValueError as error:
         parser.error(str(error))

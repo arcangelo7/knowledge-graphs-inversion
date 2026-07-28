@@ -570,7 +570,7 @@ class GtfsBenchmarkRunner:
         try:
             copy_gtfs_mapping(self.mapping_source, mapping_file)
             original_tables = self.execute_load_step(data_dir)
-            rmlmapper_time = self.execute_forward_mapping_step(mapping_file, rdf_file)
+            forward_time = self.execute_forward_mapping_step(mapping_file, rdf_file)
             self.clear_source_tables()
             inversion_started = time.time()
             try:
@@ -581,7 +581,7 @@ class GtfsBenchmarkRunner:
                     scenario_name=scenario_name,
                     scale=scale,
                     start_time=start_time,
-                    rmlmapper_time=rmlmapper_time,
+                    forward_time=forward_time,
                     inversion_time=time.time() - inversion_started,
                     mapping_file=mapping_file,
                     data_dir=data_dir,
@@ -593,7 +593,7 @@ class GtfsBenchmarkRunner:
                     scenario_name=scenario_name,
                     scale=scale,
                     start_time=start_time,
-                    rmlmapper_time=rmlmapper_time,
+                    forward_time=forward_time,
                     inversion_time=time.time() - inversion_started,
                     mapping_file=mapping_file,
                     data_dir=data_dir,
@@ -606,7 +606,7 @@ class GtfsBenchmarkRunner:
 
             total_time = time.time() - start_time
             inversion_overhead_percentage = (
-                (inversion_time / rmlmapper_time * 100) if rmlmapper_time > 0 else 0
+                (inversion_time / forward_time * 100) if forward_time > 0 else 0
             )
             tm_count, pom_count = self.mapping_component_counts(mapping_file)
 
@@ -616,7 +616,7 @@ class GtfsBenchmarkRunner:
                 "scale": scale,
                 "execution_time": total_time,
                 "timing_breakdown": {
-                    "rmlmapper_time": rmlmapper_time,
+                    "forward_time": forward_time,
                     "inversion_time": inversion_time,
                     "inversion_overhead_percentage": inversion_overhead_percentage,
                     "total_time": total_time,
@@ -647,7 +647,7 @@ class GtfsBenchmarkRunner:
         scenario_name: str,
         scale: int,
         start_time: float,
-        rmlmapper_time: float,
+        forward_time: float,
         inversion_time: float,
         mapping_file: Path,
         data_dir: Path,
@@ -661,10 +661,10 @@ class GtfsBenchmarkRunner:
             "scale": scale,
             "execution_time": total_time,
             "timing_breakdown": {
-                "rmlmapper_time": rmlmapper_time,
+                "forward_time": forward_time,
                 "inversion_time": inversion_time,
                 "inversion_overhead_percentage": (
-                    (inversion_time / rmlmapper_time * 100) if rmlmapper_time > 0 else 0
+                    (inversion_time / forward_time * 100) if forward_time > 0 else 0
                 ),
                 "total_time": total_time,
             },
@@ -877,7 +877,7 @@ class GtfsBenchmarkRunner:
             table.add_row(
                 str(result["scenario_name"]),
                 f"{_metric(result['execution_time']):.2f}s",
-                f"{_metric(timing['rmlmapper_time']):.2f}s",
+                f"{_metric(timing['forward_time']):.2f}s",
                 f"{_metric(timing['inversion_time']):.2f}s",
                 f"{_metric(timing['inversion_overhead_percentage']):.1f}%",
                 str(result["inversion_count"]),
@@ -891,7 +891,7 @@ class GtfsBenchmarkRunner:
             table.add_row(
                 str(result["scenario_name"]),
                 f"{_metric(result['execution_time']):.2f}s",
-                f"{_metric(timing['rmlmapper_time']):.2f}s",
+                f"{_metric(timing['forward_time']):.2f}s",
                 f"{_metric(timing['inversion_time']):.2f}s",
                 f"{_metric(timing['inversion_overhead_percentage']):.1f}%",
                 "0",
@@ -939,8 +939,8 @@ class GtfsBenchmarkRunner:
             )
             if completed_runs:
                 stats = aggregate_scenario_statistics(completed_runs)
-                if "rmlmapper_time" not in stats:
-                    raise ValueError("GTFS statistics lack RMLMapper timing")
+                if "forward_time" not in stats:
+                    raise ValueError("GTFS statistics lack forward timing")
                 if "inversion_time" not in stats:
                     raise ValueError("GTFS statistics lack inversion timing")
                 if "inversion_overhead_percentage" not in stats:
@@ -949,7 +949,7 @@ class GtfsBenchmarkRunner:
                     scenario_name,
                     f"{len(completed_runs)}/{len(runs)}",
                     f"{stats['execution_time']['mean']:.2f}s +/- {stats['execution_time']['std']:.2f}s",
-                    f"{stats['rmlmapper_time']['mean']:.2f}s +/- {stats['rmlmapper_time']['std']:.2f}s",
+                    f"{stats['forward_time']['mean']:.2f}s +/- {stats['forward_time']['std']:.2f}s",
                     f"{stats['inversion_time']['mean']:.2f}s +/- {stats['inversion_time']['std']:.2f}s",
                     f"{stats['inversion_overhead_percentage']['mean']:.1f}% +/- {stats['inversion_overhead_percentage']['std']:.1f}%",
                     outcome,

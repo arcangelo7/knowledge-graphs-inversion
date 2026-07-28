@@ -13,6 +13,8 @@ from typing import cast
 import matplotlib.pyplot as plt
 import numpy as np
 
+from benchmarks.forward_engines import FORWARD_ENGINES, ForwardEngine
+
 
 def _timing_points(
     stats_data: dict[str, object],
@@ -71,7 +73,9 @@ def plot_timing_charts(
     mode = cast(str, stats_data["mode"])
     metrics = []
     if mode in ("forward", "roundtrip"):
-        metrics.append(("rmlmapper_time", "RMLMapper", "#1f77b4", "o"))
+        forward_engine = cast(ForwardEngine, stats_data["forward_engine"])
+        label = FORWARD_ENGINES[forward_engine].label
+        metrics.append(("forward_time", label, "#1f77b4", "o"))
     if mode in ("backward", "roundtrip"):
         metrics.append(("inversion_time", "Inversion", "#d62728", "s"))
 

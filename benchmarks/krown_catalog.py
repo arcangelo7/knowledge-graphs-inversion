@@ -158,12 +158,12 @@ class KrownScenario:
             overrides["scenario"] = "documented KROWN scale absent from config"
         return overrides
 
-    def config_instance(self) -> dict[str, object]:
+    def config_instance(self, resource: str) -> dict[str, object]:
         return {
             "@id": self.identifier,
             "name": self.display_name,
             "generator": self.generator,
-            "parameters": self.parameters,
+            "parameters": {**self.parameters, "engine": resource},
         }
 
 
@@ -340,7 +340,9 @@ def _load_config(config_file: Path) -> list[KrownScenario]:
         parameters = cast(dict[str, ParameterValue], value["parameters"])
         original_data_format = cast(str, parameters["data_format"])
         parameters["data_format"] = "postgresql"
-        parameters["engine"] = "RMLMapper"
+        # The benchmark selects the engine, so the one the configuration was written
+        # for is not part of the scenario
+        del parameters["engine"]
         scenarios.append(
             KrownScenario(
                 identifier=cast(str, value["@id"]),
@@ -363,7 +365,6 @@ def _documented_scenarios() -> tuple[KrownScenario, ...]:
         "number_of_properties": 20,
         "value_size": 0,
         "data_format": "postgresql",
-        "engine": "RMLMapper",
     }
     return (
         KrownScenario(
