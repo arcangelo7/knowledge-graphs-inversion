@@ -510,3 +510,38 @@ class SubjectTriple(QueryTriple):
             evaluated_template = current_post_string
 
         return "\n".join(lines)
+
+
+class ReferencedSubjectTriple(SubjectTriple):
+    """Subject of a triples map that has no predicate-object map of its own.
+
+    Such a triples map generates no triples, so the graph carries its subjects only
+    as the objects of the join that references it. That join supplies the pattern
+    binding the subject variable the template extraction reads from.
+    """
+
+    def __init__(
+        self,
+        rule: pd.Series,
+        referencing_rule: pd.Series,
+        excluded_references: frozenset[str] = frozenset(),
+    ):
+        super().__init__(rule, excluded_references)
+        self.referencing = QueryTriple(referencing_rule, excluded_references)
+
+    def generate(
+        self, id_generator: IdGenerator, codex: Codex, all_mapping_rules: pd.DataFrame
+    ) -> str | None:
+        """Generate the join pattern binding the subject, then extract from it."""
+        subject_variable = codex.get_id(str(self.rule["subject_map_value"]))
+        anchor_variable = codex.get_id(
+            f"{self.rule['triples_map_id']}_referencing_subject"
+        )
+        predicate = f"<{self.referencing.rule['predicate_map_value']}>"
+        anchor = self.referencing._wrap_in_graph(
+            f"?{anchor_variable} {predicate} ?{subject_variable} ."
+        )
+        extraction = super().generate(id_generator, codex, all_mapping_rules)
+        if extraction is None:
+            return anchor
+        return f"{anchor}\n{extraction}"

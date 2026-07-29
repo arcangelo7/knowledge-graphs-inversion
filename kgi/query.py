@@ -6,6 +6,7 @@
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from typing import cast
 
 import pandas as pd
 from pyoxigraph import BlankNode, Literal, NamedNode, QuerySolutions, Triple
@@ -19,7 +20,12 @@ from kgi.constants import (
     RML_TEMPLATE,
 )
 from kgi.exceptions import UnsupportedMappingError
-from kgi.triples import QueryTriple, SubjectTriple, extract_from_iri_template
+from kgi.triples import (
+    QueryTriple,
+    ReferencedSubjectTriple,
+    SubjectTriple,
+    extract_from_iri_template,
+)
 from kgi.utils import (
     Codex,
     IdGenerator,
@@ -395,6 +401,50 @@ def _select_query_source_rules(
     return pd.concat(selected_groups)
 
 
+def _referencing_join_rule(mapping_rules: pd.DataFrame, rule: pd.Series) -> pd.Series:
+    """The join that carries the subjects of a triples map generating no triples."""
+    referencing = mapping_rules[
+        (mapping_rules["object_map_type"] == RML_PARENT_TRIPLES_MAP)
+        & (mapping_rules["object_map_value"] == rule["triples_map_id"])
+    ]
+    if len(referencing) > 1:
+        raise UnsupportedMappingError(
+            f"Triples map '{rule['triples_map_id']}' has no predicate-object map "
+            "and is referenced by more than one join"
+        )
+    return referencing.iloc[0]
+
+
+def query_triples(
+    mapping_rules: pd.DataFrame,
+    query_source_rules: pd.DataFrame,
+    excluded_references: frozenset[str] = frozenset(),
+) -> list[QueryTriple]:
+    """Build the triples the inversion query of one logical source is made of."""
+    triples: list[QueryTriple] = [
+        QueryTriple(rule, excluded_references)
+        for _, rule in query_source_rules.iterrows()
+        if cast(bool, pd.notna(rule["object_map_type"]))
+        and rule["object_map_type"] != RML_BLANK_NODE
+    ]
+
+    for _, subject_rules in query_source_rules.groupby(
+        "subject_map_value", dropna=False
+    ):
+        rule = subject_rules.iloc[0]
+        if cast(bool, subject_rules["object_map_type"].isna().all()):
+            triples.append(
+                ReferencedSubjectTriple(
+                    rule,
+                    _referencing_join_rule(mapping_rules, rule),
+                    excluded_references,
+                )
+            )
+        else:
+            triples.append(SubjectTriple(rule, excluded_references))
+    return triples
+
+
 def retrieve_data(
     mapping_rules: pd.DataFrame,
     source_rules: pd.DataFrame,
@@ -404,17 +454,7 @@ def retrieve_data(
 ) -> tuple[Iterator[pd.DataFrame] | None, str | None]:
     """Retrieve data from SPARQL endpoint using mapping rules."""
     query_source_rules = _select_query_source_rules(source_rules, excluded_references)
-    triples: list[QueryTriple] = [
-        QueryTriple(rule, excluded_references)
-        for _, rule in query_source_rules.iterrows()
-        if rule["object_map_type"] not in [RML_BLANK_NODE]
-    ]
-
-    subject_groups = list(query_source_rules.groupby("subject_map_value", dropna=False))
-    triples.extend(
-        SubjectTriple(subject_rules.iloc[0], excluded_references)
-        for _, subject_rules in subject_groups
-    )
+    triples = query_triples(mapping_rules, query_source_rules, excluded_references)
     query = Query(triples, excluded_references)
     generated_query = query.generate(mapping_rules)
 

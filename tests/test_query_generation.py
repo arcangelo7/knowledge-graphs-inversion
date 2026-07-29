@@ -13,13 +13,19 @@ from kgi.constants import (
     RML_CONSTANT,
     RML_IRI,
     RML_LITERAL,
+    RML_PARENT_TRIPLES_MAP,
     RML_REFERENCE,
     RML_TEMPLATE,
 )
 from kgi.core import _check_for_unrecoverable_tables, _unrecoverable_references
 from kgi.endpoints import LocalSparqlGraphStore
 from kgi.exceptions import NonInvertibleError
-from kgi.query import Query, _select_query_source_rules, _solutions_to_dataframes
+from kgi.query import (
+    Query,
+    _select_query_source_rules,
+    _solutions_to_dataframes,
+    query_triples,
+)
 from kgi.schema import ColumnInfo, infer_type_from_value_with_schema
 from kgi.triples import QueryTriple, SubjectTriple
 from kgi.utils import Codex, IdGenerator, insert_columns, sparql_to_python_type
@@ -441,6 +447,83 @@ def test_incompatible_schema_conversion_propagates() -> None:
         infer_type_from_value_with_schema("not-an-integer", column)
 
 
+def _join_mappings() -> pd.DataFrame:
+    """A join whose parent triples map has no predicate-object map, as KROWN builds."""
+    child = _rule("id", "id")
+    child["logical_source_value"] = "data1"
+    child["subject_map_value"] = "http://example.com/table1/{id}"
+    child["triples_map_id"] = "http://example.com/#TriplesMap1"
+    child["predicate_map_value"] = "http://example.com/j1"
+    child["object_map_type"] = RML_PARENT_TRIPLES_MAP
+    child["object_map_value"] = "http://example.com/#TriplesMap2"
+    child["object_termtype"] = RML_IRI
+    child["object_join_conditions"] = (
+        "{'0': {'child_value': 'p1', 'parent_value': 'p1'}}"
+    )
+
+    parent = _rule("id", "id")
+    parent["logical_source_value"] = "data2"
+    parent["subject_map_value"] = "http://example.com/table2/{id}"
+    parent["triples_map_id"] = "http://example.com/#TriplesMap2"
+    parent["predicate_map_type"] = None
+    parent["predicate_map_value"] = None
+    parent["object_map_type"] = None
+    parent["object_map_value"] = None
+    parent["object_termtype"] = None
+    return pd.DataFrame([child, parent])
+
+
+def test_parent_triples_map_without_predicate_object_map_is_read_from_the_join(
+    tmp_path,
+) -> None:
+    mappings = _join_mappings()
+    insert_columns(mappings)
+
+    assert _unrecoverable_references(mappings) == {
+        "data1": frozenset(),
+        "data2": frozenset(),
+    }
+    assert _build_query(mappings, "data2")[1] == (
+        "SELECT ?id WHERE {?TriplesMap2_referencing_subject "
+        "<http://example.com/j1> ?id_uri .\n"
+        "FILTER(REGEX(STR(?id_uri), 'http://example.com/table2/([^/]*)'))\n"
+        "BIND(STRAFTER(STR(?id_uri), 'http://example.com/table2/') as ?id)}"
+    )
+
+    rdf_file = tmp_path / "data.nq"
+    rdf_file.write_text(
+        "\n".join(
+            f"<http://example.com/table1/{child}> <http://example.com/j1> "
+            f"<http://example.com/table2/{parent}> ."
+            for child, parent in (("1", "10"), ("2", "20"))
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    reconstructed = _reconstruct(rdf_file, mappings, "data2")
+    assert sorted(reconstructed[["id"]].values.tolist()) == [["10"], ["20"]]
+
+
+def test_triples_map_without_predicate_object_map_needs_a_join_to_be_invertible() -> (
+    None
+):
+    mappings = _join_mappings()
+    mappings = mappings.loc[mappings["logical_source_value"] == "data2"].reset_index(
+        drop=True
+    )
+    insert_columns(mappings)
+
+    unrecoverable = _unrecoverable_references(mappings)
+    assert unrecoverable == {"data2": frozenset({"id"})}
+    with pytest.raises(NonInvertibleError) as error:
+        _check_for_unrecoverable_tables(mappings, unrecoverable)
+    assert (
+        str(error.value)
+        == "No column of table 'data2' can be recovered from the graph: id"
+    )
+
+
 def _predicate_rule(subject_column: str, object_column: str) -> dict[str, object]:
     rule = _rule(subject_column, object_column)
     rule["predicate_map_value"] = f"http://example.com/{object_column}"
@@ -454,18 +537,12 @@ def _graph_rule(object_column: str, graph_template: str) -> dict[str, object]:
     return rule
 
 
-def _build_query(mappings: pd.DataFrame) -> tuple[Query, str]:
+def _build_query(mappings: pd.DataFrame, table: str = "data") -> tuple[Query, str]:
     """Build the inversion query the way `retrieve_data` does."""
-    excluded = _unrecoverable_references(mappings)["data"]
-    query_source_rules = _select_query_source_rules(mappings, excluded)
-    triples = [QueryTriple(rule, excluded) for _, rule in query_source_rules.iterrows()]
-    triples.extend(
-        SubjectTriple(subject_rules.iloc[0], excluded)
-        for _, subject_rules in query_source_rules.groupby(
-            "subject_map_value", dropna=False
-        )
-    )
-    query = Query(triples, excluded)
+    excluded = _unrecoverable_references(mappings)[table]
+    source_rules = mappings.loc[mappings["logical_source_value"] == table]
+    query_source_rules = _select_query_source_rules(source_rules, excluded)
+    query = Query(query_triples(mappings, query_source_rules, excluded), excluded)
     generated = query.generate(mappings)
     assert generated is not None
     return query, generated
@@ -475,9 +552,11 @@ def _query_for(mappings: pd.DataFrame) -> str:
     return _build_query(mappings)[1]
 
 
-def _reconstruct(rdf_file: Path, mappings: pd.DataFrame) -> pd.DataFrame:
+def _reconstruct(
+    rdf_file: Path, mappings: pd.DataFrame, table: str = "data"
+) -> pd.DataFrame:
     """Run the generated query against a store holding the given RDF."""
-    query, generated = _build_query(mappings)
+    query, generated = _build_query(mappings, table)
     endpoint = LocalSparqlGraphStore(str(rdf_file))
     try:
         chunks = [

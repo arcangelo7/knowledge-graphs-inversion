@@ -52,6 +52,7 @@ from benchmarks.krown_metrics import (
     SynchronousCollector,
     generate_official_statistics,
     load_mapping_resource,
+    read_official_step_summary,
     read_step_duration,
     resource_config_directory,
 )
@@ -620,6 +621,7 @@ class KrownBenchmarkRunner:
         forward_engine: ForwardEngine = "rmlmapper",
         inversion_engine: InversionEngine = "kgi",
         cleanup_tables: bool = True,
+        resume_session: Path | None = None,
     ):
         self.project_root = Path(__file__).resolve().parent.parent
         self.data_generator_dir = self.project_root / "KROWN" / "data-generator"
@@ -641,11 +643,18 @@ class KrownBenchmarkRunner:
             DESTINATION_SCHEMA,
         )
         self.compose_file = self.project_root / "docker-compose.benchmark.yml"
-        self.timestamp = int(time.time())
-        self.session_dir = self.results_dir / (
-            f"krown_{self.timestamp}_{self.mode}_"
-            f"{self.forward_engine}_{self.inversion_engine}"
-        )
+        if resume_session is None:
+            self.timestamp = int(time.time())
+            self.session_dir = self.results_dir / (
+                f"krown_{self.timestamp}_{self.mode}_"
+                f"{self.forward_engine}_{self.inversion_engine}"
+            )
+            self.measured_runs: dict[str, list[dict[str, object]]] = {}
+        else:
+            self.session_dir = resume_session
+            self.timestamp, self.measured_runs = self._read_partial_results(
+                resume_session
+            )
         self.resource_summaries: dict[str, list[dict[str, int | float | str]]] = {}
 
         catalog = load_scenarios(self.project_root)
@@ -684,12 +693,79 @@ class KrownBenchmarkRunner:
             for series in SERIES
             if any(point[0] in selected_names for point in series.points)
         )
+        unselected = sorted(set(self.measured_runs) - selected_names)
+        if unselected:
+            raise ValueError(
+                "The session to continue holds scenarios outside the selected "
+                f"suites, which the results would drop: {', '.join(unselected)}"
+            )
         self.krown_commit = subprocess.run(
             ["git", "-C", str(self.project_root / "KROWN"), "rev-parse", "HEAD"],
             check=True,
             capture_output=True,
             text=True,
         ).stdout.strip()
+
+    def _read_partial_results(
+        self,
+        session_dir: Path,
+    ) -> tuple[int, dict[str, list[dict[str, object]]]]:
+        """Read the runs an interrupted session measured before it stopped."""
+        partial_files = sorted(
+            session_dir.glob("krown_benchmark_results_partial_*.json")
+        )
+        if len(partial_files) != 1:
+            raise ValueError(
+                f"{session_dir} holds {len(partial_files)} partial result files "
+                "instead of one"
+            )
+        payload = cast(
+            dict[str, object],
+            json.loads(partial_files[0].read_text(encoding="utf-8")),
+        )
+        requested: dict[str, object] = {
+            "mode": self.mode,
+            "iterations": self.iterations,
+            "sample_interval_seconds": self.sample_interval,
+            "forward_engine": self.forward_engine,
+            "inversion_engine": self.inversion_engine,
+        }
+        mismatched = {
+            key: f"{payload[key]} instead of {value}"
+            for key, value in requested.items()
+            if payload[key] != value
+        }
+        if mismatched:
+            raise ValueError(
+                f"{partial_files[0].name} was measured with a different "
+                f"configuration: {mismatched}"
+            )
+        return (
+            cast(int, payload["timestamp"]),
+            cast(dict[str, list[dict[str, object]]], payload["scenarios"]),
+        )
+
+    def _restore_resource_summaries(
+        self,
+        scenario: KrownScenario,
+        runs: list[dict[str, object]],
+    ) -> None:
+        """Reuse the resource summaries the interrupted session left on disk."""
+        stages = cast(
+            dict[str, dict[str, object]],
+            cast(dict[str, object], runs[0]["metrics"])["stages"],
+        )
+        for stage_name in self.measured_stages:
+            summary = dict(
+                read_official_step_summary(
+                    self._case_directory(scenario) / stage_name / "results",
+                    cast(int, stages[stage_name]["step"]),
+                )
+            )
+            summary["stage_name"] = stage_name
+            self.resource_summaries.setdefault(scenario.generated_name, []).append(
+                summary
+            )
 
     @property
     def measured_stages(self) -> tuple[str, ...]:
@@ -701,7 +777,7 @@ class KrownBenchmarkRunner:
 
     def prepare_output_directories(self) -> None:
         self.results_dir.mkdir(parents=True, exist_ok=True)
-        self.session_dir.mkdir()
+        self.session_dir.mkdir(exist_ok=True)
         if self.scenarios_root.exists():
             shutil.rmtree(self.scenarios_root)
         self.scenarios_root.mkdir(parents=True)
@@ -1514,10 +1590,15 @@ class KrownBenchmarkRunner:
             f"Starting KROWN benchmark "
             f"({', '.join(self.suites)}; {self.mode}; system metrics)"
         )
-        failed_scenarios: list[str] = []
         scenario_runs: dict[str, list[dict[str, object]]] = {
             scenario.generated_name: [] for scenario in self.scenarios
         }
+        scenario_runs.update(self.measured_runs)
+        failed_scenarios: list[str] = [
+            name
+            for name, runs in self.measured_runs.items()
+            if any(run["status"] == "failed" for run in runs)
+        ]
         results_saved = False
         try:
             self.prepare_output_directories()
@@ -1537,6 +1618,15 @@ class KrownBenchmarkRunner:
                     ),
                 )
                 for scenario in self.scenarios:
+                    measured = scenario_runs[scenario.generated_name]
+                    if measured:
+                        if scenario.generated_name not in failed_scenarios:
+                            self._restore_resource_summaries(scenario, measured)
+                        progress.advance(
+                            task,
+                            advance=self.iterations * stages_per_iteration,
+                        )
+                        continue
                     scenario_path = generate_scenario(
                         scenario,
                         self.scenarios_root,
@@ -1710,6 +1800,11 @@ def _benchmark_main(arguments: list[str]) -> int:
     )
     parser.add_argument("--scenario")
     parser.add_argument(
+        "--resume",
+        type=Path,
+        help="Session directory of an interrupted run to continue",
+    )
+    parser.add_argument(
         "--forward-engine",
         choices=tuple(FORWARD_ENGINES),
         default="rmlmapper",
@@ -1731,6 +1826,7 @@ def _benchmark_main(arguments: list[str]) -> int:
             scenario_name=args.scenario,
             forward_engine=args.forward_engine,
             inversion_engine=args.inversion_engine,
+            resume_session=args.resume,
         )
     except ValueError as error:
         parser.error(str(error))

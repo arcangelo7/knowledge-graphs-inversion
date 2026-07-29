@@ -8,6 +8,7 @@ I ?=
 S ?= 1,5,10
 KROWN_SUITES ?= all
 KROWN_SCENARIO ?=
+KROWN_RESUME ?=
 KROWN_MODE ?= roundtrip
 KROWN_FORWARD_ENGINE ?= rmlmapper
 KROWN_INVERSION_ENGINE ?= kgi
@@ -19,7 +20,8 @@ KROWN_SOUFFLE_CONTEXT = KROWN_Extended/execution-framework/dockers/Souffle
 KROWN_I = $(if $(strip $(I)),$(I),5)
 GTFS_I = $(if $(strip $(I)),$(I),10)
 KROWN_SCENARIO_ARG = $(if $(KROWN_SCENARIO),--scenario=$(KROWN_SCENARIO))
-KROWN_RUN = uv run python -m benchmarks.run_krown_benchmark --mode $(KROWN_MODE) --iterations $(KROWN_I) --interval $(KROWN_INTERVAL) --suites $(KROWN_SUITES) --forward-engine $(KROWN_FORWARD_ENGINE) --inversion-engine $(KROWN_INVERSION_ENGINE) $(KROWN_SCENARIO_ARG)
+KROWN_RESUME_ARG = $(if $(KROWN_RESUME),--resume=$(KROWN_RESUME))
+KROWN_RUN = uv run python -m benchmarks.run_krown_benchmark --mode $(KROWN_MODE) --iterations $(KROWN_I) --interval $(KROWN_INTERVAL) --suites $(KROWN_SUITES) --forward-engine $(KROWN_FORWARD_ENGINE) --inversion-engine $(KROWN_INVERSION_ENGINE) $(KROWN_SCENARIO_ARG) $(KROWN_RESUME_ARG)
 
 .PHONY: submodules krown-images benchmark-krown benchmark-gtfs benchmark-all test-conformance
 

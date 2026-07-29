@@ -25,6 +25,7 @@ from kgi.constants import (
     RDF_TYPE,
     RML_IRI,
     RML_OLD_QUERY,
+    RML_PARENT_TRIPLES_MAP,
     RML_QUERY,
     RML_REFERENCE,
     RML_REFERENCE_FORMULATION,
@@ -165,13 +166,23 @@ def _is_column_only_iri(map_type: object, map_value: object, term_type: object) 
     return False
 
 
-def _term_map_references(rule: pd.Series) -> tuple[set[str], set[str]]:
+def _term_map_references(
+    rule: pd.Series, join_targets: set[str]
+) -> tuple[set[str], set[str]]:
     """Split the rule's references into the opaque ones and the exposed ones.
 
     A term map that builds an IRI out of a bare column reference names a column
     without exposing it, because the base IRI it resolves against cannot be
-    separated from the column value.
+    separated from the column value. A triples map with no predicate-object map
+    generates no triples, so the graph carries its subjects only through a join
+    that references it, and exposes nothing without one.
     """
+    if (
+        cast(bool, pd.isna(rule["object_map_type"]))
+        and rule["triples_map_id"] not in join_targets
+    ):
+        return _reference_set(rule["subject_references"]), set()
+
     opaque: set[str] = set()
     exposed: set[str] = set()
     for references, map_type, map_value, term_type in (
@@ -317,6 +328,11 @@ def _unrecoverable_references(mappings: pd.DataFrame) -> dict[str, frozenset[str
     They are left out of the reconstruction: the remaining columns are recovered as
     usual, the same way columns the mapping never uses are simply absent.
     """
+    join_targets = set(
+        mappings.loc[
+            mappings["object_map_type"] == RML_PARENT_TRIPLES_MAP, "object_map_value"
+        ]
+    )
     unrecoverable: dict[str, frozenset[str]] = {}
     for table_name, source_rules in mappings.groupby("logical_source_value"):
         ambiguous = _ambiguous_subject_references(source_rules)
@@ -325,7 +341,7 @@ def _unrecoverable_references(mappings: pd.DataFrame) -> dict[str, frozenset[str
         opaque: set[str] = set()
         exposed: set[str] = set()
         for _, rule in source_rules.iterrows():
-            rule_opaque, rule_exposed = _term_map_references(rule)
+            rule_opaque, rule_exposed = _term_map_references(rule, join_targets)
             opaque.update(rule_opaque)
             exposed.update(rule_exposed)
 

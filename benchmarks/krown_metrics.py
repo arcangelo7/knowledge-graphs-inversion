@@ -215,6 +215,22 @@ def read_official_statistics(
     return rows
 
 
+def read_official_step_summary(
+    results_path: Path,
+    step: int,
+) -> dict[str, MetricValue]:
+    """The summary row KROWN wrote for one step of an already measured stage."""
+    with (results_path / "summary.csv").open(newline="", encoding="utf-8") as file:
+        rows = cast(list[dict[str, MetricValue]], list(csv.DictReader(file)))
+    matching = [row for row in rows if int(cast(str, row["step"])) == step]
+    if len(matching) != 1:
+        raise RuntimeError(
+            f"KROWN summary in {results_path} holds {len(matching)} rows "
+            f"for step {step}"
+        )
+    return matching[0]
+
+
 def generate_official_statistics(
     project_root: Path,
     results_path: Path,

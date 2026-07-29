@@ -41,6 +41,8 @@ A column that the reconstruction leaves entirely NULL counts as not reconstructe
 
 Mapping scenarios with more TMs than POMs and dynamic named-graph scenarios whose graph maps reference a column no predicate-object map exposes return `AMBIGUOUS`. Their surplus subject templates and graph maps differ only in the referenced column, so the graph carries those values without saying which column produced them. Such columns are left out of the reconstruction, which stays sound but can no longer rebuild the graph: the round trip is not attempted, since the mapping reads columns the reconstruction does not provide. Everything else the scenario exposes is reconstructed and measured, so `AMBIGUOUS` scenarios report throughput like any other.
 
+The joins scenarios return `AMBIGUOUS` for the same reason. Their join condition equates a child column with a parent column and no term map emits either, so the graph records which rows are related without recording the value they are related on.
+
 `NON_INVERTIBLE` is reserved for mappings that leave no recoverable column at all. No KROWN scenario is expected to return it.
 
 Reported timings exclude validation. Results include source size, RDF statement counts, mapping structure, throughput, validation losses, summary statistics, and 95% confidence intervals.
@@ -156,6 +158,12 @@ make benchmark-krown I=3 KROWN_MODE=backward KROWN_SCENARIO=namedgraph_0SM-NG_5P
 ```
 
 `KROWN_SCENARIO` requires an exact name. When combined with `KROWN_SUITES`, the selected scenario must belong to one of those suites. Results, statistics, and plots contain only the selected scenario.
+
+A run that stops before the end writes its measured scenarios to a partial results file. `KROWN_RESUME` continues that session from the scenario it stopped on, taking the session directory that holds the file:
+
+```bash
+make benchmark-krown I=3 KROWN_RESUME=benchmarks/krown/results/krown_1785061943_roundtrip_rmlmapper_kgi
+```
 
 `KROWN_FORWARD_ENGINE` and `KROWN_INVERSION_ENGINE` select the two engines independently, and the Makefile builds only the images the selection needs:
 

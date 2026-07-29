@@ -70,6 +70,10 @@ class KrownScenario:
             return "AMBIGUOUS"
         if self.generator == "NamedGraph" and self.hidden_graph_columns > 0:
             return "AMBIGUOUS"
+        # Both joins generators join on p1..pN while the subject templates read
+        # id, so no term map emits the join columns
+        if self.suite == "joins":
+            return "AMBIGUOUS"
         return "PARTIAL"
 
     @property
