@@ -159,7 +159,7 @@ make benchmark-krown I=3 KROWN_MODE=backward KROWN_SCENARIO=namedgraph_0SM-NG_5P
 
 `KROWN_SCENARIO` requires an exact name. When combined with `KROWN_SUITES`, the selected scenario must belong to one of those suites. Results, statistics, and plots contain only the selected scenario.
 
-A run that stops before the end writes its measured scenarios to a partial results file. `KROWN_RESUME` continues that session from the scenario it stopped on, taking the session directory that holds the file:
+A run that stops before the end writes completed scenarios and recorded scenario failures to a partial results file. `KROWN_RESUME` continues that session from the interrupted scenario, taking the session directory that holds the file:
 
 ```bash
 make benchmark-krown I=3 KROWN_RESUME=benchmarks/krown/results/krown_1785061943_roundtrip_rmlmapper_kgi

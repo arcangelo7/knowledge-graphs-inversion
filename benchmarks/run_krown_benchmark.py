@@ -635,6 +635,7 @@ class KrownBenchmarkRunner:
         self.iterations = iterations
         self.sample_interval = sample_interval
         self.cleanup_tables = cleanup_tables
+        self.is_resume = resume_session is not None
         self.local_database_started = False
         self.database = HOST_DATABASE
         self.validator = KrownValidator(
@@ -778,9 +779,19 @@ class KrownBenchmarkRunner:
     def prepare_output_directories(self) -> None:
         self.results_dir.mkdir(parents=True, exist_ok=True)
         self.session_dir.mkdir(exist_ok=True)
+        if self.is_resume:
+            self._remove_uncheckpointed_scenario_artifacts()
         if self.scenarios_root.exists():
             shutil.rmtree(self.scenarios_root)
         self.scenarios_root.mkdir(parents=True)
+
+    def _remove_uncheckpointed_scenario_artifacts(self) -> None:
+        for scenario in self.scenarios:
+            if scenario.generated_name in self.measured_runs:
+                continue
+            case_directory = self._case_directory(scenario)
+            if case_directory.exists():
+                shutil.rmtree(case_directory)
 
     def _stage_command(
         self,
@@ -1416,7 +1427,12 @@ class KrownBenchmarkRunner:
         partial_file = (
             self.session_dir / f"krown_benchmark_results_partial_{self.timestamp}.json"
         )
-        measured = {name: runs for name, runs in scenario_runs.items() if runs}
+        measured = {
+            name: runs
+            for name, runs in scenario_runs.items()
+            if len(runs) == self.iterations
+            or any(run["status"] == "failed" for run in runs)
+        }
         self._write_raw_results(measured, partial_file)
         return partial_file
 
