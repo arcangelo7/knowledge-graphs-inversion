@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
 
-from pyoxigraph import DefaultGraph, RdfFormat, parse
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
@@ -62,30 +61,11 @@ def _declared_columns(arguments: str) -> tuple[str, ...]:
     )
 
 
-def write_rdf_facts(rdf_file: Path, shared_directory: Path) -> None:
-    """Serialize an RDF dataset into the fact files the reverse program reads.
-
-    Soufflé matches subject, predicate and object against the N-Triples lexical
-    forms the forward program builds, so each term is written verbatim.
-    """
-    with (
-        rdf_file.open("rb") as source,
-        (shared_directory / TRIPLE_FACTS).open("w", encoding="utf-8") as triples,
-        (shared_directory / QUADRUPLE_FACTS).open("w", encoding="utf-8") as quadruples,
-    ):
-        for quad in parse(source, format=RdfFormat.N_QUADS):
-            terms = [str(quad.subject), str(quad.predicate), str(quad.object)]
-            if isinstance(quad.graph_name, DefaultGraph):
-                triples.write("\t".join(terms) + "\n")
-            else:
-                quadruples.write("\t".join([*terms, str(quad.graph_name)]) + "\n")
-
-
 def write_rdf_dataset(facts_directory: Path, rdf_file: Path) -> None:
     """Serialize the fact files a Datalog program wrote into an RDF dataset.
 
     Every field already holds the N-Triples lexical form of its term, so the statements
-    are rebuilt by joining them. This is the inverse of ``write_rdf_facts``.
+    are rebuilt by joining them.
     """
     with rdf_file.open("w", encoding="utf-8") as dataset:
         for name in FACT_FILES:
@@ -268,6 +248,7 @@ class ReverseSouffleResource(Protocol):
         output_file: str,
         serialization: str,
         support_report: str,
+        with_provenance: bool,
         rdb_username: str,
         rdb_password: str,
         rdb_host: str,

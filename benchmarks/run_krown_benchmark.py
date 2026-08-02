@@ -73,7 +73,6 @@ from benchmarks.souffle_inversion import (
     restore_rdf_facts,
     reverse_souffle_resource,
     write_rdf_dataset,
-    write_rdf_facts,
 )
 from kgi.core import reconstruct
 from kgi.exceptions import NonInvertibleError
@@ -89,6 +88,7 @@ RMLMAPPER_JAVA_OPTIONS = (
 )
 RMLMAPPER_TIMEOUT_SECONDS = 3 * 60 * 60
 KROWN_COOLDOWN_SECONDS = 15
+KROWN_EXTENDED_REPOSITORY = "https://github.com/alloka/KROWN_Extended.git"
 SOURCE_SCHEMA = "source"
 DESTINATION_SCHEMA = "destination"
 BENCHMARK_DATABASE_CONTAINER = "kgi-benchmark-postgresql"
@@ -103,6 +103,15 @@ EXIT_NON_INVERTIBLE = 23
 
 def _quoted(identifier: str) -> str:
     return '"' + identifier.replace('"', '""') + '"'
+
+
+def _git_commit(repository: Path) -> str:
+    return subprocess.run(
+        ["git", "-C", str(repository), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 def _format_confidence_interval(statistics: dict[str, object]) -> str:
@@ -496,31 +505,28 @@ class ScenarioOperations:
             source_db_url=self.database.sqlalchemy_url(SOURCE_SCHEMA),
         )
 
-    def backward_souffle(self, rdf_file: Path, facts_directory: Path | None) -> None:
+    def backward_souffle(self, facts_directory: Path) -> None:
         """Invert with the Datalog approach of the KROWN_Extended submodule.
 
         The reverse Datalog program consumes the RDF graph as tab separated facts
         and derives one tuple per recovered triple, so the tuples are assembled
-        into rows before they reach the destination schema. A Datalog forward phase
-        already wrote those facts, and reusing them keeps both directions on the terms
-        the forward program built.
+        into rows before they reach the destination schema. The facts come directly
+        from the matching Soufflé forward execution.
         """
         project_root = Path(__file__).resolve().parent.parent
-        if facts_directory is None:
-            write_rdf_facts(rdf_file, self.shared_dir)
-        else:
-            restore_rdf_facts(facts_directory, self.shared_dir)
+        restore_rdf_facts(facts_directory, self.shared_dir)
         resource = reverse_souffle_resource(project_root)(
             str(self.scenario_path / "data"),
             str(resource_config_directory(project_root)),
             str(self.scenario_path),
-            False,
+            True,
         )
         attach_database_to_krown_network(BENCHMARK_DATABASE_CONTAINER)
         if not resource.execute_mapping(
             self.mapping_file.name,
             "out.nt",
             "ntriples",
+            with_provenance=True,
             support_report=SUPPORT_REPORT,
             rdb_username=self.database.username,
             rdb_password=self.database.password,
@@ -623,6 +629,8 @@ class KrownBenchmarkRunner:
         cleanup_tables: bool = True,
         resume_session: Path | None = None,
     ):
+        if inversion_engine == "souffle" and forward_engine != "souffle":
+            raise ValueError("Soufflé inversion requires Soufflé as the forward engine")
         self.project_root = Path(__file__).resolve().parent.parent
         self.data_generator_dir = self.project_root / "KROWN" / "data-generator"
         benchmark_dir = Path(__file__).resolve().parent / "krown"
@@ -700,12 +708,8 @@ class KrownBenchmarkRunner:
                 "The session to continue holds scenarios outside the selected "
                 f"suites, which the results would drop: {', '.join(unselected)}"
             )
-        self.krown_commit = subprocess.run(
-            ["git", "-C", str(self.project_root / "KROWN"), "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
+        self.krown_commit = _git_commit(self.project_root / "KROWN")
+        self.krown_extended_commit = _git_commit(self.project_root / "KROWN_Extended")
 
     def _read_partial_results(
         self,
@@ -1249,7 +1253,7 @@ class KrownBenchmarkRunner:
         non_invertible_error: NonInvertibleError | None = None
         try:
             if self.inversion_engine == "souffle":
-                operations.backward_souffle(forward.rdf_file, forward.facts_directory)
+                operations.backward_souffle(cast(Path, forward.facts_directory))
             else:
                 self.run_stage(
                     "backward",
@@ -1383,6 +1387,8 @@ class KrownBenchmarkRunner:
             "provenance": {
                 "krown_repository": KROWN_REPOSITORY,
                 "krown_commit": self.krown_commit,
+                "krown_extended_repository": KROWN_EXTENDED_REPOSITORY,
+                "krown_extended_commit": self.krown_extended_commit,
                 "forward_engine_version": self.forward_definition.version,
                 "forward_executor": "KROWN Executor",
                 "backward_executor": (
