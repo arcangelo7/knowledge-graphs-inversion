@@ -4,8 +4,6 @@
 
 import csv
 import importlib
-import importlib.util
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -106,8 +104,9 @@ class ExecutorFactory(Protocol):
     ) -> ExecutorProtocol: ...
 
 
-def _add_framework_path(project_root: Path) -> None:
-    framework_path = str(project_root / FRAMEWORK_DIRECTORY)
+def _add_framework_path(project_root: Path, forked: bool = False) -> None:
+    directory = FORK_FRAMEWORK_DIRECTORY if forked else FRAMEWORK_DIRECTORY
+    framework_path = str(project_root / directory)
     if framework_path not in sys.path:
         sys.path.insert(0, framework_path)
 
@@ -117,34 +116,18 @@ def resource_config_directory(project_root: Path) -> Path:
 
 
 def load_fork_module(project_root: Path, module_name: str) -> ModuleType:
-    _add_framework_path(project_root)
-    importlib.import_module(RESOURCE_PACKAGE)
-    qualified_name = f"{RESOURCE_PACKAGE}.{module_name}"
-    if qualified_name in sys.modules:
-        return sys.modules[qualified_name]
-
-    module_file = (
-        project_root / FORK_FRAMEWORK_DIRECTORY / RESOURCE_PACKAGE / f"{module_name}.py"
-    )
-    spec = importlib.util.spec_from_file_location(qualified_name, module_file)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[qualified_name] = module
-    spec.loader.exec_module(module)
-    return module
+    _add_framework_path(project_root, forked=True)
+    return importlib.import_module(f"{RESOURCE_PACKAGE}.{module_name}")
 
 
 def load_resource_module(
     project_root: Path,
     definition: ForwardEngineDefinition,
 ) -> ModuleType:
-    if definition.forked:
-        module = load_fork_module(project_root, definition.module_name)
-    else:
-        _add_framework_path(project_root)
-        module = importlib.import_module(
-            f"{RESOURCE_PACKAGE}.{definition.module_name}",
-        )
+    _add_framework_path(project_root, forked=definition.forked)
+    module = importlib.import_module(
+        f"{RESOURCE_PACKAGE}.{definition.module_name}",
+    )
     setattr(module, "VERSION", definition.version)
     return module
 
@@ -157,26 +140,9 @@ def load_mapping_resource(
     return cast(MappingResourceFactory, getattr(module, definition.resource))
 
 
-def _wait_for_container_exit(_docker: object, container_id: str) -> int:
-    process = subprocess.run(
-        ["docker", "wait", container_id],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return int(process.stdout.strip())
-
-
-def _use_container_exit_status() -> None:
-    docker_module = importlib.import_module("bench_executor.docker")
-    docker_class = getattr(docker_module, "Docker")
-    setattr(docker_class, "wait", _wait_for_container_exit)
-
-
 class SynchronousCollector:
     def __init__(
         self,
-        project_root: Path,
         case_name: str,
         run_path: Path,
         sample_interval: float,
@@ -184,7 +150,6 @@ class SynchronousCollector:
         run_id: int,
         case_directory: Path,
     ):
-        _add_framework_path(project_root)
         collector_module = importlib.import_module("bench_executor.collector")
         collector_class = cast(CollectorFactory, getattr(collector_module, "Collector"))
         self._collector = collector_class(
@@ -278,8 +243,7 @@ class OfficialKrownExecutor:
         scenario_path: Path,
         definition: ForwardEngineDefinition,
     ):
-        _add_framework_path(project_root)
-        _use_container_exit_status()
+        _add_framework_path(project_root, forked=definition.forked)
         load_resource_module(project_root, definition)
         executor_module = importlib.import_module("bench_executor.executor")
         executor_class = cast(ExecutorFactory, getattr(executor_module, "Executor"))
@@ -295,7 +259,6 @@ class OfficialKrownExecutor:
             raise RuntimeError(f"KROWN discovered {len(cases)} cases instead of one")
         self.case = cases[0]
         self.scenario_path = scenario_path
-        self.definition = definition
 
     def _record_progress(
         self,
@@ -309,7 +272,12 @@ class OfficialKrownExecutor:
 
     @property
     def resource(self) -> str:
-        return self.definition.resource
+        step = self.steps[self.mapping_step - 1]
+        return cast(str, step["resource"])
+
+    @property
+    def resource_directory(self) -> str:
+        return self.resource.lower().replace("_", "")
 
     @property
     def steps(self) -> list[dict[str, object]]:
@@ -321,10 +289,10 @@ class OfficialKrownExecutor:
         matching = [
             index
             for index, step in enumerate(self.steps, start=1)
-            if step["command"] == "execute_mapping"
+            if step["command"] in ("execute_mapping", "execute_forward_provenance")
         ]
         if len(matching) != 1:
-            raise RuntimeError("KROWN case must have one execute_mapping step")
+            raise RuntimeError("KROWN case must have one mapping step")
         return matching[0]
 
     @property

@@ -63,14 +63,16 @@ from benchmarks.krown_stats import (
 )
 from benchmarks.krown_validator import KrownValidator
 from benchmarks.souffle_inversion import (
+    FACT_FILES,
+    SOUFFLE_EVIDENCE_FILES,
     SUPPORT_REPORT,
     SouffleInversionError,
     assemble_rows,
     attach_database_to_krown_network,
     load_relation,
     parse_source_relations,
-    preserve_rdf_facts,
-    restore_rdf_facts,
+    preserve_souffle_files,
+    restore_souffle_files,
     reverse_souffle_resource,
     write_rdf_dataset,
 )
@@ -142,7 +144,7 @@ class SourceTable:
 class ForwardMeasurement:
     iteration: int
     rdf_file: Path
-    facts_directory: Path | None
+    souffle_directory: Path | None
     duration: float
     rdf_statements: int
     run_path: Path
@@ -230,6 +232,7 @@ def generate_scenario(
     scenarios_root: Path,
     data_generator_dir: Path,
     resource: str,
+    with_souffle_provenance: bool,
 ) -> Path:
     if scenarios_root.exists():
         shutil.rmtree(scenarios_root)
@@ -272,6 +275,22 @@ def generate_scenario(
         raise ValueError(
             f"Unexpected generated scenario: expected={scenario.generated_name}, "
             f"actual={scenario_path.name}"
+        )
+    if with_souffle_provenance:
+        metadata_file = metadata_files[0]
+        metadata = cast(
+            dict[str, object],
+            json.loads(metadata_file.read_text(encoding="utf-8")),
+        )
+        steps = cast(list[dict[str, object]], metadata["steps"])
+        mapping_steps = [step for step in steps if step["command"] == "execute_mapping"]
+        if len(mapping_steps) != 1:
+            raise ValueError("Expected one KROWN mapping step")
+        mapping_steps[0]["resource"] = "ReverseSouffle"
+        mapping_steps[0]["command"] = "execute_forward_provenance"
+        metadata_file.write_text(
+            json.dumps(metadata, indent=2) + "\n",
+            encoding="utf-8",
         )
     return scenario_path
 
@@ -319,12 +338,14 @@ class ScenarioOperations:
     def _metadata_steps(self) -> list[dict[str, object]]:
         return cast(list[dict[str, object]], self.metadata["steps"])
 
-    def _metadata_step(self, command: str) -> dict[str, object]:
+    def _mapping_step(self) -> dict[str, object]:
         matching_steps = [
-            step for step in self._metadata_steps() if step["command"] == command
+            step
+            for step in self._metadata_steps()
+            if step["command"] in ("execute_mapping", "execute_forward_provenance")
         ]
         if len(matching_steps) != 1:
-            raise ValueError(f"Expected one {command} step in KROWN metadata")
+            raise ValueError("Expected one mapping step in KROWN metadata")
         return matching_steps[0]
 
     def _source_tables(self) -> tuple[SourceTable, ...]:
@@ -360,7 +381,7 @@ class ScenarioOperations:
     def mapping_file(self) -> Path:
         parameters = cast(
             dict[str, str],
-            self._metadata_step("execute_mapping")["parameters"],
+            self._mapping_step()["parameters"],
         )
         return self.shared_dir / parameters["mapping_file"]
 
@@ -505,24 +526,28 @@ class ScenarioOperations:
             source_db_url=self.database.sqlalchemy_url(SOURCE_SCHEMA),
         )
 
-    def backward_souffle(self, facts_directory: Path) -> None:
+    def backward_souffle(self, souffle_directory: Path) -> None:
         """Invert with the Datalog approach of the KROWN_Extended submodule.
 
-        The reverse Datalog program consumes the RDF graph as tab separated facts
-        and derives one tuple per recovered triple, so the tuples are assembled
-        into rows before they reach the destination schema. The facts come directly
-        from the matching Soufflé forward execution.
+        The reverse Datalog program consumes the RDF facts and contributor provenance
+        from the matching forward execution. Its recovered tuples and the forward
+        contributors are assembled into rows before they reach the destination
+        schema.
         """
         project_root = Path(__file__).resolve().parent.parent
-        restore_rdf_facts(facts_directory, self.shared_dir)
+        restore_souffle_files(
+            souffle_directory,
+            self.shared_dir,
+            SOUFFLE_EVIDENCE_FILES,
+        )
         resource = reverse_souffle_resource(project_root)(
             str(self.scenario_path / "data"),
             str(resource_config_directory(project_root)),
             str(self.scenario_path),
-            True,
+            False,
         )
         attach_database_to_krown_network(BENCHMARK_DATABASE_CONTAINER)
-        if not resource.execute_mapping(
+        if not resource.execute_reverse_only(
             self.mapping_file.name,
             "out.nt",
             "ntriples",
@@ -640,6 +665,8 @@ class KrownBenchmarkRunner:
         self.forward_engine = forward_engine
         self.forward_definition = FORWARD_ENGINES[forward_engine]
         self.inversion_engine = inversion_engine
+        self.krown_commit = _git_commit(self.project_root / "KROWN")
+        self.krown_extended_commit = _git_commit(self.project_root / "KROWN_Extended")
         self.iterations = iterations
         self.sample_interval = sample_interval
         self.cleanup_tables = cleanup_tables
@@ -708,8 +735,6 @@ class KrownBenchmarkRunner:
                 "The session to continue holds scenarios outside the selected "
                 f"suites, which the results would drop: {', '.join(unselected)}"
             )
-        self.krown_commit = _git_commit(self.project_root / "KROWN")
-        self.krown_extended_commit = _git_commit(self.project_root / "KROWN_Extended")
 
     def _read_partial_results(
         self,
@@ -728,17 +753,29 @@ class KrownBenchmarkRunner:
             dict[str, object],
             json.loads(partial_files[0].read_text(encoding="utf-8")),
         )
+        provenance = cast(dict[str, object], payload["provenance"])
         requested: dict[str, object] = {
             "mode": self.mode,
             "iterations": self.iterations,
             "sample_interval_seconds": self.sample_interval,
             "forward_engine": self.forward_engine,
             "inversion_engine": self.inversion_engine,
+            "krown_commit": self.krown_commit,
+            "krown_extended_commit": self.krown_extended_commit,
+        }
+        recorded: dict[str, object] = {
+            "mode": payload["mode"],
+            "iterations": payload["iterations"],
+            "sample_interval_seconds": payload["sample_interval_seconds"],
+            "forward_engine": payload["forward_engine"],
+            "inversion_engine": payload["inversion_engine"],
+            "krown_commit": provenance["krown_commit"],
+            "krown_extended_commit": provenance["krown_extended_commit"],
         }
         mismatched = {
-            key: f"{payload[key]} instead of {value}"
+            key: f"{recorded[key]} instead of {value}"
             for key, value in requested.items()
-            if payload[key] != value
+            if recorded[key] != value
         }
         if mismatched:
             raise ValueError(
@@ -1101,7 +1138,10 @@ class KrownBenchmarkRunner:
             operations.scenario_path,
             self.forward_definition,
         )
-        engine_directory = self.forward_definition.module_name
+        engine_directory = executor.resource_directory
+        souffle_files = (
+            SOUFFLE_EVIDENCE_FILES if self.inversion_engine == "souffle" else FACT_FILES
+        )
         for iteration in range(1, runs + 1):
             progress.update(
                 task,
@@ -1117,9 +1157,10 @@ class KrownBenchmarkRunner:
                 self._preserve_forward_results(scenario, executor, phase)
                 raise error
             if self.forward_definition.writes_facts:
-                preserve_rdf_facts(
+                preserve_souffle_files(
                     operations.shared_dir,
                     executor.results_path / f"run_{iteration}" / engine_directory,
+                    souffle_files,
                 )
 
         if report_statistics:
@@ -1139,11 +1180,11 @@ class KrownBenchmarkRunner:
         for iteration in range(1, runs + 1):
             run_path = results_path / f"run_{iteration}"
             engine_path = run_path / engine_directory
-            facts_directory = None
+            souffle_directory = None
             if self.forward_definition.writes_facts:
-                facts_directory = engine_path
+                souffle_directory = engine_path
                 rdf_file = engine_path / DATALOG_RDF_FILE
-                write_rdf_dataset(facts_directory, rdf_file)
+                write_rdf_dataset(souffle_directory, rdf_file)
             else:
                 rdf_file = engine_path / executor.output_file
                 if scenario.generator == "NamedGraph":
@@ -1157,7 +1198,7 @@ class KrownBenchmarkRunner:
                 ForwardMeasurement(
                     iteration=iteration,
                     rdf_file=rdf_file,
-                    facts_directory=facts_directory,
+                    souffle_directory=souffle_directory,
                     duration=read_step_duration(
                         run_path / "metrics.csv",
                         executor.mapping_step,
@@ -1241,7 +1282,6 @@ class KrownBenchmarkRunner:
         run_path = case_directory / "results" / f"run_{iteration}"
         run_path.mkdir(parents=True)
         collector = SynchronousCollector(
-            project_root=self.project_root,
             case_name=f"{scenario.generated_name}:backward",
             run_path=run_path,
             sample_interval=self.sample_interval,
@@ -1253,7 +1293,7 @@ class KrownBenchmarkRunner:
         non_invertible_error: NonInvertibleError | None = None
         try:
             if self.inversion_engine == "souffle":
-                operations.backward_souffle(cast(Path, forward.facts_directory))
+                operations.backward_souffle(cast(Path, forward.souffle_directory))
             else:
                 self.run_stage(
                     "backward",
@@ -1654,6 +1694,7 @@ class KrownBenchmarkRunner:
                         self.scenarios_root,
                         self.data_generator_dir,
                         self.forward_definition.resource,
+                        self.inversion_engine == "souffle",
                     )
                     operations = ScenarioOperations(
                         scenario, scenario_path, self.database

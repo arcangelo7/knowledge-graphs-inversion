@@ -20,6 +20,8 @@ KROWN_NETWORK = "bench_executor"
 TRIPLE_FACTS = "triple.csv"
 QUADRUPLE_FACTS = "quadruple.csv"
 FACT_FILES = (TRIPLE_FACTS, QUADRUPLE_FACTS)
+PROVENANCE_FILES = ("ProvContributor.csv", "ProvQuadContributor.csv")
+SOUFFLE_EVIDENCE_FILES = (*FACT_FILES, *PROVENANCE_FILES)
 FORWARD_PROGRAM = "Datalog_rules.rs"
 REVERSE_PROGRAM = "Datalog_reverse.rs"
 SUPPORT_REPORT = "support.json"
@@ -74,20 +76,28 @@ def write_rdf_dataset(facts_directory: Path, rdf_file: Path) -> None:
                     dataset.write(" ".join(line.rstrip("\n").split("\t")) + " .\n")
 
 
-def preserve_rdf_facts(shared_directory: Path, facts_directory: Path) -> None:
-    """Keep the facts of one run before the next one overwrites them.
+def preserve_souffle_files(
+    shared_directory: Path,
+    destination: Path,
+    filenames: tuple[str, ...],
+) -> None:
+    """Keep the outputs of one run before the next one overwrites them.
 
     KROWN collects only the RDF files a resource writes, and the Datalog resource
     writes none.
     """
-    facts_directory.mkdir(parents=True, exist_ok=True)
-    for name in FACT_FILES:
-        shutil.move(shared_directory / name, facts_directory / name)
+    destination.mkdir(parents=True, exist_ok=True)
+    for name in filenames:
+        shutil.move(shared_directory / name, destination / name)
 
 
-def restore_rdf_facts(facts_directory: Path, shared_directory: Path) -> None:
-    for name in FACT_FILES:
-        shutil.copy(facts_directory / name, shared_directory / name)
+def restore_souffle_files(
+    source: Path,
+    shared_directory: Path,
+    filenames: tuple[str, ...],
+) -> None:
+    for name in filenames:
+        shutil.copy(source / name, shared_directory / name)
 
 
 def parse_source_relations(shared_directory: Path) -> tuple[SourceRelation, ...]:
@@ -146,28 +156,58 @@ def parse_source_relations(shared_directory: Path) -> tuple[SourceRelation, ...]
 def assemble_rows(
     shared_directory: Path, relation: SourceRelation
 ) -> list[tuple[str, ...]]:
-    """Merge the per-triple evidence tuples into whole source rows.
+    """Merge reverse tuples and forward contributors into whole source rows.
 
-    The reverse program derives one tuple per recovered triple, carrying a single
-    column plus the subject key. Rows are rebuilt by grouping on that key.
+    Both forms of evidence carry values from one RDF statement plus the subject
+    key. Rows are rebuilt by grouping on that key.
     """
     key_positions = [relation.columns.index(column) for column in relation.key_columns]
     merged: dict[tuple[str, ...], list[str]] = {}
+
+    def merge(values: list[str]) -> None:
+        key = tuple(values[position] for position in key_positions)
+        if not all(key):
+            return
+        row = merged.setdefault(key, [""] * len(relation.columns))
+        for position, value in enumerate(values):
+            if not value:
+                continue
+            if row[position] and row[position] != value:
+                raise SouffleInversionError(
+                    f"Conflicting values for {relation.table}."
+                    f"{relation.columns[position]} at key {key}: "
+                    f"{row[position]!r} and {value!r}"
+                )
+            row[position] = value
+
     with (shared_directory / relation.recovered_file).open(encoding="utf-8") as file:
         for line in file:
-            values = line.rstrip("\n").split("\t")
-            key = tuple(values[position] for position in key_positions)
-            row = merged.setdefault(key, [""] * len(relation.columns))
-            for position, value in enumerate(values):
-                if not value:
-                    continue
-                if row[position] and row[position] != value:
-                    raise SouffleInversionError(
-                        f"Conflicting values for {relation.table}."
-                        f"{relation.columns[position]} at key {key}: "
-                        f"{row[position]!r} and {value!r}"
-                    )
-                row[position] = value
+            merge(line.rstrip("\n").split("\t"))
+
+    column_positions = {
+        column: position for position, column in enumerate(relation.columns)
+    }
+    for filename, column_index in (
+        (PROVENANCE_FILES[0], 4),
+        (PROVENANCE_FILES[1], 5),
+    ):
+        statement: tuple[str, ...] | None = None
+        values = [""] * len(relation.columns)
+        with (shared_directory / filename).open(encoding="utf-8") as file:
+            for line in file:
+                fields = line.rstrip("\n").split("\t")
+                current_statement = tuple(fields[:column_index])
+                if current_statement != statement:
+                    if statement is not None:
+                        merge(values)
+                    statement = current_statement
+                    values = [""] * len(relation.columns)
+                if fields[0] == relation.name:
+                    values[column_positions[fields[column_index]]] = fields[
+                        column_index + 1
+                    ]
+        if statement is not None:
+            merge(values)
     return [tuple(row) for row in merged.values()]
 
 
@@ -242,7 +282,7 @@ def attach_database_to_krown_network(container_name: str) -> None:
 
 
 class ReverseSouffleResource(Protocol):
-    def execute_mapping(
+    def execute_reverse_only(
         self,
         mapping_file: str,
         output_file: str,
