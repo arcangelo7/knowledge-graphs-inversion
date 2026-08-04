@@ -80,22 +80,32 @@ The reported stage durations come from KROWN's `metrics.csv`: they are the diffe
 
 The official KROWN collector runs on the Linux host with a default sampling interval of 0.1 seconds. Its CPU, RAM, swap, disk, and network values describe the whole host, not an isolated benchmark process. Run the benchmark without unrelated workloads when comparing machines or revisions.
 
-## Legacy results
+## Results
 
-The checkpoint collected on 16 July 2026 used the earlier local runner and one iteration per scenario. The [raw results](results/krown_benchmark_results_raw_2026-07-16.json) and [aggregated statistics](results/krown_benchmark_results_stats_2026-07-16.json) remain available for historical comparison. Their timing and resource fields are not directly comparable with runs produced by the aligned adapter.
+The run of 4 August 2026 measured all 58 scenarios in `roundtrip` mode with three iterations each, using RMLMapper 8.1.0 for the forward phase and `kgi` for the inversion. The [raw results](results/krown_benchmark_results_raw_2026-08-04.json) and the [aggregated statistics](results/krown_benchmark_results_stats_2026-08-04.json) record every iteration.
 
 | Outcome | Scenarios |
 | --- | ---: |
+| `AMBIGUOUS` | 22 |
+| `PARTIAL` | 18 |
 | `FULL` | 8 |
-| `PARTIAL` | 13 |
-| `NON_INVERTIBLE` | 6 |
-| `OUT_OF_MEMORY` | 11 |
+| `OUT_OF_MEMORY` | 7 |
 | `TIMEOUT` | 3 |
-| `FAILED` | 17 |
 
-Of the 31 failed scenarios, 15 failed during forward mapping: 11 ran out of memory, three timed out, and one ended after a Java Virtual Machine crash. The official RMLMapper/PostgreSQL results also report resource limits for the same configurations: out-of-memory failures for 10 million rows and value sizes of 5,000 and 10,000 characters, and timeouts for named-graph scenarios and join-condition cases with 5, 10, or 15 conditions. See the [KROWN record](https://zenodo.org/records/10973892).
+Forward mapping completed for 48 scenarios, and each of those was inverted and validated. No round-trip mismatch was recorded, and no scenario returned `NON_INVERTIBLE`. The eight `FULL` outcomes are the `RawData` scenarios that completed, which is what that suite expects since it exposes every source column.
 
-The other 16 failures are RDF round-trip mismatches after forward mapping completed. They remain recorded as failures pending investigation.
+The remaining ten scenarios stopped during forward mapping, before the inversion could run. Seven exhausted memory: 10 million rows, cell sizes of 5,000 and 10,000 characters, and the four scenarios carrying 15 named graphs. Three exceeded the time limit, namely the cases with 5, 10, and 15 join conditions. The official RMLMapper/PostgreSQL results report resource limits for the same configurations. See the [KROWN record](https://zenodo.org/records/10973892).
+
+Inversion overhead, reported as `inversion time / forward time × 100`, separates the joins suite from the others.
+
+| Suite | Scenarios measured | Overhead |
+| --- | ---: | --- |
+| Raw data | 8 | 48%–384% |
+| Mappings | 7 | 105%–318% |
+| Named graphs | 20 | 124%–543% |
+| Joins | 13 | 0.2%–0.3% |
+
+The joins figures follow from the forward phase rather than from a faster inversion. RMLMapper needs more than 6,000 seconds on each join scenario, while inverting the resulting graph takes between 11 and 25 seconds, so the ratio approaches zero.
 
 ### Raw data
 

@@ -687,7 +687,7 @@ class KrownBenchmarkRunner:
             )
             self.measured_runs: dict[str, list[dict[str, object]]] = {}
         else:
-            self.session_dir = resume_session
+            self.session_dir = resume_session.resolve()
             self.timestamp, self.measured_runs = self._read_partial_results(
                 resume_session
             )
