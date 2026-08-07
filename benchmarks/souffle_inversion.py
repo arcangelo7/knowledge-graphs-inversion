@@ -67,6 +67,12 @@ def provenance_files(directory: Path) -> tuple[str, ...]:
     return filenames
 
 
+def inversion_input_files(directory: Path, with_provenance: bool) -> tuple[str, ...]:
+    if with_provenance:
+        return provenance_files(directory)
+    return FACT_FILES
+
+
 def write_rdf_dataset(facts_directory: Path, rdf_file: Path) -> None:
     """Serialize the fact files a Datalog program wrote into an RDF dataset.
 

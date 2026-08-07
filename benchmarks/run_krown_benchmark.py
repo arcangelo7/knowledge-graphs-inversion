@@ -71,10 +71,10 @@ from benchmarks.souffle_inversion import (
     SouffleInversionError,
     attach_database_to_krown_network,
     copy_souffle_files,
+    inversion_input_files,
     load_relation,
     parse_source_relations,
     preserve_souffle_files,
-    provenance_files,
     read_recovered_rows,
     reverse_souffle_resource,
     write_rdf_dataset,
@@ -529,17 +529,21 @@ class ScenarioOperations:
             source_db_url=self.database.sqlalchemy_url(SOURCE_SCHEMA),
         )
 
-    def backward_souffle(self, souffle_directory: Path) -> None:
+    def backward_souffle(
+        self,
+        souffle_directory: Path,
+        with_provenance: bool,
+    ) -> None:
         """Invert with the Datalog approach of the KROWN_Extended submodule.
 
-        The reverse Datalog program consumes only the per-column provenance from the
-        matching forward execution and emits assembled source rows.
+        The reverse Datalog program consumes the facts or per-column provenance from
+        the matching forward execution and emits assembled source rows.
         """
         project_root = Path(__file__).resolve().parent.parent
         copy_souffle_files(
             souffle_directory,
             self.shared_dir,
-            provenance_files(souffle_directory),
+            inversion_input_files(souffle_directory, with_provenance),
         )
         resource = reverse_souffle_resource(project_root)(
             str(self.scenario_path / "data"),
@@ -552,7 +556,7 @@ class ScenarioOperations:
             self.mapping_file.name,
             "out.nt",
             "ntriples",
-            with_provenance=True,
+            with_provenance=with_provenance,
             support_report=SUPPORT_REPORT,
             rdb_username=self.database.username,
             rdb_password=self.database.password,
@@ -582,11 +586,12 @@ class ScenarioOperations:
         self,
         souffle_directory: Path,
         destination: Path,
+        with_provenance: bool,
     ) -> None:
         copy_souffle_files(
             souffle_directory,
             destination,
-            provenance_files(souffle_directory),
+            inversion_input_files(souffle_directory, with_provenance),
         )
         recovered_files = tuple(
             relation.recovered_file
@@ -672,11 +677,16 @@ class KrownBenchmarkRunner:
         scenario_name: str | None,
         forward_engine: ForwardEngine = "rmlmapper",
         inversion_engine: InversionEngine = "kgi",
+        souffle_provenance: bool = False,
         cleanup_tables: bool = True,
         resume_session: Path | None = None,
     ):
         if inversion_engine == "souffle" and forward_engine != "souffle":
             raise ValueError("Soufflé inversion requires Soufflé as the forward engine")
+        if souffle_provenance and inversion_engine != "souffle":
+            raise ValueError(
+                "Soufflé provenance requires Soufflé as the inversion engine"
+            )
         self.project_root = Path(__file__).resolve().parent.parent
         self.data_generator_dir = self.project_root / "KROWN" / "data-generator"
         benchmark_dir = Path(__file__).resolve().parent / "krown"
@@ -686,6 +696,7 @@ class KrownBenchmarkRunner:
         self.forward_engine = forward_engine
         self.forward_definition = FORWARD_ENGINES[forward_engine]
         self.inversion_engine = inversion_engine
+        self.souffle_provenance = souffle_provenance
         self.krown_commit = _git_commit(self.project_root / "KROWN")
         self.krown_extended_commit = _git_commit(self.project_root / "KROWN_Extended")
         self.iterations = iterations
@@ -758,7 +769,7 @@ class KrownBenchmarkRunner:
             )
 
     def _expected_outcome(self, scenario: KrownScenario) -> str:
-        if self.inversion_engine == "souffle" and scenario.generator == "Mappings":
+        if self.souffle_provenance and scenario.generator == "Mappings":
             return "PARTIAL"
         return scenario.expected_outcome
 
@@ -786,6 +797,7 @@ class KrownBenchmarkRunner:
             "sample_interval_seconds": self.sample_interval,
             "forward_engine": self.forward_engine,
             "inversion_engine": self.inversion_engine,
+            "souffle_provenance": self.souffle_provenance,
             "krown_commit": self.krown_commit,
             "krown_extended_commit": self.krown_extended_commit,
         }
@@ -795,6 +807,7 @@ class KrownBenchmarkRunner:
             "sample_interval_seconds": payload["sample_interval_seconds"],
             "forward_engine": payload["forward_engine"],
             "inversion_engine": payload["inversion_engine"],
+            "souffle_provenance": payload["souffle_provenance"],
             "krown_commit": provenance["krown_commit"],
             "krown_extended_commit": provenance["krown_extended_commit"],
         }
@@ -1181,13 +1194,13 @@ class KrownBenchmarkRunner:
                 raise error
             if self.forward_definition.writes_facts:
                 souffle_files = FACT_FILES
-                if self.inversion_engine == "souffle":
+                if self.souffle_provenance:
                     souffle_files = (
                         *FACT_FILES,
                         FORWARD_PROGRAM,
                         FORWARD_PROVENANCE_PROGRAM,
                         REVERSE_PROGRAM,
-                        *provenance_files(operations.shared_dir),
+                        *inversion_input_files(operations.shared_dir, True),
                     )
                 preserve_souffle_files(
                     operations.shared_dir,
@@ -1325,7 +1338,10 @@ class KrownBenchmarkRunner:
         non_invertible_error: NonInvertibleError | None = None
         try:
             if self.inversion_engine == "souffle":
-                operations.backward_souffle(cast(Path, forward.souffle_directory))
+                operations.backward_souffle(
+                    cast(Path, forward.souffle_directory),
+                    self.souffle_provenance,
+                )
             else:
                 self.run_stage(
                     "backward",
@@ -1349,6 +1365,7 @@ class KrownBenchmarkRunner:
             operations.preserve_souffle_artifacts(
                 cast(Path, forward.souffle_directory),
                 run_path,
+                self.souffle_provenance,
             )
 
         inversion_time = read_step_duration(run_path / "metrics.csv", 1)
@@ -1455,6 +1472,7 @@ class KrownBenchmarkRunner:
             "mode": self.mode,
             "forward_engine": self.forward_engine,
             "inversion_engine": self.inversion_engine,
+            "souffle_provenance": self.souffle_provenance,
             "measurement_scope": "system",
             "sample_interval_seconds": self.sample_interval,
             "sparql_engine": SPARQL_ENGINE,
@@ -1732,7 +1750,7 @@ class KrownBenchmarkRunner:
                         self.scenarios_root,
                         self.data_generator_dir,
                         self.forward_definition.resource,
-                        self.inversion_engine == "souffle",
+                        self.souffle_provenance,
                     )
                     operations = ScenarioOperations(
                         scenario, scenario_path, self.database
@@ -1859,6 +1877,14 @@ def parse_sample_interval(value: str) -> float:
     return parsed
 
 
+def parse_boolean(value: str) -> bool:
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    raise argparse.ArgumentTypeError("Value must be true or false")
+
+
 def parse_suites(value: str) -> tuple[str, ...]:
     if value == "all":
         return SUITES
@@ -1917,6 +1943,12 @@ def _benchmark_main(arguments: list[str]) -> int:
         default="kgi",
         help="Inversion engine: kgi (SPARQL) or souffle (Datalog)",
     )
+    parser.add_argument(
+        "--souffle-provenance",
+        type=parse_boolean,
+        default=False,
+        help="Use column provenance for Soufflé inversion: true or false",
+    )
     args = parser.parse_args(arguments)
     try:
         runner = KrownBenchmarkRunner(
@@ -1927,6 +1959,7 @@ def _benchmark_main(arguments: list[str]) -> int:
             scenario_name=args.scenario,
             forward_engine=args.forward_engine,
             inversion_engine=args.inversion_engine,
+            souffle_provenance=args.souffle_provenance,
             resume_session=args.resume,
         )
     except ValueError as error:

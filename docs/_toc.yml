@@ -23,4 +23,6 @@ parts:
     numbered: false
     chapters:
       - file: benchmarking/krown
+        sections:
+          - file: benchmarking/krown-results
       - file: benchmarking/gtfs
