@@ -20,16 +20,14 @@ KROWN_NETWORK = "bench_executor"
 TRIPLE_FACTS = "triple.csv"
 QUADRUPLE_FACTS = "quadruple.csv"
 FACT_FILES = (TRIPLE_FACTS, QUADRUPLE_FACTS)
-PROVENANCE_FILES = ("ProvContributor.csv", "ProvQuadContributor.csv")
-SOUFFLE_EVIDENCE_FILES = (*FACT_FILES, *PROVENANCE_FILES)
+PROVENANCE_GLOB = "ProvCol_*.csv"
 FORWARD_PROGRAM = "Datalog_rules.rs"
+FORWARD_PROVENANCE_PROGRAM = "Datalog_forward_with_prov.rs"
 REVERSE_PROGRAM = "Datalog_reverse.rs"
 SUPPORT_REPORT = "support.json"
 
 SOURCE_DECLARATION = re.compile(r"^\.decl (\w+)\((.*)\)$")
 SOURCE_INPUT = re.compile(r"^\.input (\w+)")
-SUBJECT_RULE = re.compile(r"^(Subject\d+_\w+)\(.*?\) :- (\w+)\(")
-SUBJECT_PARSER = re.compile(r"^\.decl Parse_(Subject\d+_\w+)\(s:symbol,?(.*)\)$")
 LOGICAL_TABLE_SUFFIX = re.compile(r"_lt\d+$")
 
 
@@ -44,7 +42,6 @@ class SourceRelation:
     name: str
     table: str
     columns: tuple[str, ...]
-    key_columns: tuple[str, ...]
 
     @property
     def recovered_file(self) -> str:
@@ -61,6 +58,13 @@ def _declared_columns(arguments: str) -> tuple[str, ...]:
         for argument in arguments.split(",")
         if argument.strip()
     )
+
+
+def provenance_files(directory: Path) -> tuple[str, ...]:
+    filenames = tuple(path.name for path in sorted(directory.glob(PROVENANCE_GLOB)))
+    if not filenames:
+        raise SouffleInversionError(f"No provenance files found in {directory}")
+    return filenames
 
 
 def write_rdf_dataset(facts_directory: Path, rdf_file: Path) -> None:
@@ -91,25 +95,20 @@ def preserve_souffle_files(
         shutil.move(shared_directory / name, destination / name)
 
 
-def restore_souffle_files(
+def copy_souffle_files(
     source: Path,
-    shared_directory: Path,
+    destination: Path,
     filenames: tuple[str, ...],
 ) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
     for name in filenames:
-        shutil.copy(source / name, shared_directory / name)
+        shutil.copy(source / name, destination / name)
 
 
 def parse_source_relations(shared_directory: Path) -> tuple[SourceRelation, ...]:
-    """Read the relation names, columns and subject keys out of the two programs.
-
-    The forward program declares each source relation and binds every subject rule
-    to the relation it reads; the reverse program declares which columns the
-    matching subject parser recovers from an IRI.
-    """
+    """Read the source relation names and columns from the forward program."""
     declarations: dict[str, tuple[str, ...]] = {}
     inputs: list[str] = []
-    subject_sources: dict[str, str] = {}
     for line in (
         (shared_directory / FORWARD_PROGRAM).read_text(encoding="utf-8").splitlines()
     ):
@@ -120,95 +119,22 @@ def parse_source_relations(shared_directory: Path) -> tuple[SourceRelation, ...]
         source_input = SOURCE_INPUT.match(line)
         if source_input is not None:
             inputs.append(source_input.group(1))
-            continue
-        subject_rule = SUBJECT_RULE.match(line)
-        if subject_rule is not None:
-            subject_sources[subject_rule.group(1)] = subject_rule.group(2)
 
-    keys: dict[str, set[tuple[str, ...]]] = {name: set() for name in inputs}
-    for line in (
-        (shared_directory / REVERSE_PROGRAM).read_text(encoding="utf-8").splitlines()
-    ):
-        parser = SUBJECT_PARSER.match(line)
-        if parser is not None:
-            source = subject_sources[parser.group(1)]
-            keys[source].add(_declared_columns(parser.group(2)))
-
-    relations = []
-    for name in inputs:
-        key_sets = keys[name]
-        if len(key_sets) != 1:
-            raise SouffleInversionError(
-                f"Relation {name} has {len(key_sets)} distinct subject keys; "
-                "recovered tuples cannot be assembled unambiguously"
-            )
-        relations.append(
-            SourceRelation(
-                name=name,
-                table=LOGICAL_TABLE_SUFFIX.sub("", name),
-                columns=declarations[name],
-                key_columns=next(iter(key_sets)),
-            )
+    return tuple(
+        SourceRelation(
+            name=name,
+            table=LOGICAL_TABLE_SUFFIX.sub("", name),
+            columns=declarations[name],
         )
-    return tuple(relations)
+        for name in inputs
+    )
 
 
-def assemble_rows(
+def read_recovered_rows(
     shared_directory: Path, relation: SourceRelation
 ) -> list[tuple[str, ...]]:
-    """Merge reverse tuples and forward contributors into whole source rows.
-
-    Both forms of evidence carry values from one RDF statement plus the subject
-    key. Rows are rebuilt by grouping on that key.
-    """
-    key_positions = [relation.columns.index(column) for column in relation.key_columns]
-    merged: dict[tuple[str, ...], list[str]] = {}
-
-    def merge(values: list[str]) -> None:
-        key = tuple(values[position] for position in key_positions)
-        if not all(key):
-            return
-        row = merged.setdefault(key, [""] * len(relation.columns))
-        for position, value in enumerate(values):
-            if not value:
-                continue
-            if row[position] and row[position] != value:
-                raise SouffleInversionError(
-                    f"Conflicting values for {relation.table}."
-                    f"{relation.columns[position]} at key {key}: "
-                    f"{row[position]!r} and {value!r}"
-                )
-            row[position] = value
-
     with (shared_directory / relation.recovered_file).open(encoding="utf-8") as file:
-        for line in file:
-            merge(line.rstrip("\n").split("\t"))
-
-    column_positions = {
-        column: position for position, column in enumerate(relation.columns)
-    }
-    for filename, column_index in (
-        (PROVENANCE_FILES[0], 4),
-        (PROVENANCE_FILES[1], 5),
-    ):
-        statement: tuple[str, ...] | None = None
-        values = [""] * len(relation.columns)
-        with (shared_directory / filename).open(encoding="utf-8") as file:
-            for line in file:
-                fields = line.rstrip("\n").split("\t")
-                current_statement = tuple(fields[:column_index])
-                if current_statement != statement:
-                    if statement is not None:
-                        merge(values)
-                    statement = current_statement
-                    values = [""] * len(relation.columns)
-                if fields[0] == relation.name:
-                    values[column_positions[fields[column_index]]] = fields[
-                        column_index + 1
-                    ]
-        if statement is not None:
-            merge(values)
-    return [tuple(row) for row in merged.values()]
+        return [tuple(line.rstrip("\n").split("\t")) for line in file]
 
 
 def load_relation(

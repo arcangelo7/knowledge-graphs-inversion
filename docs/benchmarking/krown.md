@@ -64,7 +64,7 @@ Validating an inversion involves two materializations. The forward phase maps th
 | Engine | Implementation |
 | --- | --- |
 | `kgi` | the local implementation, which generates SPARQL queries from the mapping |
-| `souffle` | the Datalog approach of [KROWN_Extended](https://github.com/alloka/KROWN_Extended) |
+| `souffle` | the provenance-based Datalog approach of [KROWN_Extended](https://github.com/alloka/KROWN_Extended) pinned by the submodule |
 
 ## Measurement modes
 
@@ -73,7 +73,7 @@ Set `KROWN_MODE` to one of these values:
 | Mode | Measured work | Work outside measurement |
 | --- | --- | --- |
 | `forward` | KROWN `Executor` mapping step | generation and local validation |
-| `backward` | inversion under KROWN `Collector` | generation, one KROWN forward run used to prepare the RDF input, local database setup, and validation |
+| `backward` | inversion under KROWN `Collector` | generation, one KROWN forward run used to prepare the RDF or provenance input, local database setup, and validation |
 | `roundtrip` | KROWN `Executor` mapping step and the paired inversion measurement | generation, local database setup, and validation |
 
 The reported stage durations come from KROWN's `metrics.csv`: they are the difference between the first and last sample for that step, matching the duration calculation in KROWN `Stats`. The forward and backward phases keep separate metric files because only the forward phase can be represented by an unmodified KROWN scenario. In `roundtrip` mode, the runner pairs each forward iteration with the corresponding backward iteration and reports inversion overhead as `inversion time / forward time × 100`.

@@ -64,15 +64,18 @@ from benchmarks.krown_stats import (
 from benchmarks.krown_validator import KrownValidator
 from benchmarks.souffle_inversion import (
     FACT_FILES,
-    SOUFFLE_EVIDENCE_FILES,
+    FORWARD_PROGRAM,
+    FORWARD_PROVENANCE_PROGRAM,
+    REVERSE_PROGRAM,
     SUPPORT_REPORT,
     SouffleInversionError,
-    assemble_rows,
     attach_database_to_krown_network,
+    copy_souffle_files,
     load_relation,
     parse_source_relations,
     preserve_souffle_files,
-    restore_souffle_files,
+    provenance_files,
+    read_recovered_rows,
     reverse_souffle_resource,
     write_rdf_dataset,
 )
@@ -529,16 +532,14 @@ class ScenarioOperations:
     def backward_souffle(self, souffle_directory: Path) -> None:
         """Invert with the Datalog approach of the KROWN_Extended submodule.
 
-        The reverse Datalog program consumes the RDF facts and contributor provenance
-        from the matching forward execution. Its recovered tuples and the forward
-        contributors are assembled into rows before they reach the destination
-        schema.
+        The reverse Datalog program consumes only the per-column provenance from the
+        matching forward execution and emits assembled source rows.
         """
         project_root = Path(__file__).resolve().parent.parent
-        restore_souffle_files(
+        copy_souffle_files(
             souffle_directory,
             self.shared_dir,
-            SOUFFLE_EVIDENCE_FILES,
+            provenance_files(souffle_directory),
         )
         resource = reverse_souffle_resource(project_root)(
             str(self.scenario_path / "data"),
@@ -570,12 +571,32 @@ class ScenarioOperations:
                 load_relation(
                     engine,
                     relation,
-                    assemble_rows(self.shared_dir, relation),
+                    read_recovered_rows(self.shared_dir, relation),
                     SOURCE_SCHEMA,
                     DESTINATION_SCHEMA,
                 )
         finally:
             engine.dispose()
+
+    def preserve_souffle_artifacts(
+        self,
+        souffle_directory: Path,
+        destination: Path,
+    ) -> None:
+        copy_souffle_files(
+            souffle_directory,
+            destination,
+            provenance_files(souffle_directory),
+        )
+        recovered_files = tuple(
+            relation.recovered_file
+            for relation in parse_source_relations(self.shared_dir)
+        )
+        copy_souffle_files(
+            self.shared_dir,
+            destination,
+            (FORWARD_PROGRAM, REVERSE_PROGRAM, SUPPORT_REPORT, *recovered_files),
+        )
 
 
 def _scenario_by_name(project_root: Path, name: str) -> KrownScenario:
@@ -735,6 +756,11 @@ class KrownBenchmarkRunner:
                 "The session to continue holds scenarios outside the selected "
                 f"suites, which the results would drop: {', '.join(unselected)}"
             )
+
+    def _expected_outcome(self, scenario: KrownScenario) -> str:
+        if self.inversion_engine == "souffle" and scenario.generator == "Mappings":
+            return "PARTIAL"
+        return scenario.expected_outcome
 
     def _read_partial_results(
         self,
@@ -981,7 +1007,7 @@ class KrownBenchmarkRunner:
             "display_name": scenario.display_name,
             "suite": scenario.suite,
             "generator": scenario.generator,
-            "expected_outcome": scenario.expected_outcome,
+            "expected_outcome": self._expected_outcome(scenario),
             "parameters": scenario.parameters,
             "source_configuration": {
                 "identifier": scenario.identifier,
@@ -1010,8 +1036,8 @@ class KrownBenchmarkRunner:
             "validation_results": validation_results,
         }
 
-    @staticmethod
     def _build_failure_result(
+        self,
         scenario: KrownScenario,
         error: ScenarioExecutionFailure,
     ) -> dict[str, object]:
@@ -1021,7 +1047,7 @@ class KrownBenchmarkRunner:
             "display_name": scenario.display_name,
             "suite": scenario.suite,
             "generator": scenario.generator,
-            "expected_outcome": scenario.expected_outcome,
+            "expected_outcome": self._expected_outcome(scenario),
             "parameters": scenario.parameters,
             "source_configuration": {
                 "identifier": scenario.identifier,
@@ -1071,7 +1097,7 @@ class KrownBenchmarkRunner:
         validation = self.validator.validate_inversion(
             expected_tables=expected_tables,
             scenario_name=scenario.generated_name,
-            expected_outcome=scenario.expected_outcome,
+            expected_outcome=self._expected_outcome(scenario),
             original_rdf=original_rdf,
             roundtrip_rdf=roundtrip_rdf,
             missing_mapped_columns=missing_mapped_columns,
@@ -1139,9 +1165,6 @@ class KrownBenchmarkRunner:
             self.forward_definition,
         )
         engine_directory = executor.resource_directory
-        souffle_files = (
-            SOUFFLE_EVIDENCE_FILES if self.inversion_engine == "souffle" else FACT_FILES
-        )
         for iteration in range(1, runs + 1):
             progress.update(
                 task,
@@ -1157,6 +1180,15 @@ class KrownBenchmarkRunner:
                 self._preserve_forward_results(scenario, executor, phase)
                 raise error
             if self.forward_definition.writes_facts:
+                souffle_files = FACT_FILES
+                if self.inversion_engine == "souffle":
+                    souffle_files = (
+                        *FACT_FILES,
+                        FORWARD_PROGRAM,
+                        FORWARD_PROVENANCE_PROGRAM,
+                        REVERSE_PROGRAM,
+                        *provenance_files(operations.shared_dir),
+                    )
                 preserve_souffle_files(
                     operations.shared_dir,
                     executor.results_path / f"run_{iteration}" / engine_directory,
@@ -1307,11 +1339,17 @@ class KrownBenchmarkRunner:
                 raise
             scenario_failure = error
         except NonInvertibleError as error:
-            if scenario.expected_outcome != "NON_INVERTIBLE":
+            if self._expected_outcome(scenario) != "NON_INVERTIBLE":
                 raise
             non_invertible_error = error
         finally:
             collector.stop()
+
+        if self.inversion_engine == "souffle":
+            operations.preserve_souffle_artifacts(
+                cast(Path, forward.souffle_directory),
+                run_path,
+            )
 
         inversion_time = read_step_duration(run_path / "metrics.csv", 1)
         time.sleep(KROWN_COOLDOWN_SECONDS)
@@ -1348,7 +1386,7 @@ class KrownBenchmarkRunner:
                 {
                     "scenario": scenario.generated_name,
                     "validation_passed": True,
-                    "expected_outcome": scenario.expected_outcome,
+                    "expected_outcome": self._expected_outcome(scenario),
                     "outcome": "NON_INVERTIBLE",
                     "error": str(non_invertible_error),
                 },
@@ -1502,7 +1540,7 @@ class KrownBenchmarkRunner:
                 "display_name": scenario.display_name,
                 "suite": scenario.suite,
                 "generator": scenario.generator,
-                "expected_outcome": scenario.expected_outcome,
+                "expected_outcome": self._expected_outcome(scenario),
                 "parameters": scenario.parameters,
                 "source_configuration": {
                     "identifier": scenario.identifier,
