@@ -3,11 +3,32 @@
 # SPDX-License-Identifier: ISC
 
 from dataclasses import dataclass
+from typing import Literal, cast
+
+EnginePair = Literal["rmlmapper_kgi", "souffle_souffle"]
+
+DEFAULT_ENGINE_PAIR: EnginePair = "rmlmapper_kgi"
+ENGINE_PAIRS: dict[EnginePair, dict[str, str | tuple[str, ...]]] = {
+    "rmlmapper_kgi": {
+        "label": "RMLMapper → KGI",
+        "forward": "RMLMapper",
+        "inversion": "KGI",
+        "suite_ids": ("r2rml", "rml"),
+    },
+    "souffle_souffle": {
+        "label": "Soufflé → Soufflé",
+        "forward": "Soufflé",
+        "inversion": "Soufflé",
+        "suite_ids": ("r2rml",),
+    },
+}
 
 RML_MYSQL_UNAVAILABLE = (
     "RML is unavailable for MySQL because the RML Core RDB test suite does not "
     "yet provide MySQL variants."
 )
+SOUFFLE_RML_UNAVAILABLE = "Soufflé/Soufflé is available only for R2RML."
+R2RML_POSTGRESQL_ONLY_CASES = frozenset({"R2RMLTC0002f", "R2RMLTC0018a"})
 
 SUITE_LABELS = {
     "r2rml": "R2RML",
@@ -96,3 +117,20 @@ def validate_database_suite(database_system: str, suite_id: str) -> DatabaseConf
     if suite_id not in database.suite_hosts:
         raise ValueError(RML_MYSQL_UNAVAILABLE)
     return database
+
+
+def validate_engine_pair(engine_pair: str, suite_id: str) -> EnginePair:
+    if not engine_pair:
+        raise ValueError("Engine pair is required")
+    if engine_pair not in ENGINE_PAIRS:
+        raise ValueError(f"Unsupported engine pair: {engine_pair}")
+    selected_pair = cast(EnginePair, engine_pair)
+    suite_ids = ENGINE_PAIRS[selected_pair]["suite_ids"]
+    assert isinstance(suite_ids, tuple)
+    if suite_id not in suite_ids:
+        raise ValueError(SOUFFLE_RML_UNAVAILABLE)
+    return selected_pair
+
+
+def is_r2rml_case_available(test_id: str, database_system: str) -> bool:
+    return database_system == "postgresql" or test_id not in R2RML_POSTGRESQL_ONLY_CASES

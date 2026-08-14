@@ -947,6 +947,7 @@ dependencies = [
     { name = "psycopg2-binary" },
     { name = "pymysql" },
     { name = "pyoxigraph" },
+    { name = "rdflib" },
     { name = "sqlalchemy" },
 ]
 
@@ -980,6 +981,7 @@ requires-dist = [
     { name = "psycopg2-binary", specifier = ">=2.9.12,<3.0.0" },
     { name = "pymysql", specifier = ">=1.2.0" },
     { name = "pyoxigraph", specifier = "==0.5.9" },
+    { name = "rdflib", specifier = ">=7.2.1,<8.0.0" },
     { name = "sqlalchemy", specifier = ">=2.0.51,<3.0.0" },
 ]
 

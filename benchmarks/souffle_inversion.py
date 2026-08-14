@@ -4,10 +4,8 @@
 
 import csv
 import io
-import re
 import shutil
 import subprocess
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -15,49 +13,19 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from benchmarks.krown_metrics import load_fork_module
+from souffle_artifacts import FACT_FILES, SourceRelation
 
 KROWN_NETWORK = "bench_executor"
-TRIPLE_FACTS = "triple.csv"
-QUADRUPLE_FACTS = "quadruple.csv"
-FACT_FILES = (TRIPLE_FACTS, QUADRUPLE_FACTS)
 PROVENANCE_GLOB = "ProvCol_*.csv"
-FORWARD_PROGRAM = "Datalog_rules.rs"
 FORWARD_PROVENANCE_PROGRAM = "Datalog_forward_with_prov.rs"
-REVERSE_PROGRAM = "Datalog_reverse.rs"
-SUPPORT_REPORT = "support.json"
-
-SOURCE_DECLARATION = re.compile(r"^\.decl (\w+)\((.*)\)$")
-SOURCE_INPUT = re.compile(r"^\.input (\w+)")
-LOGICAL_TABLE_SUFFIX = re.compile(r"_lt\d+$")
 
 
 class SouffleInversionError(RuntimeError):
     pass
 
 
-@dataclass(frozen=True)
-class SourceRelation:
-    """A source relation of the forward Datalog program and its recovered form."""
-
-    name: str
-    table: str
-    columns: tuple[str, ...]
-
-    @property
-    def recovered_file(self) -> str:
-        return f"Recovered_{self.name}.csv"
-
-
 def _quoted(identifier: str) -> str:
     return '"' + identifier.replace('"', '""') + '"'
-
-
-def _declared_columns(arguments: str) -> tuple[str, ...]:
-    return tuple(
-        argument.split(":")[0].strip()
-        for argument in arguments.split(",")
-        if argument.strip()
-    )
 
 
 def provenance_files(directory: Path) -> tuple[str, ...]:
@@ -71,19 +39,6 @@ def inversion_input_files(directory: Path, with_provenance: bool) -> tuple[str, 
     if with_provenance:
         return provenance_files(directory)
     return FACT_FILES
-
-
-def write_rdf_dataset(facts_directory: Path, rdf_file: Path) -> None:
-    """Serialize the fact files a Datalog program wrote into an RDF dataset.
-
-    Every field already holds the N-Triples lexical form of its term, so the statements
-    are rebuilt by joining them.
-    """
-    with rdf_file.open("w", encoding="utf-8") as dataset:
-        for name in FACT_FILES:
-            with (facts_directory / name).open(encoding="utf-8") as facts:
-                for line in facts:
-                    dataset.write(" ".join(line.rstrip("\n").split("\t")) + " .\n")
 
 
 def preserve_souffle_files(
@@ -109,38 +64,6 @@ def copy_souffle_files(
     destination.mkdir(parents=True, exist_ok=True)
     for name in filenames:
         shutil.copy(source / name, destination / name)
-
-
-def parse_source_relations(shared_directory: Path) -> tuple[SourceRelation, ...]:
-    """Read the source relation names and columns from the forward program."""
-    declarations: dict[str, tuple[str, ...]] = {}
-    inputs: list[str] = []
-    for line in (
-        (shared_directory / FORWARD_PROGRAM).read_text(encoding="utf-8").splitlines()
-    ):
-        declaration = SOURCE_DECLARATION.match(line)
-        if declaration is not None:
-            declarations[declaration.group(1)] = _declared_columns(declaration.group(2))
-            continue
-        source_input = SOURCE_INPUT.match(line)
-        if source_input is not None:
-            inputs.append(source_input.group(1))
-
-    return tuple(
-        SourceRelation(
-            name=name,
-            table=LOGICAL_TABLE_SUFFIX.sub("", name),
-            columns=declarations[name],
-        )
-        for name in inputs
-    )
-
-
-def read_recovered_rows(
-    shared_directory: Path, relation: SourceRelation
-) -> list[tuple[str, ...]]:
-    with (shared_directory / relation.recovered_file).open(encoding="utf-8") as file:
-        return [tuple(line.rstrip("\n").split("\t")) for line in file]
 
 
 def load_relation(

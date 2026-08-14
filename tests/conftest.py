@@ -66,7 +66,9 @@ DATABASE_CONFIGS: dict[Database, DatabaseConfig] = {
             "MYSQL_PASSWORD=r2rml",
             "MYSQL_DATABASE=r2rml",
         ),
-        server_options=("--sql-mode=ANSI_QUOTES",),
+        server_options=(
+            "--sql-mode=ANSI_QUOTES,PAD_CHAR_TO_FULL_LENGTH,PIPES_AS_CONCAT",
+        ),
     ),
 }
 
@@ -78,6 +80,16 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default="postgresql",
         help="database used by conformance tests",
     )
+    parser.addoption(
+        "--souffle-jar",
+        default="",
+        help="R2RML-to-Datalog translator jar used by Soufflé conformance tests",
+    )
+    parser.addoption(
+        "--souffle-library",
+        default="",
+        help="functor library used by Soufflé conformance tests",
+    )
 
 
 @pytest.fixture(scope="session")
@@ -88,14 +100,6 @@ def database(request: pytest.FixtureRequest) -> Database:
 @pytest.fixture(scope="session")
 def database_config(database: Database) -> DatabaseConfig:
     return DATABASE_CONFIGS[database]
-
-
-@pytest.fixture(scope="session")
-def database_urls(database_config: DatabaseConfig) -> tuple[str, str]:
-    return (
-        database_config.url(database_config.source_port),
-        database_config.url(database_config.dest_port),
-    )
 
 
 def _wait_for_database(
@@ -142,13 +146,16 @@ def _start_database(
     _wait_for_database(db_url, database_config.name, port)
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def _database_containers(
     database_config: DatabaseConfig,
-    database_urls: tuple[str, str],
-) -> Iterator[None]:
+) -> Iterator[tuple[str, str]]:
     source_container = f"kgi-test-r2rml-{database_config.name}-source"
     dest_container = f"kgi-test-r2rml-{database_config.name}-dest"
+    database_urls = (
+        database_config.url(database_config.source_port),
+        database_config.url(database_config.dest_port),
+    )
     source_url, dest_url = database_urls
     try:
         _start_database(
@@ -163,10 +170,15 @@ def _database_containers(
             dest_url,
             database_config,
         )
-        yield
+        yield database_urls
     finally:
         subprocess.run(["docker", "rm", "-f", source_container], capture_output=True)
         subprocess.run(["docker", "rm", "-f", dest_container], capture_output=True)
+
+
+@pytest.fixture(scope="session")
+def database_urls(_database_containers: tuple[str, str]) -> tuple[str, str]:
+    return _database_containers
 
 
 def drop_all_tables(db_url: str) -> None:
@@ -229,7 +241,7 @@ def run_forward_mapping(
 def _collect_test_ids(suite_class: type, base_dir: str) -> list[str]:
     if not os.path.isdir(base_dir):
         return []
-    suite = suite_class(base_dir, PROJECT_ROOT)
+    suite = suite_class(base_dir)
     return suite.list_test_ids()
 
 
@@ -242,9 +254,9 @@ RML_TEST_IDS = _collect_test_ids(RMLTestSuite, RML_BASE_DIR)
 
 @pytest.fixture(scope="session")
 def r2rml_suite() -> R2RMLTestSuite:
-    return R2RMLTestSuite(R2RML_BASE_DIR, PROJECT_ROOT)
+    return R2RMLTestSuite(R2RML_BASE_DIR)
 
 
 @pytest.fixture(scope="session")
 def rml_suite() -> RMLTestSuite:
-    return RMLTestSuite(RML_BASE_DIR, PROJECT_ROOT)
+    return RMLTestSuite(RML_BASE_DIR)

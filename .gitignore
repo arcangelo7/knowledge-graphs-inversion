@@ -2,6 +2,7 @@ __pycache__
 .coverage
 htmlcov/
 individual-logs/
+build/
 docs/_build/
 .vscode/
 

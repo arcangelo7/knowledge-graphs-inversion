@@ -11,7 +11,9 @@ import tempfile
 import traceback
 from configparser import ConfigParser
 from datetime import datetime
+from pathlib import Path
 from queue import Empty
+from typing import cast
 
 from flask import (
     Flask,
@@ -26,9 +28,15 @@ from pyoxigraph import BlankNode, Quad, RdfFormat, Store
 import rmlmapper
 from conformance_config import (
     DATABASE_CONFIGS,
+    DEFAULT_ENGINE_PAIR,
+    ENGINE_PAIRS,
     RML_MYSQL_UNAVAILABLE,
+    SOUFFLE_RML_UNAVAILABLE,
+    EnginePair,
     get_database_config,
+    is_r2rml_case_available,
     validate_database_suite,
+    validate_engine_pair,
 )
 from database_connection import DatabaseConnection
 from kgi import (
@@ -39,6 +47,12 @@ from kgi import (
 )
 from kgi.comparison import compare_databases
 from kgi.core import _check_for_sql_queries, _parse_mapping_store, reconstruct
+from souffle_conformance import (
+    Database as SouffleDatabase,
+    SouffleConformanceAdapter,
+    SouffleConformanceError,
+    rdf_datasets_isomorphic,
+)
 from test_suites import RdfTerm, TestSuite, register_suites, get_suite, SUITES
 
 for _logger_name in (
@@ -62,11 +76,57 @@ config = ConfigParser()
 config.read("config.ini")
 
 PROJECT_ROOT = os.path.dirname(__file__)
+PROJECT_PATH = Path(PROJECT_ROOT)
+SOUFFLE_TRANSLATOR_JAR = Path(os.environ["SOUFFLE_TRANSLATOR_JAR"])
+SOUFFLE_REVERSE_SCRIPT = Path(os.environ["SOUFFLE_REVERSE_SCRIPT"])
+SOUFFLE_FUNCTOR_LIBRARY = Path(os.environ["SOUFFLE_FUNCTOR_LIBRARY"])
+SOUFFLE_EXECUTABLE = os.environ["SOUFFLE_EXECUTABLE"]
 
 
 register_suites(PROJECT_ROOT)
 
 db_connection = DatabaseConnection()
+
+
+def _souffle_adapter(log_path: Path) -> SouffleConformanceAdapter:
+    return SouffleConformanceAdapter(
+        SOUFFLE_TRANSLATOR_JAR,
+        SOUFFLE_REVERSE_SCRIPT,
+        SOUFFLE_FUNCTOR_LIBRARY,
+        execution_mode="local",
+        souffle_executable=SOUFFLE_EXECUTABLE,
+        log_path=log_path,
+    )
+
+
+def _artifact_path(
+    suite: TestSuite,
+    test_id: str,
+    database_system: str,
+    engine_pair: EnginePair,
+    output_format: str,
+) -> Path:
+    extension = {
+        "turtle": "ttl",
+        "nquads": "nq",
+        "ntriples": "nt",
+    }[output_format]
+    return (
+        PROJECT_PATH
+        / "test_results"
+        / "artifacts"
+        / engine_pair
+        / suite.suite_id
+        / database_system
+        / test_id
+        / f"output.{extension}"
+    )
+
+
+def _engine_output_format(engine_pair: EnginePair) -> str:
+    if engine_pair == "souffle_souffle":
+        return "nquads"
+    return config["properties"]["output_format"]
 
 
 def _normalize_term(term: RdfTerm) -> str:
@@ -134,14 +194,20 @@ def index():
         suites=SUITES,
         all_tests=all_tests,
         database_options=database_options,
+        engine_options=ENGINE_PAIRS,
+        default_engine_pair=DEFAULT_ENGINE_PAIR,
         rml_mysql_unavailable=RML_MYSQL_UNAVAILABLE,
+        souffle_rml_unavailable=SOUFFLE_RML_UNAVAILABLE,
     )
 
 
-def _validate_request(database_system: str, suite_ids: list[str]) -> str | None:
+def _validate_request(
+    database_system: str, suite_ids: list[str], engine_pair: str
+) -> str | None:
     try:
         for suite_id in suite_ids:
             validate_database_suite(database_system, suite_id)
+            validate_engine_pair(engine_pair, suite_id)
     except ValueError as error:
         return str(error)
     return None
@@ -152,11 +218,13 @@ def run_test():
     test_id = request.form["test_id"]
     database_system = request.form["database_system"]
     suite_id = request.form["suite_id"]
-    validation_error = _validate_request(database_system, [suite_id])
+    engine_pair = request.form["engine_pair"]
+    validation_error = _validate_request(database_system, [suite_id], engine_pair)
     if validation_error:
         return jsonify({"error": validation_error}), 400
     suite = get_suite(suite_id)
-    result = run_single_test(test_id, database_system, suite)
+    selected_pair = validate_engine_pair(engine_pair, suite_id)
+    result = run_single_test(test_id, database_system, suite, selected_pair)
 
     try:
         sanitized_result = sanitize_data(result)
@@ -172,7 +240,10 @@ _SUITE_DONE = "__suite_done__"
 
 
 def _serialize_result(
-    result: dict[str, object], suite_id: str, suite_name: str
+    result: dict[str, object],
+    suite_id: str,
+    suite_name: str,
+    engine_pair: EnginePair,
 ) -> dict[str, object]:
     sanitized_raw = sanitize_data(result)
     sanitized: dict[str, object] = (
@@ -180,11 +251,15 @@ def _serialize_result(
     )
     sanitized["suite_id"] = suite_id
     sanitized["suite_name"] = suite_name
+    sanitized["engine_pair"] = engine_pair
     return sanitized
 
 
 def _run_suite_tests(
-    sid: str, database_system: str, result_queue: multiprocessing.Queue
+    sid: str,
+    database_system: str,
+    engine_pair: EnginePair,
+    result_queue: multiprocessing.Queue,
 ) -> None:
     global db_connection, config
     config = ConfigParser()
@@ -193,9 +268,9 @@ def _run_suite_tests(
     register_suites(PROJECT_ROOT)
     suite = get_suite(sid)
     for test_id in suite.list_test_ids():
-        result = run_single_test(test_id, database_system, suite)
+        result = run_single_test(test_id, database_system, suite, engine_pair)
         try:
-            result_queue.put(_serialize_result(result, sid, suite.name))
+            result_queue.put(_serialize_result(result, sid, suite.name, engine_pair))
         except Exception as e:
             result_queue.put(
                 {
@@ -204,6 +279,7 @@ def _run_suite_tests(
                     "message": str(e),
                     "suite_id": sid,
                     "suite_name": suite.name,
+                    "engine_pair": engine_pair,
                 }
             )
     result_queue.put(_SUITE_DONE)
@@ -213,10 +289,12 @@ def _run_suite_tests(
 def run_all_tests():
     database_system = request.args.get("database_system", "postgresql")
     suite_ids = request.args.get("suite_id", "r2rml").split(",")
-    validation_error = _validate_request(database_system, suite_ids)
+    engine_pair = request.args["engine_pair"]
+    validation_error = _validate_request(database_system, suite_ids, engine_pair)
     if validation_error:
         return jsonify({"error": validation_error}), 400
     use_parallel = len(suite_ids) > 1
+    selected_pair = validate_engine_pair(engine_pair, suite_ids[0])
 
     all_results: list[dict[str, object]] = []
 
@@ -225,7 +303,8 @@ def run_all_tests():
             result_queue = multiprocessing.Queue()
             processes = [
                 multiprocessing.Process(
-                    target=_run_suite_tests, args=(sid, database_system, result_queue)
+                    target=_run_suite_tests,
+                    args=(sid, database_system, selected_pair, result_queue),
                 )
                 for sid in suite_ids
             ]
@@ -251,9 +330,13 @@ def run_all_tests():
             for sid in suite_ids:
                 suite = get_suite(sid)
                 for test_id in suite.list_test_ids():
-                    result = run_single_test(test_id, database_system, suite)
+                    result = run_single_test(
+                        test_id, database_system, suite, selected_pair
+                    )
                     try:
-                        sanitized = _serialize_result(result, sid, suite.name)
+                        sanitized = _serialize_result(
+                            result, sid, suite.name, selected_pair
+                        )
                         all_results.append(sanitized)
                         yield f"data: {json.dumps(sanitized)}\n\n"
                     except Exception as e:
@@ -263,14 +346,15 @@ def run_all_tests():
                             "message": str(e),
                             "suite_id": sid,
                             "suite_name": suite.name,
+                            "engine_pair": selected_pair,
                         }
                         all_results.append(error)
                         yield f"data: {json.dumps(error)}\n\n"
 
         for sid in suite_ids:
             suite = get_suite(sid)
-            suite_results = [r for r in all_results if r.get("suite_id") == sid]
-            generate_test_report(suite_results, database_system, suite)
+            suite_results = [r for r in all_results if r["suite_id"] == sid]
+            generate_test_report(suite_results, database_system, suite, selected_pair)
 
         yield "event: complete\ndata: All tests completed\n\n"
 
@@ -283,23 +367,25 @@ def get_file_content():
     file_type = request.args.get("type")
     database_system = request.args.get("database_system", "postgresql")
     suite_id = request.args.get("suite_id", "r2rml")
-    validation_error = _validate_request(database_system, [suite_id])
+    engine_pair = request.args["engine_pair"]
+    validation_error = _validate_request(database_system, [suite_id], engine_pair)
     if validation_error:
         return jsonify({"error": validation_error}), 400
     suite = get_suite(suite_id)
+    selected_pair = validate_engine_pair(engine_pair, suite_id)
 
     if file_type == "expected":
         file_path = suite.get_expected_output_path(test_id)
     elif file_type == "actual":
-        output_format = config["properties"].get("output_format", "ntriples")
-        file_path = suite.get_engine_output_path(
-            test_id, database_system, output_format
+        output_format = _engine_output_format(selected_pair)
+        file_path = _artifact_path(
+            suite, test_id, database_system, selected_pair, output_format
         )
     else:
         return jsonify({"error": "Invalid file type"}), 400
 
     try:
-        with open(file_path, "r") as file:
+        with open(file_path, encoding="utf-8") as file:
             content = file.read()
         return jsonify({"content": content})
     except FileNotFoundError:
@@ -311,7 +397,11 @@ PASSED = "passed"
 
 
 def test_one(
-    test_id: str, database_system: str, config: ConfigParser, suite: TestSuite
+    test_id: str,
+    database_system: str,
+    config: ConfigParser,
+    suite: TestSuite,
+    engine_pair: EnginePair,
 ) -> list[list[str]]:
     database_label = get_database_config(database_system).label
     try:
@@ -328,7 +418,7 @@ def test_one(
                 ],
             ]
 
-        return _run_test(test_id, metadata, database_system, config, suite)
+        return _run_test(test_id, metadata, database_system, config, suite, engine_pair)
     except Exception:
         return [
             ["tester", "platform", "rdbms", "testid", "result"],
@@ -348,19 +438,19 @@ def _run_test(
     database_system: str,
     config: ConfigParser,
     suite: TestSuite,
+    engine_pair: EnginePair,
 ) -> list[list[str]]:
     results: list[list[str]] = [["tester", "platform", "rdbms", "testid", "result"]]
     expected_output = metadata["expected_output"]
-    output_format = config["properties"].get("output_format", "ntriples")
+    output_format = _engine_output_format(engine_pair)
 
-    output_file = suite.get_output_file_path(output_format)
-    engine_output_path = suite.get_engine_output_path(
-        t_identifier, database_system, output_format
+    output_file = _artifact_path(
+        suite, t_identifier, database_system, engine_pair, output_format
     )
+    output_file.parent.mkdir(parents=True, exist_ok=True)
 
     expected_output_store = Store()
-    if os.path.isfile(output_file):
-        os.system(f"rm {output_file}")
+    output_file.unlink(missing_ok=True)
 
     if expected_output:
         expected_output_file = suite.get_expected_output_path(t_identifier)
@@ -384,11 +474,11 @@ def _run_test(
                 password,
                 tmp_dir,
             )
-            exit_code = rmlmapper.run(prepared, output_file)
+            exit_code = rmlmapper.run(prepared, str(output_file))
         else:
             exit_code = rmlmapper.run(
                 mapping_path,
-                output_file,
+                str(output_file),
                 dsn=jdbc_dsn,
                 username=username,
                 password=password,
@@ -398,8 +488,6 @@ def _run_test(
         os.path.isfile(output_file) and os.path.getsize(output_file) > 0
     )
     if output_file_has_data:
-        os.system(f"cp {output_file} {engine_output_path}")
-
         if expected_output:
             output_store = Store()
             try:
@@ -410,7 +498,7 @@ def _run_test(
                     if output_format == "nquads"
                     else RdfFormat.N_TRIPLES
                 )
-                output_store.load(path=output_file, format=rdf_format)
+                output_store.load(path=str(output_file), format=rdf_format)
                 if _graphs_isomorphic(expected_output_store, output_store):
                     result = PASSED
                 else:
@@ -442,8 +530,11 @@ def _run_test(
     return results
 
 
-def run_single_test(
-    test_id: str, database_system: str, suite: TestSuite
+def _run_rmlmapper_kgi_test(
+    test_id: str,
+    database_system: str,
+    suite: TestSuite,
+    engine_pair: EnginePair,
 ) -> dict[str, object]:
     database = validate_database_suite(database_system, suite.suite_id)
     source_db_url, dest_db_url = database.connection_urls(suite.suite_id)
@@ -463,10 +554,12 @@ def run_single_test(
         assert metadata is not None
         purpose = metadata["purpose"]
 
-        raw_results = test_one(test_id, database_system, config, suite)
+        raw_results = test_one(test_id, database_system, config, suite, engine_pair)
 
-        output_format = config["properties"].get("output_format", "ntriples")
-        rdf_output_path = suite.get_output_file_path(output_format)
+        output_format = _engine_output_format(engine_pair)
+        rdf_output_path = _artifact_path(
+            suite, test_id, database_system, engine_pair, output_format
+        )
 
         inversion_status: str | None = None
         comparison_status: str | None = None
@@ -565,13 +658,13 @@ def run_single_test(
             mapping_content,
             test_id,
             database_system,
-            config,
             purpose,
             databases_equal,
             comparison_message,
             source_content,
             dest_content,
             suite,
+            engine_pair,
             inversion_status,
             comparison_status,
             error_test=not metadata["expected_output"],
@@ -581,6 +674,7 @@ def run_single_test(
             "status": "success",
             "test_id": test_id,
             "database_system": database.label,
+            "engine_pair": engine_pair,
             "results": processed_results,
         }
     except Exception as e:
@@ -588,9 +682,230 @@ def run_single_test(
         return {
             "status": "error",
             "test_id": test_id,
+            "engine_pair": engine_pair,
             "message": str(e),
             "traceback": error_traceback,
         }
+
+
+def _souffle_error_response(
+    test_id: str, error: SouffleConformanceError
+) -> dict[str, object]:
+    return {
+        "status": "error",
+        "test_id": test_id,
+        "engine_pair": "souffle_souffle",
+        "stage": error.stage,
+        "message": str(error),
+    }
+
+
+def _run_souffle_souffle_test(
+    test_id: str,
+    database_system: str,
+    suite: TestSuite,
+    engine_pair: EnginePair,
+) -> dict[str, object]:
+    database = validate_database_suite(database_system, suite.suite_id)
+    mapping_file = Path(suite.get_mapping_path(test_id))
+    mapping_content = mapping_file.read_text(encoding="utf-8")
+    metadata = suite.get_test_metadata(test_id)
+    assert metadata is not None
+    expects_output = bool(metadata["expected_output"])
+    output_format = _engine_output_format(engine_pair)
+    rdf_output_path = _artifact_path(
+        suite, test_id, database_system, engine_pair, output_format
+    )
+    rdf_output_path.parent.mkdir(parents=True, exist_ok=True)
+    rdf_output_path.unlink(missing_ok=True)
+    execution_log_path = rdf_output_path.with_name("execution.log")
+    execution_log_path.unlink(missing_ok=True)
+    raw_results = [
+        ["tester", "platform", "rdbms", "testid", "result"],
+        [
+            config["tester"]["tester_name"],
+            "Soufflé",
+            database.label,
+            test_id,
+            PASSED,
+        ],
+    ]
+
+    source_db_url, dest_db_url = database.connection_urls(suite.suite_id)
+    db_connection.drop_all_tables(source_db_url)
+    db_connection.drop_all_tables(dest_db_url)
+    db_connection.load_sql_script(
+        source_db_url, suite.get_sql_script_path(test_id, database_system)
+    )
+    adapter = _souffle_adapter(execution_log_path)
+    souffle_database = cast(SouffleDatabase, database_system)
+
+    inversion_status: str | None = None
+    comparison_status: str | None = None
+    databases_equal: bool | None = None
+    source_content: dict[str, dict[str, list[str]]] | None = None
+    dest_content: dict[str, dict[str, list[str]]] | None = None
+
+    with tempfile.TemporaryDirectory() as temporary_directory:
+        shared_directory = Path(temporary_directory)
+        try:
+            adapter.run_forward(
+                mapping_file,
+                rdf_output_path,
+                shared_directory,
+                source_db_url,
+                souffle_database,
+            )
+        except SouffleConformanceError as error:
+            if expects_output or error.stage not in {
+                "forward generation",
+                "forward execution",
+            }:
+                return _souffle_error_response(test_id, error)
+            inversion_status = "forward_mapping_failed"
+            comparison_status = "forward_mapping_failed"
+            comparison_message = "Forward mapping failed as expected"
+        else:
+            if expects_output:
+                expected_path = Path(suite.get_expected_output_path(test_id))
+                if not rdf_datasets_isomorphic(expected_path, rdf_output_path):
+                    raw_results[1][4] = FAILED
+                    inversion_status = "forward_mapping_failed"
+                    comparison_status = "forward_mapping_failed"
+                    comparison_message = (
+                        "Forward RDF dataset differs from the expected dataset"
+                    )
+                elif _check_for_sql_queries(_parse_mapping_store(str(mapping_file))):
+                    inversion_status = "not_supported"
+                    comparison_message = (
+                        "Inversion not supported: SQL query as logical table is "
+                        "not supported"
+                    )
+                else:
+                    try:
+                        adapter.run_backward(
+                            shared_directory, source_db_url, dest_db_url
+                        )
+                    except SouffleConformanceError as error:
+                        return _souffle_error_response(test_id, error)
+                    source_content = db_connection.get_database_content(source_db_url)
+                    dest_content = db_connection.get_database_content(dest_db_url)
+                    databases_equal, comparison_message, comparison_status = (
+                        compare_databases(source_content, dest_content, mapping_content)
+                    )
+                    if comparison_status and comparison_status.startswith("partial:"):
+                        inversion_status = "partially_inverted"
+            elif rdf_output_path.stat().st_size == 0:
+                inversion_status = "forward_mapping_failed"
+                comparison_status = "forward_mapping_failed"
+                comparison_message = "Forward mapping produced no RDF as expected"
+            else:
+                raw_results[1][4] = FAILED
+                inversion_status = "forward_mapping_failed"
+                comparison_status = "forward_mapping_failed"
+                comparison_message = (
+                    "Forward mapping produced RDF for a negative test case"
+                )
+
+    if source_content is None:
+        source_content = db_connection.get_database_content(source_db_url)
+        dest_content = db_connection.get_database_content(dest_db_url)
+
+    processed_results = process_results(
+        raw_results,
+        mapping_content,
+        test_id,
+        database_system,
+        metadata["purpose"],
+        databases_equal,
+        comparison_message,
+        source_content,
+        dest_content,
+        suite,
+        engine_pair,
+        inversion_status,
+        comparison_status,
+        error_test=not expects_output,
+    )
+    return {
+        "status": "success",
+        "test_id": test_id,
+        "database_system": database.label,
+        "engine_pair": engine_pair,
+        "results": processed_results,
+    }
+
+
+def _postgresql_only_case_result(
+    test_id: str,
+    database_system: str,
+    suite: TestSuite,
+    engine_pair: EnginePair,
+) -> dict[str, object]:
+    database = validate_database_suite(database_system, suite.suite_id)
+    metadata = suite.get_test_metadata(test_id)
+    assert metadata is not None
+    mapping_content = Path(suite.get_mapping_path(test_id)).read_text(encoding="utf-8")
+    output_path = _artifact_path(
+        suite,
+        test_id,
+        database_system,
+        engine_pair,
+        _engine_output_format(engine_pair),
+    )
+    output_path.unlink(missing_ok=True)
+    output_path.with_name("execution.log").unlink(missing_ok=True)
+    forward_engine = ENGINE_PAIRS[engine_pair]["forward"]
+    assert isinstance(forward_engine, str)
+    raw_results = [
+        ["tester", "platform", "rdbms", "testid", "result"],
+        [
+            config["tester"]["tester_name"],
+            forward_engine,
+            database.label,
+            test_id,
+            "untested",
+        ],
+    ]
+    processed_results = process_results(
+        raw_results,
+        mapping_content,
+        test_id,
+        database_system,
+        metadata["purpose"],
+        None,
+        "This R2RML test case runs only with PostgreSQL",
+        None,
+        None,
+        suite,
+        engine_pair,
+        inversion_status="not_tested",
+        error_test=not metadata["expected_output"],
+    )
+    return {
+        "status": "success",
+        "test_id": test_id,
+        "database_system": database.label,
+        "engine_pair": engine_pair,
+        "results": processed_results,
+    }
+
+
+def run_single_test(
+    test_id: str,
+    database_system: str,
+    suite: TestSuite,
+    engine_pair: EnginePair,
+) -> dict[str, object]:
+    if suite.suite_id == "r2rml" and not is_r2rml_case_available(
+        test_id, database_system
+    ):
+        return _postgresql_only_case_result(
+            test_id, database_system, suite, engine_pair
+        )
+    if engine_pair == "souffle_souffle":
+        return _run_souffle_souffle_test(test_id, database_system, suite, engine_pair)
+    return _run_rmlmapper_kgi_test(test_id, database_system, suite, engine_pair)
 
 
 def process_results(
@@ -598,13 +913,13 @@ def process_results(
     mapping_content: str,
     test_id: str,
     database_system: str,
-    config: ConfigParser,
     purpose: str | bool,
     databases_equal: bool | None,
     comparison_message: str,
     source_content: dict[str, dict[str, list[str]]] | None,
     dest_content: dict[str, dict[str, list[str]]] | None,
     suite: TestSuite,
+    engine_pair: EnginePair,
     inversion_status: str | None = None,
     comparison_status: str | None = None,
     error_test: bool = False,
@@ -626,19 +941,22 @@ def process_results(
 
     for row in raw_results[1:]:
         expected_content, actual_content = get_file_contents(
-            test_id, database_system, config, suite
+            test_id, database_system, suite, engine_pair
         )
 
         processed_row = {
             "testid": row[3],
             "database_system": row[2],
+            "engine_pair": engine_pair,
             "purpose": purpose,
             "result": row[4],
             "expected_result": expected_content,
             "actual_result": actual_content,
             "mapping": mapping_content,
             "inversion_success": (
-                "not_supported"
+                "not_tested"
+                if inversion_status == "not_tested"
+                else "not_supported"
                 if inversion_status == "not_supported"
                 else "forward_mapping_failed"
                 if inversion_status == "forward_mapping_failed"
@@ -667,13 +985,15 @@ def process_results(
 def get_file_contents(
     test_id: str,
     database_system: str,
-    config: ConfigParser,
     suite: TestSuite,
+    engine_pair: EnginePair,
 ) -> tuple[str, str]:
-    output_format = config["properties"].get("output_format", "ntriples")
+    output_format = _engine_output_format(engine_pair)
     expected_file = suite.get_expected_output_path(test_id)
-    actual_file = suite.get_engine_output_path(test_id, database_system, output_format)
-    return read_file_content(expected_file), read_file_content(actual_file)
+    actual_file = _artifact_path(
+        suite, test_id, database_system, engine_pair, output_format
+    )
+    return read_file_content(expected_file), read_file_content(str(actual_file))
 
 
 def read_file_content(file_path: str) -> str:
@@ -690,18 +1010,24 @@ def generate_test_report(
     results: list[dict[str, object]],
     database_system: str,
     suite: TestSuite,
+    engine_pair: EnginePair,
 ) -> None:
     database_label = get_database_config(database_system).label
+    engine_pair_label = ENGINE_PAIRS[engine_pair]["label"]
+    assert isinstance(engine_pair_label, str)
     results_dir = os.path.join(PROJECT_ROOT, "test_results")
     os.makedirs(results_dir, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    report_filename = f"test_report_{suite.suite_id}_{database_system}_{timestamp}.json"
+    report_filename = (
+        f"test_report_{engine_pair}_{suite.suite_id}_{database_system}_{timestamp}.json"
+    )
     report_path = os.path.join(results_dir, report_filename)
 
     total_tests = len(results)
     passed_tests = 0
     failed_tests = 0
+    not_tested_tests = 0
     not_supported_tests = 0
     non_invertible_tests = 0
     partially_inverted_tests = 0
@@ -734,10 +1060,13 @@ def generate_test_report(
             test_data: dict[str, object] = results_data["data"][0]  # type: ignore[index]
             test_id = result["test_id"]
             inversion_success = test_data["inversion_success"]
-            subcategory_raw = test_data.get("comparison_subcategory")
+            subcategory_raw = test_data["comparison_subcategory"]
             subcategory = subcategory_raw if isinstance(subcategory_raw, str) else None
 
-            if inversion_success == "not_supported":
+            if inversion_success == "not_tested":
+                not_tested_tests += 1
+                status = "not_tested"
+            elif inversion_success == "not_supported":
                 not_supported_tests += 1
                 status = "not_supported"
             elif inversion_success == "forward_mapping_failed":
@@ -781,6 +1110,8 @@ def generate_test_report(
             "test_suite": suite.suite_id,
             "suite_name": suite.name,
             "database_system": database_label,
+            "engine_pair": engine_pair,
+            "engine_pair_label": engine_pair_label,
             "total_tests": total_tests,
             "execution_date": datetime.now().isoformat(),
         },
@@ -788,6 +1119,7 @@ def generate_test_report(
             "total": total_tests,
             "passed": passed_tests,
             "failed": failed_tests,
+            "not_tested": not_tested_tests,
             "not_supported": not_supported_tests,
             "partially_inverted": partially_inverted_tests,
             "non_invertible": non_invertible_tests,
@@ -797,6 +1129,7 @@ def generate_test_report(
             "percentages": {
                 "passed": pct(passed_tests),
                 "failed": pct(failed_tests),
+                "not_tested": pct(not_tested_tests),
                 "not_supported": pct(not_supported_tests),
                 "partially_inverted": pct(partially_inverted_tests),
                 "non_invertible": pct(non_invertible_tests),
@@ -810,13 +1143,16 @@ def generate_test_report(
     with open(report_path, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
 
-    markdown_filename = f"test_report_{suite.suite_id}_{database_system}_{timestamp}.md"
+    markdown_filename = (
+        f"test_report_{engine_pair}_{suite.suite_id}_{database_system}_{timestamp}.md"
+    )
     markdown_path = os.path.join(results_dir, markdown_filename)
 
     with open(markdown_path, "w", encoding="utf-8") as f:
         f.write(f"# {suite.name} inversion test report\n\n")
         f.write(f"**Test suite:** {suite.name}\n")
         f.write(f"**Database system:** {database_label}\n")
+        f.write(f"**Engine pair:** {engine_pair_label}\n")
         f.write(f"**Execution date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"**Total tests:** {total_tests}\n\n")
 
@@ -833,6 +1169,7 @@ def generate_test_report(
         f.write(
             f"| Not supported | {not_supported_tests} | {pct(not_supported_tests)}% |\n"
         )
+        f.write(f"| Not tested | {not_tested_tests} | {pct(not_tested_tests)}% |\n")
         f.write(
             f"| Forward mapping failed | {forward_mapping_failed_tests} | {pct(forward_mapping_failed_tests)}% |\n"
         )
@@ -859,6 +1196,7 @@ def generate_test_report(
             "passed",
             "partially_inverted",
             "non_invertible",
+            "not_tested",
             "not_supported",
             "failed",
             "forward_mapping_failed",
@@ -870,6 +1208,7 @@ def generate_test_report(
                     "passed": "Fully inverted",
                     "partially_inverted": "Partially inverted",
                     "non_invertible": "Non-invertible",
+                    "not_tested": "Not tested",
                     "not_supported": "Not supported",
                     "failed": "Failed",
                     "forward_mapping_failed": "Forward mapping failed",
@@ -886,7 +1225,7 @@ def generate_test_report(
                             if len(purpose_text) > 100
                             else f": {purpose_text}"
                         )
-                    if status == "partially_inverted" and test.get("subcategory"):
+                    if status == "partially_inverted" and test["subcategory"]:
                         sub = test["subcategory"]
                         if isinstance(sub, str) and sub.startswith("partial:"):
                             f.write(f"\n  - Subcategory: {sub[len('partial:') :]}")

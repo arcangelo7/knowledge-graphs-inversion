@@ -6,7 +6,7 @@ SPDX-License-Identifier: ISC
 
 # Conformance tests
 
-The algorithm is validated against two test suites: the W3C [R2RML](https://www.w3.org/TR/r2rml/) test suite and the [RML](https://kg-construct.github.io/rml-core/spec/docs/) RDB test cases from a [fork of rml-io-registry](https://github.com/arcangelo7/rml-io-registry/tree/add-rdb-core-tests). Both are included as git submodules. Forward mapping for both suites is performed with [RMLMapper](https://github.com/RMLio/rmlmapper-java) v8.1.0.
+The algorithm is validated against two test suites: the W3C [R2RML](https://www.w3.org/TR/r2rml/) test suite and the [RML](https://kg-construct.github.io/rml-core/spec/docs/) RDB test cases from a [fork of rml-io-registry](https://github.com/arcangelo7/rml-io-registry/tree/add-rdb-core-tests). Both are included as git submodules. The default path performs forward mapping with [RMLMapper](https://github.com/RMLio/rmlmapper-java) v8.1.0 and inversion with KGI. A separate R2RML path uses Soufflé in both directions.
 
 ## Defining invertibility
 
@@ -41,37 +41,44 @@ make test-conformance
 make test-conformance DATABASE=postgresql
 ```
 
-MySQL 9.7.1 runs the 62 R2RML cases:
+MySQL 9.7.1 runs 60 R2RML cases:
 
 ```bash
 make test-conformance DATABASE=mysql
 ```
 
-The 59 RML cases are skipped with MySQL because the RML Core RDB test suite does not yet provide MySQL variants.
+`R2RMLTC0002f` and `R2RMLTC0018a` run only with PostgreSQL for both execution pairs. The 59 RML cases are skipped with MySQL because the RML Core RDB test suite does not yet provide MySQL variants.
 
-To pass the conformance tests, MySQL is configured to interpret double-quoted table and column names as identifiers (`ANSI_QUOTES`). Moreover, the JDBC connection is configured to preserve trailing spaces when reading fixed-width `CHAR` values (`padCharsWithSpace=true`); this padding is required by R2RMLTC0018a.
+The Soufflé mode runs only the 62 R2RML cases:
+
+```bash
+make test-conformance FORWARD_ENGINE=souffle INVERSION_ENGINE=souffle DATABASE=postgresql
+```
 
 ### Dashboard
 
 Start the dashboard and its PostgreSQL and MySQL databases with Docker Compose:
 
 ```bash
+git submodule update --init --recursive
 docker compose up --build
 ```
 
-Open [http://localhost:5000](http://localhost:5000), then choose the database and test suite.
+Open [http://localhost:5000](http://localhost:5000), then choose the execution pair, database, and test suite. RMLMapper/KGI supports both suites, while Soufflé/Soufflé enables R2RML only.
 
 ## W3C R2RML test suite
 
 The [R2RML test suite](https://www.w3.org/2001/sw/rdb2rdf/test-cases/) contains 62 test cases.
+The outcome table below describes the RMLMapper/KGI pair.
 
 | Outcome | PostgreSQL | MySQL |
 |---|---:|---:|
-| Fully inverted | 22 | 22 |
+| Fully inverted | 22 | 20 |
 | Partially inverted | 15 | 15 |
 | Non-invertible | 3 | 3 |
 | Not supported | 13 | 14 |
 | Forward mapping failed | 9 | 8 |
+| Not tested | 0 | 2 |
 
 ### Partially inverted (15)
 

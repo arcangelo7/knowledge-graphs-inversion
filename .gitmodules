@@ -17,3 +17,6 @@
 	path = KROWN_Extended
 	url = https://github.com/alloka/KROWN_Extended.git
 	branch = KROWN_Souffle_Reverse
+[submodule "R2RML2Datalog-Translator"]
+	path = R2RML2Datalog-Translator
+	url = https://github.com/dtai-kg/R2RML2Datalog-Translator.git

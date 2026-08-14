@@ -16,6 +16,7 @@ dependencies = [
     "pyoxigraph==0.5.9",
     "falcon>=4.3.1", # morph-kgc depends on falcon 3.x which fails to build on Python 3.13+
     "pymysql>=1.2.0",
+    "rdflib>=7.2.1,<8.0.0",
 ]
 
 [tool.uv]
@@ -93,6 +94,8 @@ include = [
     "database_connection.py",
     "kgi",
     "rmlmapper.py",
+    "souffle_artifacts.py",
+    "souffle_conformance.py",
     "test_suites.py",
     "tests",
 ]
@@ -106,6 +109,8 @@ include = [
     "kgi/**/*.py",
     "pyproject.toml",
     "rmlmapper.py",
+    "souffle_artifacts.py",
+    "souffle_conformance.py",
     "test_suites.py",
     "tests/**/*.py",
 ]

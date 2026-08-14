@@ -4,7 +4,9 @@
 
 services:
   app:
-    build: .
+    build:
+      context: .
+      target: app
     container_name: kgi-app
     ports:
       - "5000:5000"
@@ -105,7 +107,7 @@ services:
   mysql_r2rml:
     image: mysql:9.7.1
     container_name: kgi-mysql-r2rml
-    command: --sql-mode=ANSI_QUOTES
+    command: --sql-mode=ANSI_QUOTES,PAD_CHAR_TO_FULL_LENGTH,PIPES_AS_CONCAT
     environment:
       MYSQL_ROOT_PASSWORD: r2rml
       MYSQL_USER: r2rml
@@ -123,7 +125,7 @@ services:
   dest_mysql_r2rml:
     image: mysql:9.7.1
     container_name: kgi-dest-mysql-r2rml
-    command: --sql-mode=ANSI_QUOTES
+    command: --sql-mode=ANSI_QUOTES,PAD_CHAR_TO_FULL_LENGTH,PIPES_AS_CONCAT
     environment:
       MYSQL_ROOT_PASSWORD: r2rml
       MYSQL_USER: r2rml

@@ -38,7 +38,9 @@ services:
       retries: 10
 
   benchmark:
-    build: .
+    build:
+      context: .
+      target: benchmark
     container_name: kgi-benchmark
     volumes:
       - .:/app

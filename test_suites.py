@@ -46,20 +46,9 @@ class TestSuite:
     def get_test_metadata(self, test_id: str) -> dict[str, str | bool] | None:
         raise NotImplementedError
 
-    def get_engine_output_path(
-        self, test_id: str, database_system: str, output_format: str
-    ) -> str:
-        raise NotImplementedError
-
-    def get_engine_log_path(self, test_id: str, database_system: str) -> str:
-        raise NotImplementedError
-
-    def get_output_file_path(self, output_format: str) -> str:
-        raise NotImplementedError
-
 
 class R2RMLTestSuite(TestSuite):
-    def __init__(self, base_dir: str, project_root: str):
+    def __init__(self, base_dir: str):
         self.suite_id = "r2rml"
         self.name = SUITE_LABELS[self.suite_id]
         self.base_dir = base_dir
@@ -152,38 +141,9 @@ class R2RMLTestSuite(TestSuite):
             "output_file": _val(output_file),
         }
 
-    def get_engine_output_path(
-        self, test_id: str, database_system: str, output_format: str
-    ) -> str:
-        ext = (
-            "ttl"
-            if output_format == "turtle"
-            else "nt"
-            if output_format == "ntriples"
-            else "nq"
-        )
-        return os.path.join(
-            self.base_dir, test_id, f"engine_output-{database_system}.{ext}"
-        )
-
-    def get_engine_log_path(self, test_id: str, database_system: str) -> str:
-        return os.path.join(
-            self.base_dir, test_id, f"engine_output-{database_system}.log"
-        )
-
-    def get_output_file_path(self, output_format: str) -> str:
-        ext = (
-            "ttl"
-            if output_format == "turtle"
-            else "nq"
-            if output_format == "nquads"
-            else "nt"
-        )
-        return os.path.join(self.base_dir, f"output.{ext}")
-
 
 class RMLTestSuite(TestSuite):
-    def __init__(self, base_dir: str, project_root: str):
+    def __init__(self, base_dir: str):
         self.suite_id = "rml"
         self.name = SUITE_LABELS[self.suite_id]
         self.base_dir = base_dir
@@ -237,46 +197,13 @@ class RMLTestSuite(TestSuite):
             "output_file": "output.nq" if has_output else "",
         }
 
-    def get_engine_output_path(
-        self, test_id: str, database_system: str, output_format: str
-    ) -> str:
-        ext = (
-            "ttl"
-            if output_format == "turtle"
-            else "nt"
-            if output_format == "ntriples"
-            else "nq"
-        )
-        return os.path.join(
-            self.test_cases_dir, test_id, f"engine_output-{database_system}.{ext}"
-        )
-
-    def get_engine_log_path(self, test_id: str, database_system: str) -> str:
-        return os.path.join(
-            self.test_cases_dir, test_id, f"engine_output-{database_system}.log"
-        )
-
-    def get_output_file_path(self, output_format: str) -> str:
-        ext = (
-            "ttl"
-            if output_format == "turtle"
-            else "nq"
-            if output_format == "nquads"
-            else "nt"
-        )
-        return os.path.join(self.test_cases_dir, f"output.{ext}")
-
 
 SUITES: dict[str, TestSuite] = {}
 
 
 def register_suites(project_root: str) -> None:
-    SUITES["r2rml"] = R2RMLTestSuite(
-        os.path.join(project_root, "r2rml_test_cases"), project_root
-    )
-    SUITES["rml"] = RMLTestSuite(
-        os.path.join(project_root, "rml_io_registry"), project_root
-    )
+    SUITES["r2rml"] = R2RMLTestSuite(os.path.join(project_root, "r2rml_test_cases"))
+    SUITES["rml"] = RMLTestSuite(os.path.join(project_root, "rml_io_registry"))
 
 
 def get_suite(suite_id: str) -> TestSuite:

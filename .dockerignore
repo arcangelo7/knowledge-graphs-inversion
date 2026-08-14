@@ -45,7 +45,12 @@ benchmarks/*/scenarios/
 test_logs/
 
 KROWN/
-KROWN_Extended/
+KROWN_Extended/**
+!KROWN_Extended/execution-framework/
+!KROWN_Extended/execution-framework/dockers/
+!KROWN_Extended/execution-framework/dockers/Souffle/
+KROWN_Extended/execution-framework/dockers/Souffle/*
+!KROWN_Extended/execution-framework/dockers/Souffle/reverseR2RML.py
 gtfs-bench/
 r2rml_test_cases/
 rml_io_registry/

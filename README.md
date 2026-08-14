@@ -36,15 +36,26 @@ kgi.reconstruct(
 
 `dest_db_url` is required and identifies the database that receives the reconstructed tables. The function returns `None`. `source_db_url` is optional and is used to read the original column types and ordering. When an RML mapping contains a [D2RQ](http://d2rq.org/) database definition, its connection information is used as `source_db_url` unless an explicit value is passed. RDF queries are executed locally with PyOxigraph.
 
+## Dashboard
+
+Start the web interface and its databases with Docker Compose:
+
+```bash
+git submodule update --init --recursive
+docker compose up --build
+```
+
+Open [http://localhost:5000](http://localhost:5000), then choose an execution pair, a database, and a test suite. RMLMapper/KGI supports R2RML and RML, while Soufflé/Soufflé runs R2RML only. Both engines run inside the application container.
+
 ## Testing
 
-Conformance tests require [Docker](https://www.docker.com/) to run the databases and Java 21 or newer for RMLMapper v8.1.0. PostgreSQL is the default and runs all 121 cases across the R2RML and RML suites:
+Conformance tests require [Docker](https://www.docker.com/) to run the databases. The default RMLMapper/KGI pair also requires Java 21 or newer. PostgreSQL runs all 121 cases across the R2RML and RML suites:
 
 ```bash
 make test-conformance
 ```
 
-MySQL 9.7.1 runs the 62 R2RML cases. The RML cases are skipped because the RML Core RDB test suite does not yet provide MySQL variants:
+MySQL 9.7.1 runs 60 R2RML cases. `R2RMLTC0002f` and `R2RMLTC0018a` run only with PostgreSQL for both execution pairs. The RML cases are skipped because the RML Core RDB test suite does not yet provide MySQL variants:
 
 ```bash
 make test-conformance DATABASE=mysql

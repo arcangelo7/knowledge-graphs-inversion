@@ -43,6 +43,11 @@ SPDX-License-Identifier: ISC
             --suite-r2rml-color: #1565c0;
             --suite-rml-bg: #f3e5f5;
             --suite-rml-color: #7b1fa2;
+            --engine-forward-bg: #e3f2fd;
+            --engine-forward-color: #1565c0;
+            --engine-inversion-bg: #e0f7fa;
+            --engine-inversion-color: #00796b;
+            --engine-arrow-color: #6c757d;
             --table-striped-bg: rgba(0,0,0,0.05);
             --input-bg: #fff;
             --input-border: #ced4da;
@@ -68,6 +73,11 @@ SPDX-License-Identifier: ISC
             --suite-r2rml-color: #58a6ff;
             --suite-rml-bg: #2a1533;
             --suite-rml-color: #d2a8ff;
+            --engine-forward-bg: #0d2137;
+            --engine-forward-color: #58a6ff;
+            --engine-inversion-bg: #0d302d;
+            --engine-inversion-color: #56d4c2;
+            --engine-arrow-color: #a0a0b0;
             --table-striped-bg: rgba(255,255,255,0.05);
             --input-bg: #0d1117;
             --input-border: #30363d;
@@ -136,6 +146,10 @@ SPDX-License-Identifier: ISC
             color: #ffc107 !important;
             font-weight: bold;
         }
+        .result-not-tested {
+            color: #6c757d !important;
+            font-weight: bold;
+        }
         .result-partially-inverted {
             color: #0dcaf0 !important;
             font-weight: bold;
@@ -151,12 +165,14 @@ SPDX-License-Identifier: ISC
         [data-theme="dark"] .result-passed { color: #3fb950 !important; }
         [data-theme="dark"] .result-failed { color: #f85149 !important; }
         [data-theme="dark"] .result-not-supported { color: #d29922 !important; }
+        [data-theme="dark"] .result-not-tested { color: #8b949e !important; }
         [data-theme="dark"] .result-partially-inverted { color: #39c0e2 !important; }
         [data-theme="dark"] .result-non-invertible { color: #db6d28 !important; }
         [data-theme="dark"] .result-forward-mapping-failed { color: #a371f7 !important; }
         .table-striped > tbody > tr:nth-of-type(odd) .result-passed,
         .table-striped > tbody > tr:nth-of-type(odd) .result-failed,
         .table-striped > tbody > tr:nth-of-type(odd) .result-not-supported,
+        .table-striped > tbody > tr:nth-of-type(odd) .result-not-tested,
         .table-striped > tbody > tr:nth-of-type(odd) .result-partially-inverted,
         .table-striped > tbody > tr:nth-of-type(odd) .result-non-invertible,
         .table-striped > tbody > tr:nth-of-type(odd) .result-forward-mapping-failed {
@@ -270,12 +286,14 @@ SPDX-License-Identifier: ISC
         .stat-passed { color: #28a745; }
         .stat-failed { color: #dc3545; }
         .stat-not-supported { color: #ffc107; }
+        .stat-not-tested { color: #6c757d; }
         .stat-partially-inverted { color: #0dcaf0; }
         .stat-non-invertible { color: #fd7e14; }
         .stat-forward-mapping-failed { color: #6f42c1; }
         [data-theme="dark"] .stat-passed { color: #3fb950; }
         [data-theme="dark"] .stat-failed { color: #f85149; }
         [data-theme="dark"] .stat-not-supported { color: #d29922; }
+        [data-theme="dark"] .stat-not-tested { color: #8b949e; }
         [data-theme="dark"] .stat-partially-inverted { color: #39c0e2; }
         [data-theme="dark"] .stat-non-invertible { color: #db6d28; }
         [data-theme="dark"] .stat-forward-mapping-failed { color: #a371f7; }
@@ -288,6 +306,48 @@ SPDX-License-Identifier: ISC
         }
         .suite-r2rml { background-color: var(--suite-r2rml-bg); color: var(--suite-r2rml-color); }
         .suite-rml { background-color: var(--suite-rml-bg); color: var(--suite-rml-color); }
+        .engine-flow {
+            display: flex;
+            align-items: center;
+            min-height: 1.5rem;
+            gap: 0.4rem;
+            margin-bottom: 1rem;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        }
+        .engine-node, .engine-pair-badge {
+            display: inline-block;
+            border-radius: 999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            line-height: 1;
+            padding: 0.35rem 0.55rem;
+        }
+        .engine-forward {
+            background: var(--engine-forward-bg);
+            color: var(--engine-forward-color);
+        }
+        .engine-inversion {
+            background: var(--engine-inversion-bg);
+            color: var(--engine-inversion-color);
+        }
+        .engine-arrow {
+            color: var(--engine-arrow-color);
+        }
+        .engine-arrow, .engine-pair-arrow {
+            display: inline-flex;
+            align-items: center;
+            line-height: 1;
+            transform: translateY(-0.08em);
+        }
+        .engine-pair-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            margin-left: 0.45rem;
+            background: var(--engine-inversion-bg);
+            color: var(--engine-inversion-color);
+            vertical-align: middle;
+        }
         .suite-panels {
             display: flex;
             gap: 1.5rem;
@@ -350,7 +410,16 @@ SPDX-License-Identifier: ISC
     <div class="container-fluid mt-5 px-4">
         <h1 class="mb-4">RML inversion test interface</h1>
         <div class="row">
-            <div class="col-md-3">
+            <div class="col-md-6 col-lg-3">
+                <label for="enginePairSelect" class="form-label">Execution pair</label>
+                <select id="enginePairSelect" class="form-select mb-2">
+                    {% for engine_pair, engine in engine_options.items() %}
+                    <option value="{{ engine_pair }}" {% if engine_pair == default_engine_pair %}selected{% endif %}>{{ engine.label }}</option>
+                    {% endfor %}
+                </select>
+                <div id="engineFlow" class="engine-flow" aria-live="polite"></div>
+            </div>
+            <div class="col-md-6 col-lg-3">
                 <label for="databaseSelect" class="form-label">Database</label>
                 <select id="databaseSelect" class="form-select mb-3">
                     {% for database_system, database in database_options.items() %}
@@ -358,7 +427,7 @@ SPDX-License-Identifier: ISC
                     {% endfor %}
                 </select>
             </div>
-            <div class="col-md-3">
+            <div class="col-md-6 col-lg-3">
                 <label for="suiteSelect" class="form-label">Test suite</label>
                 <select id="suiteSelect" class="form-select mb-3">
                     <option value="all">All suites</option>
@@ -368,7 +437,7 @@ SPDX-License-Identifier: ISC
                 </select>
                 <div id="suiteAvailabilityMessage" class="form-text mb-3" role="status"></div>
             </div>
-            <div class="col-md-6">
+            <div class="col-md-6 col-lg-3">
                 <label for="testSelect" class="form-label">Test case</label>
                 <select id="testSelect" class="form-select mb-3">
                     <option value="">Select a test</option>
@@ -413,6 +482,10 @@ SPDX-License-Identifier: ISC
                     <div class="stat-item">
                         <div class="stat-value stat-not-supported" id="stat-not-supported">0</div>
                         <div class="stat-label">Not supported (<span id="stat-not-supported-percent">0</span>%)</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value stat-not-tested" id="stat-not-tested">0</div>
+                        <div class="stat-label">Not tested (<span id="stat-not-tested-percent">0</span>%)</div>
                     </div>
                     <div class="stat-item">
                         <div class="stat-value stat-forward-mapping-failed" id="stat-forward-mapping-failed">0</div>
@@ -484,13 +557,16 @@ SPDX-License-Identifier: ISC
 
         const allTests = {{ all_tests | tojson }};
         const databaseOptions = {{ database_options | tojson }};
+        const engineOptions = {{ engine_options | tojson }};
         const rmlMysqlUnavailable = {{ rml_mysql_unavailable | tojson }};
+        const souffleRmlUnavailable = {{ souffle_rml_unavailable | tojson }};
         const testResults = {};
         let testStats = {
             total: 0,
             passed: 0,
             failed: 0,
             notSupported: 0,
+            notTested: 0,
             partiallyInverted: 0,
             nonInvertible: 0,
             forwardMappingFailed: 0
@@ -507,22 +583,57 @@ SPDX-License-Identifier: ISC
             return $('#databaseSelect').val();
         }
 
+        function getSelectedEnginePair() {
+            return $('#enginePairSelect').val();
+        }
+
         function getAvailableSuiteIds() {
-            return databaseOptions[getSelectedDatabaseSystem()].suite_ids;
+            const databaseSuites = databaseOptions[getSelectedDatabaseSystem()].suite_ids;
+            const engineSuites = engineOptions[getSelectedEnginePair()].suite_ids;
+            return databaseSuites.filter(suiteId => engineSuites.includes(suiteId));
+        }
+
+        function updateEngineFlow() {
+            const engine = engineOptions[getSelectedEnginePair()];
+            $('#engineFlow').html(
+                `<span class="engine-node engine-forward">${escapeHtml(engine.forward)}</span>` +
+                '<span class="engine-arrow" aria-hidden="true">→</span>' +
+                `<span class="engine-node engine-inversion">${escapeHtml(engine.inversion)}</span>`
+            );
+        }
+
+        function getEnginePairBadge(enginePair) {
+            const engine = engineOptions[enginePair];
+            return (
+                `<span class="engine-pair-badge" aria-label="${escapeHtml(engine.label)}">` +
+                `<span>${escapeHtml(engine.forward)}</span>` +
+                '<span class="engine-pair-arrow" aria-hidden="true">→</span>' +
+                `<span>${escapeHtml(engine.inversion)}</span>` +
+                '</span>'
+            );
         }
 
         function updateSuiteAvailability() {
             const availableSuiteIds = getAvailableSuiteIds();
+            const souffleSelected = getSelectedEnginePair() === 'souffle_souffle';
             $('#suiteSelect option').each(function() {
                 const suiteId = $(this).val();
-                $(this).prop('disabled', suiteId !== 'all' && !availableSuiteIds.includes(suiteId));
+                const unavailable = suiteId === 'all'
+                    ? souffleSelected
+                    : !availableSuiteIds.includes(suiteId);
+                $(this).prop('disabled', unavailable);
             });
 
-            if (!availableSuiteIds.includes(getSelectedSuiteId()) && getSelectedSuiteId() !== 'all') {
-                $('#suiteSelect').val('all');
+            if (
+                !availableSuiteIds.includes(getSelectedSuiteId()) &&
+                (getSelectedSuiteId() !== 'all' || souffleSelected)
+            ) {
+                $('#suiteSelect').val(availableSuiteIds[0]);
             }
 
-            const message = availableSuiteIds.includes('rml') ? '' : rmlMysqlUnavailable;
+            const message = souffleSelected
+                ? souffleRmlUnavailable
+                : availableSuiteIds.includes('rml') ? '' : rmlMysqlUnavailable;
             $('#suiteAvailabilityMessage').text(message);
         }
 
@@ -555,6 +666,7 @@ SPDX-License-Identifier: ISC
             $('#stat-passed').text(testStats.passed);
             $('#stat-failed').text(testStats.failed);
             $('#stat-not-supported').text(testStats.notSupported);
+            $('#stat-not-tested').text(testStats.notTested);
             $('#stat-partially-inverted').text(testStats.partiallyInverted);
             $('#stat-non-invertible').text(testStats.nonInvertible);
             $('#stat-forward-mapping-failed').text(testStats.forwardMappingFailed);
@@ -563,6 +675,7 @@ SPDX-License-Identifier: ISC
                 $('#stat-passed-percent').text(Math.round((testStats.passed / total) * 100));
                 $('#stat-failed-percent').text(Math.round((testStats.failed / total) * 100));
                 $('#stat-not-supported-percent').text(Math.round((testStats.notSupported / total) * 100));
+                $('#stat-not-tested-percent').text(Math.round((testStats.notTested / total) * 100));
                 $('#stat-partially-inverted-percent').text(Math.round((testStats.partiallyInverted / total) * 100));
                 $('#stat-non-invertible-percent').text(Math.round((testStats.nonInvertible / total) * 100));
                 $('#stat-forward-mapping-failed-percent').text(Math.round((testStats.forwardMappingFailed / total) * 100));
@@ -575,6 +688,7 @@ SPDX-License-Identifier: ISC
                 passed: 0,
                 failed: 0,
                 notSupported: 0,
+                notTested: 0,
                 partiallyInverted: 0,
                 nonInvertible: 0,
                 forwardMappingFailed: 0
@@ -602,6 +716,7 @@ SPDX-License-Identifier: ISC
             const testId = $('#testSelect').val();
             const suiteId = getSuiteForTest();
             const dbSystem = getSelectedDatabaseSystem();
+            const enginePair = getSelectedEnginePair();
             const resultsDiv = $('#results');
 
             resultsDiv.children().not('#stats-box').remove();
@@ -613,7 +728,8 @@ SPDX-License-Identifier: ISC
             $.post('/run_test', {
                 test_id: testId,
                 database_system: dbSystem,
-                suite_id: suiteId
+                suite_id: suiteId,
+                engine_pair: enginePair
             })
             .done(function(response) {
                 response.suite_id = suiteId;
@@ -633,6 +749,7 @@ SPDX-License-Identifier: ISC
         function runAllTests() {
             const dbSystem = getSelectedDatabaseSystem();
             const suiteId = getSelectedSuiteId();
+            const enginePair = getSelectedEnginePair();
             const selectedSuiteIds = suiteId === 'all' ? getAvailableSuiteIds() : [suiteId];
             const suiteParam = selectedSuiteIds.join(',');
             const resultsDiv = $('#results');
@@ -647,7 +764,7 @@ SPDX-License-Identifier: ISC
             if (isDualPanel) {
                 resetAllSuiteStats(selectedSuiteIds);
                 let wrapperHtml = '<div id="dual-panel-wrapper" style="display:none;">';
-                wrapperHtml += '<h2>Test results (All suites)</h2>';
+                wrapperHtml += `<h2>Test results (All suites) ${getEnginePairBadge(enginePair)}</h2>`;
                 wrapperHtml += '<div class="suite-panels">';
                 selectedSuiteIds.forEach(sid => {
                     wrapperHtml += createSuitePanelHtml(sid);
@@ -661,7 +778,11 @@ SPDX-License-Identifier: ISC
 
             disableButtons();
 
-            const eventSource = new EventSource(`/run_all_tests?database_system=${dbSystem}&suite_id=${suiteParam}`);
+            const eventSource = new EventSource(
+                `/run_all_tests?database_system=${encodeURIComponent(dbSystem)}` +
+                `&suite_id=${encodeURIComponent(suiteParam)}` +
+                `&engine_pair=${encodeURIComponent(enginePair)}`
+            );
 
             eventSource.onmessage = function(event) {
                 const testResult = JSON.parse(event.data);
@@ -679,7 +800,9 @@ SPDX-License-Identifier: ISC
                         resetStats();
                         resultsDiv.children('h2').remove();
                         const titleSuffix = suiteId === 'all' ? 'All suites' : suiteId.toUpperCase();
-                        resultsDiv.prepend(`<h2>Test results (${titleSuffix}):</h2>`);
+                        resultsDiv.prepend(
+                            `<h2>Test results (${titleSuffix}) ${getEnginePairBadge(enginePair)}</h2>`
+                        );
                         $('#stats-box').show();
                         $('#results-table').show();
                         if ($('#results-header').is(":empty")) {
@@ -713,7 +836,8 @@ SPDX-License-Identifier: ISC
                     } else {
                         testStats.total++;
                         if (hasData) {
-                            const status = classifyInversionStatus(testResult.results.data[0].inversion_success);
+                            const row = testResult.results.data[0];
+                            const status = classifyInversionStatus(row.inversion_success, row.comparison_message);
                             testStats[status.category]++;
                         } else {
                             testStats.failed++;
@@ -771,7 +895,7 @@ SPDX-License-Identifier: ISC
             resultsDiv.children().not('#stats-box').remove();
 
             if (response.status === 'success') {
-                let resultsHtml = `<h2>Test results for ${response.test_id}:</h2>`;
+                let resultsHtml = `<h2>Test results for ${response.test_id} ${getEnginePairBadge(response.engine_pair)}</h2>`;
                 resultsHtml += generateResultTable(response);
                 resultsDiv.append(resultsHtml);
             } else {
@@ -857,6 +981,7 @@ SPDX-License-Identifier: ISC
         }
 
         function classifyInversionStatus(inversionSuccess, comparisonMessage) {
+            if (inversionSuccess === 'not_tested') return { cls: 'not-tested', text: 'Not tested', category: 'notTested', tooltip: comparisonMessage.replace(/'/g, '&apos;') };
             if (inversionSuccess === 'not_supported') return { cls: 'not-supported', text: 'Not Supported', category: 'notSupported', tooltip: (comparisonMessage || 'Not supported').replace(/'/g, '&apos;') };
             if (inversionSuccess === 'partially_inverted') return { cls: 'partially-inverted', text: 'Partially Inverted', category: 'partiallyInverted', tooltip: (comparisonMessage || 'Partially inverted').replace(/'/g, '&apos;') };
             if (inversionSuccess === 'non_invertible') return { cls: 'non-invertible', text: 'Non-invertible', category: 'nonInvertible', tooltip: (comparisonMessage || 'Non-invertible').replace(/'/g, '&apos;') };
@@ -869,14 +994,14 @@ SPDX-License-Identifier: ISC
         function resetAllSuiteStats(suiteIds) {
             suiteStats = {};
             suiteIds.forEach(sid => {
-                suiteStats[sid] = { total: 0, passed: 0, failed: 0, notSupported: 0, partiallyInverted: 0, nonInvertible: 0, forwardMappingFailed: 0 };
+                suiteStats[sid] = { total: 0, passed: 0, failed: 0, notSupported: 0, notTested: 0, partiallyInverted: 0, nonInvertible: 0, forwardMappingFailed: 0 };
             });
         }
 
         function trackSuiteStat(sid, row) {
             if (!suiteStats[sid]) return;
             suiteStats[sid].total++;
-            const status = classifyInversionStatus(row.inversion_success);
+            const status = classifyInversionStatus(row.inversion_success, row.comparison_message);
             suiteStats[sid][status.category]++;
         }
 
@@ -887,6 +1012,7 @@ SPDX-License-Identifier: ISC
             $(`#ps-passed-${sid}`).text(s.passed);
             $(`#ps-failed-${sid}`).text(s.failed);
             $(`#ps-ns-${sid}`).text(s.notSupported);
+            $(`#ps-nt-${sid}`).text(s.notTested);
             $(`#ps-pi-${sid}`).text(s.partiallyInverted);
             $(`#ps-ni-${sid}`).text(s.nonInvertible);
             $(`#ps-fmf-${sid}`).text(s.forwardMappingFailed);
@@ -904,6 +1030,7 @@ SPDX-License-Identifier: ISC
                     <span class="stat-partially-inverted">Partially inverted: <strong id="ps-pi-${sid}">0</strong></span>
                     <span class="stat-non-invertible">Non-invertible: <strong id="ps-ni-${sid}">0</strong></span>
                     <span class="stat-not-supported">Not supported: <strong id="ps-ns-${sid}">0</strong></span>
+                    <span class="stat-not-tested">Not tested: <strong id="ps-nt-${sid}">0</strong></span>
                     <span class="stat-forward-mapping-failed">Forward mapping failed: <strong id="ps-fmf-${sid}">0</strong></span>
                     <span class="stat-failed">Failed: <strong id="ps-failed-${sid}">0</strong></span>
                 </div>
@@ -1055,10 +1182,17 @@ SPDX-License-Identifier: ISC
         }
 
         $(document).ready(function() {
+            updateEngineFlow();
             updateSuiteAvailability();
             updateTestSelect();
             updateHeaderRow();
             initializeTooltips();
+
+            $('#enginePairSelect').change(function() {
+                updateEngineFlow();
+                updateSuiteAvailability();
+                updateTestSelect();
+            });
 
             $('#databaseSelect').change(function() {
                 updateSuiteAvailability();

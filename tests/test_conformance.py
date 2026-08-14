@@ -7,6 +7,7 @@ import tempfile
 
 import pytest
 
+from conformance_config import is_r2rml_case_available
 from kgi import MappingError, NoDataError, NonInvertibleError, UnsupportedMappingError
 from kgi.comparison import compare_databases
 from kgi.core import reconstruct
@@ -91,6 +92,9 @@ def test_r2rml_conformance(
     database: Database,
     database_urls: tuple[str, str],
 ) -> None:
+    if not is_r2rml_case_available(test_id, database):
+        pytest.skip("R2RML test case runs only with PostgreSQL")
+
     source_db, dest_db = database_urls
     with tempfile.TemporaryDirectory() as tmp_dir:
         _run_conformance_test(

@@ -63,24 +63,26 @@ from benchmarks.krown_stats import (
 )
 from benchmarks.krown_validator import KrownValidator
 from benchmarks.souffle_inversion import (
-    FACT_FILES,
-    FORWARD_PROGRAM,
     FORWARD_PROVENANCE_PROGRAM,
-    REVERSE_PROGRAM,
-    SUPPORT_REPORT,
     SouffleInversionError,
     attach_database_to_krown_network,
     copy_souffle_files,
     inversion_input_files,
     load_relation,
-    parse_source_relations,
     preserve_souffle_files,
-    read_recovered_rows,
     reverse_souffle_resource,
-    write_rdf_dataset,
 )
 from kgi.core import reconstruct
 from kgi.exceptions import NonInvertibleError
+from souffle_artifacts import (
+    FACT_FILES,
+    FORWARD_PROGRAM,
+    REVERSE_PROGRAM,
+    SUPPORT_REPORT,
+    parse_source_relations,
+    read_recovered_rows,
+    write_rdf_dataset,
+)
 
 console = Console(width=max(shutil.get_terminal_size().columns, 100))
 
