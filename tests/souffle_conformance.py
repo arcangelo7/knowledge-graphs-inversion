@@ -52,9 +52,11 @@ def souffle_adapter(request: pytest.FixtureRequest) -> SouffleConformanceAdapter
     )
 
 
+@pytest.mark.parametrize("with_provenance", (False, True), ids=("rdf", "provenance"))
 @pytest.mark.parametrize("test_id", R2RML_TEST_IDS)
 def test_souffle_r2rml_conformance(
     test_id: str,
+    with_provenance: bool,
     r2rml_suite: R2RMLTestSuite,
     database: Database,
     database_urls: tuple[str, str],
@@ -108,7 +110,12 @@ def test_souffle_r2rml_conformance(
     if _check_for_sql_queries(_parse_mapping_store(mapping_path)):
         return
 
-    souffle_adapter.run_backward(tmp_path, source_db, destination_db)
+    souffle_adapter.run_backward(
+        tmp_path,
+        source_db,
+        destination_db,
+        with_provenance=with_provenance,
+    )
     source_content = get_db_content(source_db)
     destination_content = get_db_content(destination_db)
     assert set(source_content) == set(destination_content), (

@@ -63,7 +63,6 @@ from benchmarks.krown_stats import (
 )
 from benchmarks.krown_validator import KrownValidator
 from benchmarks.souffle_inversion import (
-    FORWARD_PROVENANCE_PROGRAM,
     SouffleInversionError,
     attach_database_to_krown_network,
     copy_souffle_files,
@@ -77,10 +76,10 @@ from kgi.exceptions import NonInvertibleError
 from souffle_artifacts import (
     FACT_FILES,
     FORWARD_PROGRAM,
+    FORWARD_PROVENANCE_PROGRAM,
     REVERSE_PROGRAM,
     SUPPORT_REPORT,
     parse_source_relations,
-    read_recovered_rows,
     write_rdf_dataset,
 )
 
@@ -577,7 +576,7 @@ class ScenarioOperations:
                 load_relation(
                     engine,
                     relation,
-                    read_recovered_rows(self.shared_dir, relation),
+                    self.shared_dir / relation.recovered_file,
                     SOURCE_SCHEMA,
                     DESTINATION_SCHEMA,
                 )
@@ -1198,7 +1197,6 @@ class KrownBenchmarkRunner:
                 souffle_files = FACT_FILES
                 if self.souffle_provenance:
                     souffle_files = (
-                        *FACT_FILES,
                         FORWARD_PROGRAM,
                         FORWARD_PROVENANCE_PROGRAM,
                         REVERSE_PROGRAM,

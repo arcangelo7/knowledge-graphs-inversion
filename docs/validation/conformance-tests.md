@@ -49,7 +49,7 @@ make test-conformance DATABASE=mysql
 
 `R2RMLTC0002f` and `R2RMLTC0018a` run only with PostgreSQL for both execution pairs. The 59 RML cases are skipped with MySQL because the RML Core RDB test suite does not yet provide MySQL variants.
 
-The Soufflé mode runs only the 62 R2RML cases:
+Soufflé supports only R2RML and runs each case with and without provenance:
 
 ```bash
 make test-conformance FORWARD_ENGINE=souffle INVERSION_ENGINE=souffle DATABASE=postgresql

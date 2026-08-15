@@ -784,7 +784,10 @@ def _run_souffle_souffle_test(
                 else:
                     try:
                         adapter.run_backward(
-                            shared_directory, source_db_url, dest_db_url
+                            shared_directory,
+                            source_db_url,
+                            dest_db_url,
+                            with_provenance=False,
                         )
                     except SouffleConformanceError as error:
                         return _souffle_error_response(test_id, error)

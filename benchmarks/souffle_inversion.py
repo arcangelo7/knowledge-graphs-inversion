@@ -2,8 +2,6 @@
 #
 # SPDX-License-Identifier: ISC
 
-import csv
-import io
 import shutil
 import subprocess
 from pathlib import Path
@@ -13,11 +11,10 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from benchmarks.krown_metrics import load_fork_module
-from souffle_artifacts import FACT_FILES, SourceRelation
+from souffle_artifacts import FACT_FILES, PROVENANCE_MARKER_FILES, SourceRelation
 
 KROWN_NETWORK = "bench_executor"
 PROVENANCE_GLOB = "ProvCol_*.csv"
-FORWARD_PROVENANCE_PROGRAM = "Datalog_forward_with_prov.rs"
 
 
 class SouffleInversionError(RuntimeError):
@@ -29,15 +26,13 @@ def _quoted(identifier: str) -> str:
 
 
 def provenance_files(directory: Path) -> tuple[str, ...]:
-    filenames = tuple(path.name for path in sorted(directory.glob(PROVENANCE_GLOB)))
-    if not filenames:
-        raise SouffleInversionError(f"No provenance files found in {directory}")
-    return filenames
+    column_files = tuple(path.name for path in sorted(directory.glob(PROVENANCE_GLOB)))
+    return (*PROVENANCE_MARKER_FILES, *column_files)
 
 
 def inversion_input_files(directory: Path, with_provenance: bool) -> tuple[str, ...]:
     if with_provenance:
-        return provenance_files(directory)
+        return (*FACT_FILES, *provenance_files(directory))
     return FACT_FILES
 
 
@@ -69,7 +64,7 @@ def copy_souffle_files(
 def load_relation(
     engine: Engine,
     relation: SourceRelation,
-    rows: list[tuple[str, ...]],
+    recovered_file: Path,
     source_schema: str,
     destination_schema: str,
 ) -> None:
@@ -91,18 +86,16 @@ def load_relation(
             )
         )
 
-    buffer = io.StringIO()
-    writer = csv.writer(buffer)
-    writer.writerows(rows)
-    buffer.seek(0)
-
     columns = ", ".join(_quoted(column) for column in relation.columns)
     raw_connection = engine.raw_connection()
     try:
         cursor = raw_connection.cursor()
-        cursor.copy_expert(
-            f"COPY {qualified} ({columns}) FROM STDIN WITH (FORMAT CSV)", buffer
-        )
+        with recovered_file.open(encoding="utf-8") as rows:
+            cursor.copy_expert(
+                f"COPY {qualified} ({columns}) FROM STDIN WITH "
+                "(FORMAT TEXT, DELIMITER E'\\t', NULL '')",
+                rows,
+            )
         raw_connection.commit()
     finally:
         raw_connection.close()

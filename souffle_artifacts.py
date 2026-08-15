@@ -8,11 +8,12 @@ from pathlib import Path
 
 FACT_FILES = ("triple.csv", "quadruple.csv")
 FORWARD_PROGRAM = "Datalog_rules.rs"
+FORWARD_PROVENANCE_PROGRAM = "Datalog_forward_with_prov.rs"
 REVERSE_PROGRAM = "Datalog_reverse.rs"
 SUPPORT_REPORT = "support.json"
+PROVENANCE_MARKER_FILES = ("ProvTriple.csv", "ProvQuad.csv")
 
-SOURCE_DECLARATION = re.compile(r"^\.decl (\w+)\((.*)\)$")
-SOURCE_INPUT = re.compile(r"^\.input (\w+)")
+RECOVERED_DECLARATION = re.compile(r"^\.decl Recovered_(\w+)\((.*)\)$")
 LOGICAL_TABLE_SUFFIX = re.compile(r"_lt\d+$")
 
 
@@ -36,26 +37,21 @@ def _declared_columns(arguments: str) -> tuple[str, ...]:
 
 
 def parse_source_relations(shared_directory: Path) -> tuple[SourceRelation, ...]:
-    declarations: dict[str, tuple[str, ...]] = {}
-    inputs: list[str] = []
-    program = shared_directory / FORWARD_PROGRAM
+    relations: list[SourceRelation] = []
+    program = shared_directory / REVERSE_PROGRAM
     for line in program.read_text(encoding="utf-8").splitlines():
-        declaration = SOURCE_DECLARATION.match(line)
-        if declaration is not None:
-            declarations[declaration.group(1)] = _declared_columns(declaration.group(2))
+        declaration = RECOVERED_DECLARATION.match(line)
+        if declaration is None:
             continue
-        source_input = SOURCE_INPUT.match(line)
-        if source_input is not None:
-            inputs.append(source_input.group(1))
-
-    return tuple(
-        SourceRelation(
-            name=name,
-            table=LOGICAL_TABLE_SUFFIX.sub("", name),
-            columns=declarations[name],
+        name = declaration.group(1)
+        relations.append(
+            SourceRelation(
+                name=name,
+                table=LOGICAL_TABLE_SUFFIX.sub("", name),
+                columns=_declared_columns(declaration.group(2)),
+            )
         )
-        for name in inputs
-    )
+    return tuple(relations)
 
 
 def read_recovered_rows(

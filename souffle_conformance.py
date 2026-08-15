@@ -36,6 +36,8 @@ from sqlalchemy.sql.schema import Column as SchemaColumn
 from souffle_artifacts import (
     FACT_FILES,
     FORWARD_PROGRAM,
+    FORWARD_PROVENANCE_PROGRAM,
+    PROVENANCE_MARKER_FILES,
     REVERSE_PROGRAM,
     SUPPORT_REPORT,
     SourceRelation,
@@ -215,8 +217,8 @@ class SouffleConformanceAdapter:
             "docker",
             "run",
             "--rm",
-            "--add-host",
-            "host.docker.internal:host-gateway",
+            "--network",
+            "host",
             "-v",
             f"{shared_directory.resolve()}:/data/shared",
             "-v",
@@ -252,6 +254,27 @@ class SouffleConformanceAdapter:
         if completed.returncode != 0:
             raise SouffleConformanceError(stage, command, output)
         return CommandResult(command, output)
+
+    def _run_souffle(
+        self,
+        stage: Stage,
+        shared_directory: Path,
+        program: str,
+    ) -> CommandResult:
+        return self._run_stage(
+            stage,
+            shared_directory,
+            (
+                self._souffle_path(),
+                "-L",
+                self._library_directory(),
+                self._shared_path(shared_directory, program),
+                "-F",
+                self._shared_path(shared_directory, ""),
+                "-D",
+                self._shared_path(shared_directory, ""),
+            ),
+        )
 
     @staticmethod
     def _require_files(
@@ -293,11 +316,6 @@ class SouffleConformanceAdapter:
         assert source_url.username is not None
         assert source_url.password is not None
         assert source_url.host is not None
-        database_host = (
-            "host.docker.internal"
-            if self.execution_mode == "docker"
-            else source_url.host
-        )
 
         generation = self._run_stage(
             "forward generation",
@@ -309,7 +327,7 @@ class SouffleConformanceAdapter:
                 "-m",
                 self._shared_path(shared_directory, "mapping.ttl"),
                 "-dsn",
-                _jdbc_url(source_url, database, database_host),
+                _jdbc_url(source_url, database, source_url.host),
                 "-u",
                 source_url.username,
                 "-p",
@@ -326,19 +344,10 @@ class SouffleConformanceAdapter:
             (FORWARD_PROGRAM,),
             require_nonempty=True,
         )
-        execution = self._run_stage(
+        execution = self._run_souffle(
             "forward execution",
             shared_directory,
-            (
-                self._souffle_path(),
-                "-L",
-                self._library_directory(),
-                self._shared_path(shared_directory, FORWARD_PROGRAM),
-                "-F",
-                self._shared_path(shared_directory, ""),
-                "-D",
-                self._shared_path(shared_directory, ""),
-            ),
+            FORWARD_PROGRAM,
         )
         self._require_files(
             "forward execution", execution, shared_directory, FACT_FILES
@@ -356,43 +365,63 @@ class SouffleConformanceAdapter:
         shared_directory: Path,
         source_db_url: str,
         destination_db_url: str,
+        with_provenance: bool,
     ) -> None:
+        generation_command = (
+            "python3",
+            self._reverse_script_path(),
+            self._shared_path(shared_directory, FORWARD_PROGRAM),
+            self._shared_path(
+                shared_directory,
+                FORWARD_PROVENANCE_PROGRAM if with_provenance else REVERSE_PROGRAM,
+            ),
+            "--mode",
+            "forward" if with_provenance else "reverse",
+        )
+        if with_provenance:
+            generation_command += (
+                "--with-provenance",
+                "--reverse-output",
+                self._shared_path(shared_directory, REVERSE_PROGRAM),
+            )
+        generation_command += (
+            "--support-report",
+            self._shared_path(shared_directory, SUPPORT_REPORT),
+        )
         generation = self._run_stage(
             "inverse generation",
             shared_directory,
-            (
-                "python3",
-                self._reverse_script_path(),
-                self._shared_path(shared_directory, FORWARD_PROGRAM),
-                self._shared_path(shared_directory, REVERSE_PROGRAM),
-                "--mode",
-                "reverse",
-                "--support-report",
-                self._shared_path(shared_directory, SUPPORT_REPORT),
-            ),
+            generation_command,
         )
+        generated_programs = (REVERSE_PROGRAM, SUPPORT_REPORT)
+        if with_provenance:
+            generated_programs = (FORWARD_PROVENANCE_PROGRAM, *generated_programs)
         self._require_files(
             "inverse generation",
             generation,
             shared_directory,
-            (REVERSE_PROGRAM, SUPPORT_REPORT),
+            generated_programs,
             require_nonempty=True,
         )
+
+        if with_provenance:
+            provenance_execution = self._run_souffle(
+                "forward execution",
+                shared_directory,
+                FORWARD_PROVENANCE_PROGRAM,
+            )
+            self._require_files(
+                "forward execution",
+                provenance_execution,
+                shared_directory,
+                (*FACT_FILES, *PROVENANCE_MARKER_FILES),
+            )
         relations = parse_source_relations(shared_directory)
 
-        execution = self._run_stage(
+        execution = self._run_souffle(
             "backward execution",
             shared_directory,
-            (
-                self._souffle_path(),
-                "-L",
-                self._library_directory(),
-                self._shared_path(shared_directory, REVERSE_PROGRAM),
-                "-F",
-                self._shared_path(shared_directory, ""),
-                "-D",
-                self._shared_path(shared_directory, ""),
-            ),
+            REVERSE_PROGRAM,
         )
         self._require_files(
             "backward execution",

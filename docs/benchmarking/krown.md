@@ -41,7 +41,7 @@ The Makefile exposes these options:
 
 `forward` measures materialization only. `backward` measures inversion after an unmeasured materialization prepares its input. `roundtrip` measures paired materialization and inversion runs, then validates the reconstructed data by materializing it again and comparing the RDF datasets. Generation, database setup, validation, and cooldown time are excluded from all reported durations.
 
-RMLMapper, Soufflé, and Morph-KGC are available for forward materialization. The `kgi` inversion engine reconstructs data with SPARQL queries generated from the mapping. Soufflé inversion can only be paired with Soufflé forward materialization, using `FORWARD_ENGINE=souffle INVERSION_ENGINE=souffle`. Both directions generate and compile a Datalog program within their measured stage. Pairing Soufflé inversion with another forward engine would therefore compare a backward time that includes compilation with a forward time that does not include an equivalent step, making the overhead uninterpretable. Set `SOUFFLE_PROVENANCE=true` only for this pair because Soufflé is the only forward engine that can produce the column provenance consumed by Soufflé inversion. For these reasons, Soufflé inversion is not compared with other forward engines.
+Soufflé inversion requires Soufflé forward materialization.
 
 Select suites or a single scenario with the same command:
 
@@ -50,7 +50,7 @@ make benchmark-krown I=3 MODE=forward SUITES=raw,mappings
 make benchmark-krown I=3 MODE=backward SUITES=named-graphs SCENARIO=namedgraph_0SM-NG_5POM-NG_1TM_1POM_True
 ```
 
-To compare Soufflé inversion with and without column provenance, run the same scenario twice:
+To inspect Soufflé inversion with and without provenance, run the same scenario twice:
 
 ```bash
 make benchmark-krown I=3 MODE=roundtrip FORWARD_ENGINE=souffle INVERSION_ENGINE=souffle SCENARIO=mappings_10_5
