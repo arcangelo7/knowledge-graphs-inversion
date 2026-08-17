@@ -14,9 +14,9 @@ from sqlalchemy import MetaData, create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 
-import rmlmapper
-from conformance_config import get_database_config
-from test_suites import R2RMLTestSuite, RMLTestSuite
+from conformance import rmlmapper
+from conformance.config import get_database_config
+from conformance.suites import R2RMLTestSuite, RMLTestSuite
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

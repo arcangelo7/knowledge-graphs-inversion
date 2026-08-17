@@ -6,11 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from conformance_config import is_r2rml_case_available
-from conformance_expectations import expected_outcome
-from conformance_outcome import describe_difference, evaluate_souffle_case
-from souffle_conformance import SouffleConformanceAdapter
-from test_suites import R2RMLTestSuite
+from conformance.config import is_r2rml_case_available
+from conformance.expectations import expected_outcome
+from conformance.outcome import describe_difference, evaluate_souffle_case
+from conformance.souffle import SouffleConformanceAdapter
+from conformance.suites import R2RMLTestSuite
 
 from .conftest import (
     PROJECT_ROOT,

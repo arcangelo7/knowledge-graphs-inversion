@@ -11,7 +11,11 @@ from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
 from benchmarks.krown_metrics import load_fork_module
-from souffle_artifacts import FACT_FILES, PROVENANCE_MARKER_FILES, SourceRelation
+from conformance.souffle_artifacts import (
+    FACT_FILES,
+    PROVENANCE_MARKER_FILES,
+    SourceRelation,
+)
 
 KROWN_NETWORK = "bench_executor"
 PROVENANCE_GLOB = "ProvCol_*.csv"

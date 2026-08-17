@@ -33,7 +33,7 @@ from sqlalchemy.engine import Engine, URL, make_url
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.sql.schema import Column as SchemaColumn
 
-from souffle_artifacts import (
+from conformance.souffle_artifacts import (
     FACT_FILES,
     FORWARD_PROGRAM,
     FORWARD_PROVENANCE_PROGRAM,

@@ -90,13 +90,8 @@ norecursedirs = ["benchmarks"]
 include = [
     "app.py",
     "benchmarks",
-    "conformance_config.py",
-    "database_connection.py",
+    "conformance",
     "kgi",
-    "rmlmapper.py",
-    "souffle_artifacts.py",
-    "souffle_conformance.py",
-    "test_suites.py",
     "tests",
 ]
 
@@ -104,14 +99,9 @@ include = [
 include = [
     "app.py",
     "benchmarks/**/*.py",
-    "conformance_config.py",
-    "database_connection.py",
+    "conformance/**/*.py",
     "kgi/**/*.py",
     "pyproject.toml",
-    "rmlmapper.py",
-    "souffle_artifacts.py",
-    "souffle_conformance.py",
-    "test_suites.py",
     "tests/**/*.py",
 ]
 

@@ -7,15 +7,15 @@ from pathlib import Path
 
 import pytest
 
-from conformance_config import is_r2rml_case_available
-from conformance_expectations import expected_outcome
-from conformance_outcome import (
+from conformance.config import is_r2rml_case_available
+from conformance.expectations import expected_outcome
+from conformance.outcome import (
     describe_difference,
     evaluate_kgi_case,
     forward_conformance_failed,
 )
+from conformance.suites import R2RMLTestSuite, RMLTestSuite, TestSuite
 from kgi import MappingError, analyze_mapping
-from test_suites import R2RMLTestSuite, RMLTestSuite, TestSuite
 
 from .conftest import (
     Database,

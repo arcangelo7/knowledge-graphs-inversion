@@ -9,7 +9,7 @@ on:
     branches: [master]
     paths:
       - 'docs/**'
-      - 'build_book.sh'
+      - 'scripts/build_book.sh'
       - 'pyproject.toml'
       - 'uv.lock'
       - '.github/workflows/deploy-docs.yml'

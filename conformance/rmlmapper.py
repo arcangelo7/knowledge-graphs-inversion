@@ -14,6 +14,9 @@ from sqlalchemy.engine import make_url
 RMLMAPPER_VERSION = "8.1.0"
 JAR_FILENAME = "rmlmapper-8.1.0-r380-all.jar"
 JAR_URL = f"https://github.com/RMLio/rmlmapper-java/releases/download/v{RMLMAPPER_VERSION}/{JAR_FILENAME}"
+JAR_DIRECTORY = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "build"
+)
 
 
 def sqlalchemy_to_jdbc(
@@ -59,12 +62,13 @@ def prepare_rml_mapping(
 
 
 def _managed_jar_path() -> str:
-    return os.path.join(os.path.dirname(__file__), JAR_FILENAME)
+    return os.path.join(JAR_DIRECTORY, JAR_FILENAME)
 
 
 def _ensure_managed_jar() -> str:
     jar_path = _managed_jar_path()
     if not os.path.isfile(jar_path):
+        os.makedirs(JAR_DIRECTORY, exist_ok=True)
         urllib.request.urlretrieve(JAR_URL, jar_path)
     return jar_path
 

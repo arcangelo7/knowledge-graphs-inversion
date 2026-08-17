@@ -1,7 +1,6 @@
 __pycache__
 .coverage
 htmlcov/
-individual-logs/
 build/
 docs/_build/
 .vscode/
@@ -13,7 +12,6 @@ benchmarks/*/*.csv
 benchmarks/*/*.rdf
 benchmarks/*/*.nt
 
-r2rml_inversion_test_results
 test_results
 
 # RML test case engine outputs
@@ -21,19 +19,12 @@ rml_io_registry/test-cases/**/*.nt
 rml_io_registry/test-cases/**/*.ttl
 rml_io_registry/test-cases/**/*.log
 rml_io_registry/test-cases/output.*
-inversion.log
 hs_err_pid*.log
 rmlmapper*.jar
 
-# Virtuoso data directory
-virtuoso-data/
-
 # PostgreSQL data directories
-postgresql_data/
-dest_postgresql_data/
 postgresql_r2rml_data/
 dest_postgresql_r2rml_data/
 postgresql_rml_data/
 dest_postgresql_rml_data/
 benchmark_postgresql_data/
-benchmark_virtuoso_data/

@@ -8,7 +8,13 @@ from pathlib import Path
 
 from pyoxigraph import BlankNode, Quad, RdfFormat, Store
 
-from database_connection import DatabaseConnection
+from conformance.database import DatabaseConnection
+from conformance.souffle import (
+    Database as SouffleDatabase,
+    SouffleConformanceAdapter,
+    SouffleConformanceError,
+    rdf_datasets_isomorphic,
+)
 from kgi import (
     MappingAnalysis,
     NoDataError,
@@ -18,12 +24,6 @@ from kgi import (
 )
 from kgi.comparison import DatabaseContent, PartialLoss, compare_databases
 from kgi.core import _check_for_sql_queries, _parse_mapping_store, reconstruct
-from souffle_conformance import (
-    Database as SouffleDatabase,
-    SouffleConformanceAdapter,
-    SouffleConformanceError,
-    rdf_datasets_isomorphic,
-)
 
 RDF_FORMATS = {
     "turtle": RdfFormat.TURTLE,

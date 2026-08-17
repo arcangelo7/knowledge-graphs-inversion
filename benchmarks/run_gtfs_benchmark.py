@@ -37,8 +37,8 @@ from sqlalchemy.sql.sqltypes import Date, Integer, Numeric, Text
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-import rmlmapper  # noqa: E402
 from benchmarks.krown_stats import aggregate_scenario_statistics  # noqa: E402
+from conformance import rmlmapper  # noqa: E402
 from kgi.core import reconstruct  # noqa: E402
 from kgi.exceptions import NonInvertibleError, UnsupportedMappingError  # noqa: E402
 

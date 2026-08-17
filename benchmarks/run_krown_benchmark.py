@@ -32,7 +32,6 @@ from rich.table import Table
 from sqlalchemy import URL, create_engine, text
 from sqlalchemy.engine import Engine
 
-import rmlmapper
 from benchmarks.forward_engines import (
     FORWARD_ENGINES,
     ForwardEngine,
@@ -71,9 +70,8 @@ from benchmarks.souffle_inversion import (
     preserve_souffle_files,
     reverse_souffle_resource,
 )
-from kgi.core import reconstruct
-from kgi.exceptions import NonInvertibleError
-from souffle_artifacts import (
+from conformance import rmlmapper
+from conformance.souffle_artifacts import (
     FACT_FILES,
     FORWARD_PROGRAM,
     FORWARD_PROVENANCE_PROGRAM,
@@ -82,6 +80,8 @@ from souffle_artifacts import (
     parse_source_relations,
     write_rdf_dataset,
 )
+from kgi.core import reconstruct
+from kgi.exceptions import NonInvertibleError
 
 console = Console(width=max(shutil.get_terminal_size().columns, 100))
 

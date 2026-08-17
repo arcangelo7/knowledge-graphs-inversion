@@ -8,7 +8,7 @@ from typing import Union
 
 from pyoxigraph import BlankNode, Literal, NamedNode, RdfFormat, Store, Triple
 
-from conformance_config import SUITE_LABELS
+from conformance.config import SUITE_LABELS
 
 RdfSubject = Union[NamedNode, BlankNode, Triple]
 RdfTerm = Union[NamedNode, BlankNode, Literal, Triple]

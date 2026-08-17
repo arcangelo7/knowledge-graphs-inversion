@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: ISC
 
-from conformance_outcome import CaseOutcome, InversionOutcome
+from conformance.outcome import CaseOutcome, InversionOutcome
 from kgi.comparison import PartialLoss
 
 TestKey = tuple[str, str]

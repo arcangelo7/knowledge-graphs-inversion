@@ -24,8 +24,8 @@ from flask import (
     request,
     stream_with_context,
 )
-import rmlmapper
-from conformance_config import (
+from conformance import rmlmapper
+from conformance.config import (
     DATABASE_CONFIGS,
     DEFAULT_ENGINE_PAIR,
     ENGINE_PAIRS,
@@ -37,8 +37,9 @@ from conformance_config import (
     validate_database_suite,
     validate_engine_pair,
 )
-from conformance_expectations import expected_outcome
-from conformance_outcome import (
+from conformance.database import DatabaseConnection
+from conformance.expectations import expected_outcome
+from conformance.outcome import (
     LOSS_LABELS,
     OUTCOME_LABELS,
     CaseOutcome,
@@ -47,14 +48,13 @@ from conformance_outcome import (
     evaluate_souffle_case,
     forward_conformance_failed,
 )
-from database_connection import DatabaseConnection
-from kgi.comparison import PartialLoss
-from souffle_conformance import (
+from conformance.souffle import (
     Database as SouffleDatabase,
     SouffleConformanceAdapter,
     SouffleConformanceError,
 )
-from test_suites import TestSuite, register_suites, get_suite, SUITES
+from conformance.suites import TestSuite, register_suites, get_suite, SUITES
+from kgi.comparison import PartialLoss
 
 DEFAULT_MODE = "default"
 SOUFFLE_MODES = {"rdf": False, "provenance": True}

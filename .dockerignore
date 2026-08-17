@@ -1,14 +1,9 @@
 # PostgreSQL data directories (used by docker-compose volumes)
-postgresql_data/
-dest_postgresql_data/
 postgresql_r2rml_data/
 dest_postgresql_r2rml_data/
 postgresql_rml_data/
 dest_postgresql_rml_data/
 benchmark_postgresql_data/
-
-# Virtuoso data
-virtuoso_data/
 
 # Python cache and build artifacts
 __pycache__/
@@ -39,10 +34,8 @@ env/
 ENV/
 
 # Test and benchmark results
-r2rml_inversion_test_results/
 benchmarks/*/results/
 benchmarks/*/scenarios/
-test_logs/
 
 KROWN/
 KROWN_Extended/**
@@ -57,7 +50,6 @@ rml_io_registry/
 
 # Logs
 *.log
-inversion.log
 
 # IDE and editor files
 .vscode/

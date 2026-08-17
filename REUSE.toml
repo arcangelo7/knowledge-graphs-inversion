@@ -7,10 +7,8 @@ path = [
     ".gitmodules",
     ".python-version",
     "config.ini",
-    "morph_kgc_config.ini",
     "pyproject.toml",
     "uv.lock",
-    "output.nt",
     "docs/.gitignore",
     "docs/benchmarking/images/*.png",
     "docs/benchmarking/results/*.json",
@@ -18,7 +16,6 @@ path = [
     "CHANGELOG.md",
     "README.md",
     "RELEASE.md",
-    "PLAN.md",
     "rmlmapper*.jar",
 ]
 SPDX-FileCopyrightText = "2026 Arcangelo Massari <arcangelo.massari@unibo.it>"
