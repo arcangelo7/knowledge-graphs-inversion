@@ -158,7 +158,7 @@ SPDX-License-Identifier: ISC
             color: #fd7e14 !important;
             font-weight: bold;
         }
-        .result-forward-mapping-failed {
+        .result-error-test-case {
             color: #6f42c1 !important;
             font-weight: bold;
         }
@@ -168,14 +168,14 @@ SPDX-License-Identifier: ISC
         [data-theme="dark"] .result-not-tested { color: #8b949e !important; }
         [data-theme="dark"] .result-partially-inverted { color: #39c0e2 !important; }
         [data-theme="dark"] .result-non-invertible { color: #db6d28 !important; }
-        [data-theme="dark"] .result-forward-mapping-failed { color: #a371f7 !important; }
+        [data-theme="dark"] .result-error-test-case { color: #a371f7 !important; }
         .table-striped > tbody > tr:nth-of-type(odd) .result-passed,
         .table-striped > tbody > tr:nth-of-type(odd) .result-failed,
         .table-striped > tbody > tr:nth-of-type(odd) .result-not-supported,
         .table-striped > tbody > tr:nth-of-type(odd) .result-not-tested,
         .table-striped > tbody > tr:nth-of-type(odd) .result-partially-inverted,
         .table-striped > tbody > tr:nth-of-type(odd) .result-non-invertible,
-        .table-striped > tbody > tr:nth-of-type(odd) .result-forward-mapping-failed {
+        .table-striped > tbody > tr:nth-of-type(odd) .result-error-test-case {
             color: inherit;
         }
         .error-test-badge {
@@ -310,14 +310,14 @@ SPDX-License-Identifier: ISC
         .stat-not-tested { color: #6c757d; }
         .stat-partially-inverted { color: #0dcaf0; }
         .stat-non-invertible { color: #fd7e14; }
-        .stat-forward-mapping-failed { color: #6f42c1; }
+        .stat-error-test-case { color: #6f42c1; }
         [data-theme="dark"] .stat-passed { color: #3fb950; }
         [data-theme="dark"] .stat-failed { color: #f85149; }
         [data-theme="dark"] .stat-not-supported { color: #d29922; }
         [data-theme="dark"] .stat-not-tested { color: #8b949e; }
         [data-theme="dark"] .stat-partially-inverted { color: #39c0e2; }
         [data-theme="dark"] .stat-non-invertible { color: #db6d28; }
-        [data-theme="dark"] .stat-forward-mapping-failed { color: #a371f7; }
+        [data-theme="dark"] .stat-error-test-case { color: #a371f7; }
         .suite-badge {
             font-size: 0.7em;
             padding: 2px 6px;
@@ -509,8 +509,8 @@ SPDX-License-Identifier: ISC
                         <div class="stat-label">Not tested (<span id="stat-not-tested-percent">0</span>%)</div>
                     </div>
                     <div class="stat-item">
-                        <div class="stat-value stat-forward-mapping-failed" id="stat-forward-mapping-failed">0</div>
-                        <div class="stat-label">Forward mapping failed (<span id="stat-forward-mapping-failed-percent">0</span>%)</div>
+                        <div class="stat-value stat-error-test-case" id="stat-error-test-case">0</div>
+                        <div class="stat-label">Error test case (<span id="stat-error-test-case-percent">0</span>%)</div>
                     </div>
                     <div class="stat-item">
                         <div class="stat-value stat-failed" id="stat-failed">0</div>
@@ -590,7 +590,7 @@ SPDX-License-Identifier: ISC
             notTested: 0,
             partiallyInverted: 0,
             nonInvertible: 0,
-            forwardMappingFailed: 0
+            errorTestCase: 0
         };
         let suiteStats = {};
         const resultHeaders = ['Suite', 'Test ID', 'Purpose', 'Result', 'Expected Result', 'Actual Result', 'Mapping', 'Inversion Success', 'Table Comparison'];
@@ -690,7 +690,7 @@ SPDX-License-Identifier: ISC
             $('#stat-not-tested').text(testStats.notTested);
             $('#stat-partially-inverted').text(testStats.partiallyInverted);
             $('#stat-non-invertible').text(testStats.nonInvertible);
-            $('#stat-forward-mapping-failed').text(testStats.forwardMappingFailed);
+            $('#stat-error-test-case').text(testStats.errorTestCase);
 
             if (total > 0) {
                 $('#stat-passed-percent').text(Math.round((testStats.passed / total) * 100));
@@ -699,7 +699,7 @@ SPDX-License-Identifier: ISC
                 $('#stat-not-tested-percent').text(Math.round((testStats.notTested / total) * 100));
                 $('#stat-partially-inverted-percent').text(Math.round((testStats.partiallyInverted / total) * 100));
                 $('#stat-non-invertible-percent').text(Math.round((testStats.nonInvertible / total) * 100));
-                $('#stat-forward-mapping-failed-percent').text(Math.round((testStats.forwardMappingFailed / total) * 100));
+                $('#stat-error-test-case-percent').text(Math.round((testStats.errorTestCase / total) * 100));
             }
         }
 
@@ -712,7 +712,7 @@ SPDX-License-Identifier: ISC
                 notTested: 0,
                 partiallyInverted: 0,
                 nonInvertible: 0,
-                forwardMappingFailed: 0
+                errorTestCase: 0
             };
             updateStats();
         }
@@ -1013,7 +1013,7 @@ SPDX-License-Identifier: ISC
             partially_inverted: { cls: 'partially-inverted', text: 'Partially inverted', category: 'partiallyInverted' },
             non_invertible: { cls: 'non-invertible', text: 'Non-invertible', category: 'nonInvertible' },
             not_supported: { cls: 'not-supported', text: 'Not supported', category: 'notSupported' },
-            forward_mapping_failed: { cls: 'forward-mapping-failed', text: 'Forward mapping failed', category: 'forwardMappingFailed' },
+            error_test_case: { cls: 'error-test-case', text: 'Error test case', category: 'errorTestCase' },
             not_tested: { cls: 'not-tested', text: 'Not tested', category: 'notTested' },
             mismatch: { cls: 'failed', text: 'Mismatch', category: 'failed' },
             error: { cls: 'failed', text: 'Execution error', category: 'failed' }
@@ -1047,7 +1047,7 @@ SPDX-License-Identifier: ISC
         function resetAllSuiteStats(suiteIds) {
             suiteStats = {};
             suiteIds.forEach(sid => {
-                suiteStats[sid] = { total: 0, passed: 0, failed: 0, notSupported: 0, notTested: 0, partiallyInverted: 0, nonInvertible: 0, forwardMappingFailed: 0 };
+                suiteStats[sid] = { total: 0, passed: 0, failed: 0, notSupported: 0, notTested: 0, partiallyInverted: 0, nonInvertible: 0, errorTestCase: 0 };
             });
         }
 
@@ -1068,7 +1068,7 @@ SPDX-License-Identifier: ISC
             $(`#ps-nt-${sid}`).text(s.notTested);
             $(`#ps-pi-${sid}`).text(s.partiallyInverted);
             $(`#ps-ni-${sid}`).text(s.nonInvertible);
-            $(`#ps-fmf-${sid}`).text(s.forwardMappingFailed);
+            $(`#ps-etc-${sid}`).text(s.errorTestCase);
         }
 
         function createSuitePanelHtml(sid) {
@@ -1084,7 +1084,7 @@ SPDX-License-Identifier: ISC
                     <span class="stat-non-invertible">Non-invertible: <strong id="ps-ni-${sid}">0</strong></span>
                     <span class="stat-not-supported">Not supported: <strong id="ps-ns-${sid}">0</strong></span>
                     <span class="stat-not-tested">Not tested: <strong id="ps-nt-${sid}">0</strong></span>
-                    <span class="stat-forward-mapping-failed">Forward mapping failed: <strong id="ps-fmf-${sid}">0</strong></span>
+                    <span class="stat-error-test-case">Error test case: <strong id="ps-etc-${sid}">0</strong></span>
                     <span class="stat-failed">Failed: <strong id="ps-failed-${sid}">0</strong></span>
                 </div>
                 <div class="suite-panel-table">

@@ -17,7 +17,11 @@ from kgi.constants import (
     RML_REFERENCE,
     RML_TEMPLATE,
 )
-from kgi.core import _check_for_unrecoverable_tables, _unrecoverable_references
+from kgi.core import (
+    _analyze_rules,
+    _check_for_unrecoverable_tables,
+    _unrecoverable_references,
+)
 from kgi.endpoints import LocalSparqlGraphStore
 from kgi.exceptions import NonInvertibleError
 from kgi.query import (
@@ -227,7 +231,7 @@ def test_table_without_recoverable_columns_is_non_invertible() -> None:
 
     assert unrecoverable == {"data": frozenset({"p1"})}
     with pytest.raises(NonInvertibleError) as exc_info:
-        _check_for_unrecoverable_tables(mappings, unrecoverable)
+        _check_for_unrecoverable_tables(_analyze_rules(mappings))
 
     assert str(exc_info.value) == (
         "No column of table 'data' can be recovered from the graph: p1"
@@ -517,7 +521,7 @@ def test_triples_map_without_predicate_object_map_needs_a_join_to_be_invertible(
     unrecoverable = _unrecoverable_references(mappings)
     assert unrecoverable == {"data2": frozenset({"id"})}
     with pytest.raises(NonInvertibleError) as error:
-        _check_for_unrecoverable_tables(mappings, unrecoverable)
+        _check_for_unrecoverable_tables(_analyze_rules(mappings))
     assert (
         str(error.value)
         == "No column of table 'data2' can be recovered from the graph: id"

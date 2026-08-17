@@ -4,8 +4,6 @@
 
 """Constants used throughout the KGI library."""
 
-import re
-
 from pyoxigraph import NamedNode
 
 RML_BLANK_NODE = "http://w3id.org/rml/BlankNode"
@@ -60,7 +58,4 @@ JDBC_DRIVERS: dict[str, str] = {
     "mysql": "mysql+pymysql",
 }
 
-# Placeholders in template values already normalized by morph-kgc, e.g. {Name}
 REF_TEMPLATE_REGEX = r"{([^{}]*)}"
-# Placeholders in raw mapping text, where identifiers may be delimited, e.g. {\"Name\"}
-TEMPLATE_COLUMN_REGEX = re.compile(r'\{\\?"?\'?([^"\'{}\\]+)\\?"?\'?\}')

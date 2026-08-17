@@ -482,7 +482,7 @@ def _case_result(
     purpose: str | bool,
     error_test: bool,
 ) -> dict[str, object]:
-    expected = expected_outcome(suite.suite_id, test_id)
+    expected = expected_outcome(suite.suite_id, test_id, database_system)
     return {
         "status": "success",
         "test_id": test_id,

@@ -82,7 +82,7 @@ def test_souffle_r2rml_conformance(
         with_provenance,
     )
     mode = "provenance" if with_provenance else "rdf"
-    expected = expected_outcome("r2rml", test_id)
+    expected = expected_outcome("r2rml", test_id, database)
     assert observed == expected, (
         f"r2rml/{database}/{test_id}/{mode}: {describe_difference(expected, observed)}"
     )

@@ -5,6 +5,8 @@
 import pandas as pd
 from sqlalchemy import CHAR, MetaData, Table, create_engine, inspect, select, text
 
+from kgi.comparison import DatabaseContent
+
 
 def hex_encode_binary_columns(df: pd.DataFrame) -> pd.DataFrame:
     for col in df.columns:
@@ -39,15 +41,13 @@ class DatabaseConnection:
         finally:
             engine.dispose()
 
-    def get_database_content(
-        self, database_url: str
-    ) -> dict[str, dict[str, list[str]]]:
+    def get_database_content(self, database_url: str) -> DatabaseContent:
         engine = create_engine(database_url)
         try:
             with engine.connect() as connection:
                 metadata = MetaData()
                 table_names = inspect(connection).get_table_names()
-                db_content: dict[str, dict[str, list[str]]] = {}
+                db_content: DatabaseContent = {}
                 for table_name in table_names:
                     table = Table(table_name, metadata, autoload_with=connection)
                     content = pd.read_sql(select(table), connection)

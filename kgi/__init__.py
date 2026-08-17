@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: ISC
 
-from kgi.core import reconstruct
+from kgi.core import MappingAnalysis, TableAnalysis, analyze_mapping, reconstruct
 from kgi.exceptions import (
     KGIError,
     MappingError,
@@ -12,6 +12,9 @@ from kgi.exceptions import (
 )
 
 __all__ = [
+    "MappingAnalysis",
+    "TableAnalysis",
+    "analyze_mapping",
     "reconstruct",
     "KGIError",
     "MappingError",

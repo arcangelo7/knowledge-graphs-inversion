@@ -14,6 +14,7 @@ from conformance_outcome import (
     evaluate_kgi_case,
     forward_conformance_failed,
 )
+from kgi import MappingError, analyze_mapping
 from test_suites import R2RMLTestSuite, RMLTestSuite, TestSuite
 
 from .conftest import (
@@ -62,10 +63,37 @@ def _run_conformance_test(
         source_db,
         dest_db,
     )
-    expected = expected_outcome(suite.suite_id, test_id)
+    expected = expected_outcome(suite.suite_id, test_id, database)
     assert observed == expected, (
         f"{suite.suite_id}/{database}/{test_id}: "
         f"{describe_difference(expected, observed)}"
+    )
+
+
+def test_kgi_rejects_a_template_naming_a_delimited_column_as_regular(
+    r2rml_suite: R2RMLTestSuite,
+    database: Database,
+    database_urls: tuple[str, str],
+) -> None:
+    if database != "postgresql":
+        pytest.skip("MySQL compares column names without distinguishing case")
+
+    source_db, _ = database_urls
+    drop_all_tables(source_db)
+    load_sql_script(
+        source_db, r2rml_suite.get_sql_script_path("R2RMLTC0002f", database)
+    )
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        with pytest.raises(MappingError) as rejection:
+            analyze_mapping(
+                r2rml_suite.get_mapping_path("R2RMLTC0002f"),
+                Path(tmp_dir, "output.nq"),
+                source_db_url=source_db,
+            )
+
+    assert str(rejection.value) == (
+        "Table 'Student' of the source database has no column named id, name"
     )
 
 

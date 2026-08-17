@@ -8,6 +8,7 @@ import os
 import pathlib
 import re
 import tempfile
+from dataclasses import dataclass
 from typing import cast
 from urllib.parse import quote_plus
 
@@ -23,19 +24,33 @@ from kgi.constants import (
     D2RQ_USERNAME,
     JDBC_DRIVERS,
     RDF_TYPE,
+    REF_TEMPLATE_REGEX,
+    RML_CHILD,
     RML_IRI,
+    RML_ITERATOR,
+    RML_LOGICAL_SOURCE,
+    RML_OLD_LOGICAL_SOURCE,
     RML_OLD_QUERY,
+    RML_OLD_REFERENCE,
     RML_PARENT_TRIPLES_MAP,
     RML_QUERY,
     RML_REFERENCE,
     RML_REFERENCE_FORMULATION,
+    RML_REFERENCE_NODE,
     RML_SOURCE,
     RML_SQL2008_QUERY,
     RML_TABLE_NAME,
     RML_TEMPLATE,
+    RML_TEMPLATE_NODE,
+    RR_CHILD,
+    RR_COLUMN,
     RR_LITERAL,
+    RR_LOGICAL_TABLE,
+    RR_PARENT_TRIPLES_MAP,
     RR_SQL_QUERY,
     RR_SUBJECT_MAP,
+    RR_TABLE_NAME,
+    RR_TEMPLATE,
     RR_TERM_TYPE,
     RR_TRIPLES_MAP,
 )
@@ -58,6 +73,7 @@ from kgi.utils import (
     insert_columns,
     normalize_sql_identifier,
     signature_value as _signature_value,
+    undelimited_sql_identifier,
 )
 
 
@@ -141,6 +157,136 @@ def _check_for_literal_subjects(store: Store) -> bool:
         if any(store.quads_for_pattern(subject_map_node, RR_TERM_TYPE, RR_LITERAL)):
             return True
     return False
+
+
+_TABLE_NAME_PREDICATES = (RR_TABLE_NAME, RML_ITERATOR)
+# A referencing object map reads columns of the parent triples map's own table
+_PARENT_TRIPLES_MAP_PREDICATES = (
+    RR_PARENT_TRIPLES_MAP,
+    NamedNode(RML_PARENT_TRIPLES_MAP),
+)
+
+
+@dataclass(frozen=True)
+class _Vocabulary:
+    """How a mapping language names the columns it reads.
+
+    R2RML writes SQL identifiers, so the database folds a reference that carries
+    no delimiters. RML-Core names the column of the result set itself, and its
+    test cases read a delimited column through an undelimited reference.
+    """
+
+    logical_sources: tuple[NamedNode, ...]
+    template: NamedNode
+    references: tuple[NamedNode, ...]
+    folds_regular_identifiers: bool
+
+    def resolve(self, reference: str) -> str:
+        if self.folds_regular_identifiers:
+            return normalize_sql_identifier(reference)
+        return undelimited_sql_identifier(reference)
+
+
+_VOCABULARIES = (
+    _Vocabulary(
+        (RR_LOGICAL_TABLE,),
+        RR_TEMPLATE,
+        (RR_COLUMN, RR_CHILD),
+        folds_regular_identifiers=True,
+    ),
+    _Vocabulary(
+        (RML_LOGICAL_SOURCE, RML_OLD_LOGICAL_SOURCE),
+        RML_TEMPLATE_NODE,
+        (RML_REFERENCE_NODE, RML_OLD_REFERENCE, RML_CHILD),
+        folds_regular_identifiers=False,
+    ),
+)
+
+
+def _logical_table_name(
+    store: Store, logical_source: NamedNode | BlankNode
+) -> str | None:
+    """Resolve the table the logical source names.
+
+    Both languages write a SQL identifier here, so both fold it, while only
+    R2RML folds the references that name the columns.
+    """
+    for predicate in _TABLE_NAME_PREDICATES:
+        for quad in store.quads_for_pattern(logical_source, predicate, None):
+            if isinstance(quad.object, Literal):
+                return normalize_sql_identifier(quad.object.value)
+    return None
+
+
+def _triples_map_references(
+    store: Store, triples_map: NamedNode | BlankNode, vocabulary: _Vocabulary
+) -> set[str]:
+    references: set[str] = set()
+    visited: set[NamedNode | BlankNode] = {triples_map}
+    pending = [triples_map]
+    while pending:
+        node = pending.pop()
+        for quad in store.quads_for_pattern(node, None, None):
+            if quad.predicate in _PARENT_TRIPLES_MAP_PREDICATES:
+                continue
+            value = quad.object
+            if isinstance(value, Literal):
+                if quad.predicate == vocabulary.template:
+                    references.update(
+                        vocabulary.resolve(reference)
+                        for reference in re.findall(REF_TEMPLATE_REGEX, value.value)
+                    )
+                elif quad.predicate in vocabulary.references:
+                    references.add(vocabulary.resolve(value.value))
+            elif isinstance(value, (NamedNode, BlankNode)) and value not in visited:
+                visited.add(value)
+                pending.append(value)
+    return references
+
+
+def mapped_references(store: Store) -> dict[str, set[str]]:
+    """Source columns the mapping reads, per logical table.
+
+    The mapping is read as written, because morph-kgc drops the delimiters that
+    tell a reference how the database resolves it.
+    """
+    references: dict[str, set[str]] = {}
+    for vocabulary in _VOCABULARIES:
+        for predicate in vocabulary.logical_sources:
+            for quad in store.quads_for_pattern(None, predicate, None):
+                if not isinstance(
+                    quad.subject, (NamedNode, BlankNode)
+                ) or not isinstance(quad.object, (NamedNode, BlankNode)):
+                    continue
+                table_name = _logical_table_name(store, quad.object)
+                if table_name is None:
+                    continue
+                references.setdefault(table_name, set()).update(
+                    _triples_map_references(store, quad.subject, vocabulary)
+                )
+    return references
+
+
+def _check_for_missing_references(store: Store, source_db_url: str) -> None:
+    """Reject a mapping that reads a column the source table does not have."""
+    retriever = DatabaseSchemaRetriever(source_db_url)
+    try:
+        ignores_case = retriever.engine.dialect.name == "mysql"
+        for table_name, references in mapped_references(store).items():
+            stored = {
+                column.name for column in retriever.get_table_schema(table_name).columns
+            }
+            if ignores_case:
+                stored = {name.lower() for name in stored}
+                references = {reference.lower() for reference in references}
+            missing = sorted(references - stored)
+            if missing:
+                raise MappingError(
+                    f"Table '{table_name}' of the source database has no column "
+                    f"named {', '.join(missing)}"
+                )
+    finally:
+        retriever.dispose()
 
 
 def _generate_template(source_rules: pd.DataFrame, db_url: str) -> RDBTemplate:
@@ -351,16 +497,50 @@ def _unrecoverable_references(mappings: pd.DataFrame) -> dict[str, frozenset[str
     return unrecoverable
 
 
-def _check_for_unrecoverable_tables(
-    mappings: pd.DataFrame, unrecoverable: dict[str, frozenset[str]]
-) -> None:
+@dataclass(frozen=True)
+class TableAnalysis:
+    """What the graph preserves of one logical table.
+
+    `subject_reference_sets` holds one entry per distinct subject map, because a
+    row reaches the graph only through a subject map whose columns are all
+    non-NULL.
+    """
+
+    references: frozenset[str]
+    unrecoverable: frozenset[str]
+    subject_reference_sets: tuple[frozenset[str], ...]
+
+    @property
+    def recoverable(self) -> frozenset[str]:
+        return self.references - self.unrecoverable
+
+
+MappingAnalysis = dict[str, TableAnalysis]
+
+
+def _analyze_rules(mappings: pd.DataFrame) -> MappingAnalysis:
+    unrecoverable = _unrecoverable_references(mappings)
+    analysis: MappingAnalysis = {}
     for table_name, source_rules in mappings.groupby("logical_source_value"):
         references: set[str] = set()
+        subject_reference_sets: list[frozenset[str]] = []
         for _, rule in source_rules.iterrows():
             references.update(_all_references(rule))
-        excluded = unrecoverable[str(table_name)]
-        if not references - excluded:
-            columns = ", ".join(sorted(references))
+            subject_reference_sets.append(
+                frozenset(_reference_set(rule["subject_references"]))
+            )
+        analysis[str(table_name)] = TableAnalysis(
+            frozenset(references),
+            unrecoverable[str(table_name)],
+            tuple(dict.fromkeys(subject_reference_sets)),
+        )
+    return analysis
+
+
+def _check_for_unrecoverable_tables(analysis: MappingAnalysis) -> None:
+    for table_name, table in analysis.items():
+        if not table.recoverable:
+            columns = ", ".join(sorted(table.references))
             raise NonInvertibleError(
                 f"No column of table '{table_name}' can be recovered from the "
                 f"graph: {columns}"
@@ -391,18 +571,13 @@ def _build_morph_config(
     return tmp.name
 
 
-def reconstruct(
+def _load_mapping_rules(
     mapping: str | pathlib.Path,
-    rdf_graph: str | pathlib.Path,
-    *,
-    dest_db_url: str,
-    source_db_url: str | None = None,
-) -> None:
+    rdf_graph: str,
+    source_db_url: str | None,
+) -> tuple[pd.DataFrame, str | None]:
     logger = get_logger()
-    mapping_path = str(mapping)
-    rdf_graph_str = str(rdf_graph)
-
-    mapping_store = _parse_mapping_store(mapping_path)
+    mapping_store = _parse_mapping_store(str(mapping))
 
     if _check_for_literal_subjects(mapping_store):
         raise MappingError("rr:termType rr:Literal on subjectMap is not valid")
@@ -419,29 +594,63 @@ def reconstruct(
             source_db_url = extracted_url
             logger.info(f"Extracted source database URL from mapping: {extracted_url}")
 
-    config_file = _build_morph_config(mapping, rdf_graph_str, source_db_url)
+    if source_db_url is not None:
+        _check_for_missing_references(mapping_store, source_db_url)
+
+    config_file = _build_morph_config(mapping, rdf_graph, source_db_url)
+    try:
+        config = load_config_from_argument(config_file)
+        mappings, _, _ = retrieve_mappings(config)
+    finally:
+        os.unlink(config_file)
+
+    _normalize_sql_table_sources(mappings)
+    if (mappings["logical_source_type"] == RML_SOURCE).any():
+        raise UnsupportedMappingError("rml:source logical sources are not supported")
+
+    if _check_for_constant_only_mappings(mappings):
+        raise NonInvertibleError(
+            "Mappings contain only constants (no column references) - original data cannot be recovered"
+        )
+
+    insert_columns(mappings)
+    return mappings, source_db_url
+
+
+def analyze_mapping(
+    mapping: str | pathlib.Path,
+    rdf_graph: str | pathlib.Path,
+    *,
+    source_db_url: str | None = None,
+) -> MappingAnalysis:
+    """Report, per logical table, which columns the graph preserves.
+
+    The inversion and the comparison of the two databases must agree on what
+    can be recovered, so both read this single description of the mapping.
+    """
+    mappings, _ = _load_mapping_rules(mapping, str(rdf_graph), source_db_url)
+    analysis = _analyze_rules(mappings)
+    _check_for_unrecoverable_tables(analysis)
+    return analysis
+
+
+def reconstruct(
+    mapping: str | pathlib.Path,
+    rdf_graph: str | pathlib.Path,
+    *,
+    dest_db_url: str,
+    source_db_url: str | None = None,
+) -> None:
+    logger = get_logger()
+    rdf_graph_str = str(rdf_graph)
+
+    mappings, source_db_url = _load_mapping_rules(mapping, rdf_graph_str, source_db_url)
+    analysis = _analyze_rules(mappings)
+    _check_for_unrecoverable_tables(analysis)
+
     endpoint: Endpoint | None = None
     schema_retrievers: dict[str, DatabaseSchemaRetriever] = {}
     try:
-        config = load_config_from_argument(config_file)
-
-        mappings, _, _ = retrieve_mappings(config)
-
-        _normalize_sql_table_sources(mappings)
-        if (mappings["logical_source_type"] == RML_SOURCE).any():
-            raise UnsupportedMappingError(
-                "rml:source logical sources are not supported"
-            )
-
-        if _check_for_constant_only_mappings(mappings):
-            raise NonInvertibleError(
-                "Mappings contain only constants (no column references) - original data cannot be recovered"
-            )
-
-        insert_columns(mappings)
-        unrecoverable = _unrecoverable_references(mappings)
-        _check_for_unrecoverable_tables(mappings, unrecoverable)
-
         if source_db_url is not None:
             schema_retrievers["DataSource1"] = DatabaseSchemaRetriever(source_db_url)
 
@@ -453,7 +662,7 @@ def reconstruct(
             source_section = str(source_rules.iloc[0]["source_name"])
             template = _generate_template(source_rules, dest_db_url)
 
-            excluded_references = unrecoverable[table_name]
+            excluded_references = analysis[table_name].unrecoverable
             if excluded_references:
                 columns = ", ".join(sorted(excluded_references))
                 logger.warning(
@@ -491,4 +700,3 @@ def reconstruct(
             endpoint.close()
         for retriever in schema_retrievers.values():
             retriever.dispose()
-        os.unlink(config_file)

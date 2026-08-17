@@ -16,12 +16,19 @@ from kgi.constants import REF_TEMPLATE_REGEX
 from kgi.exceptions import UnsupportedMappingError
 
 
+def _is_delimited(identifier: str) -> bool:
+    return identifier.startswith('"') and identifier.endswith('"')
+
+
+def undelimited_sql_identifier(identifier: str) -> str:
+    """Drop the delimiters of a SQL identifier, leaving its case untouched."""
+    return identifier[1:-1] if _is_delimited(identifier) else identifier
+
+
 def normalize_sql_identifier(identifier: str) -> str:
     """Resolve a SQL identifier to its stored form: delimited identifiers keep
     their exact case, undelimited ones are folded to lowercase as PostgreSQL does."""
-    if identifier.startswith('"') and identifier.endswith('"'):
-        return identifier[1:-1]
-    return identifier.lower()
+    return identifier[1:-1] if _is_delimited(identifier) else identifier.lower()
 
 
 class IdGenerator:

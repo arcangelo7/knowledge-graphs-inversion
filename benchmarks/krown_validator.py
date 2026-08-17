@@ -4,109 +4,24 @@
 
 import filecmp
 import os
-import re
 import subprocess
 from pathlib import Path
 
-from pyoxigraph import BlankNode, Literal, NamedNode, RdfFormat, Store
+from pyoxigraph import RdfFormat, Store
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 
-from kgi.constants import (
-    REF_TEMPLATE_REGEX,
-    RML_CHILD,
-    RML_ITERATOR,
-    RML_LOGICAL_SOURCE,
-    RML_OLD_LOGICAL_SOURCE,
-    RML_OLD_REFERENCE,
-    RML_PARENT_TRIPLES_MAP,
-    RML_REFERENCE_NODE,
-    RML_TEMPLATE_NODE,
-    RR_CHILD,
-    RR_COLUMN,
-    RR_LOGICAL_TABLE,
-    RR_PARENT_TRIPLES_MAP,
-    RR_TABLE_NAME,
-    RR_TEMPLATE,
-)
-from kgi.utils import normalize_sql_identifier
-
-LOGICAL_SOURCE_PREDICATES = (
-    RR_LOGICAL_TABLE,
-    RML_LOGICAL_SOURCE,
-    RML_OLD_LOGICAL_SOURCE,
-)
-TABLE_NAME_PREDICATES = (RR_TABLE_NAME, RML_ITERATOR)
-TEMPLATE_PREDICATES = (RR_TEMPLATE, RML_TEMPLATE_NODE)
-COLUMN_PREDICATES = (
-    RR_COLUMN,
-    RML_REFERENCE_NODE,
-    RML_OLD_REFERENCE,
-    RR_CHILD,
-    RML_CHILD,
-)
-# A referencing object map reads columns of the parent triples map's own table
-PARENT_TRIPLES_MAP_PREDICATES = (
-    RR_PARENT_TRIPLES_MAP,
-    NamedNode(RML_PARENT_TRIPLES_MAP),
-)
+from kgi.core import mapped_references
 
 
 def _quoted(identifier: str) -> str:
     return '"' + identifier.replace('"', '""') + '"'
 
 
-def _table_name(store: Store, logical_source: NamedNode | BlankNode) -> str | None:
-    for predicate in TABLE_NAME_PREDICATES:
-        for quad in store.quads_for_pattern(logical_source, predicate, None):
-            if isinstance(quad.object, Literal):
-                return normalize_sql_identifier(quad.object.value)
-    return None
-
-
-def _term_map_columns(store: Store, triples_map: NamedNode | BlankNode) -> set[str]:
-    """Source columns the term maps of one triples map read."""
-    columns: set[str] = set()
-    visited: set[NamedNode | BlankNode] = {triples_map}
-    pending = [triples_map]
-    while pending:
-        node = pending.pop()
-        for quad in store.quads_for_pattern(node, None, None):
-            if quad.predicate in PARENT_TRIPLES_MAP_PREDICATES:
-                continue
-            value = quad.object
-            if isinstance(value, Literal):
-                if quad.predicate in TEMPLATE_PREDICATES:
-                    columns.update(
-                        normalize_sql_identifier(reference)
-                        for reference in re.findall(REF_TEMPLATE_REGEX, value.value)
-                    )
-                elif quad.predicate in COLUMN_PREDICATES:
-                    columns.add(normalize_sql_identifier(value.value))
-            elif isinstance(value, (NamedNode, BlankNode)) and value not in visited:
-                visited.add(value)
-                pending.append(value)
-    return columns
-
-
 def _mapped_columns(mapping_file: Path) -> dict[str, set[str]]:
-    """Source columns the mapping reads, per logical table."""
     store = Store()
     store.load(path=str(mapping_file), format=RdfFormat.TURTLE)
-    columns: dict[str, set[str]] = {}
-    for predicate in LOGICAL_SOURCE_PREDICATES:
-        for quad in store.quads_for_pattern(None, predicate, None):
-            if not isinstance(quad.object, (NamedNode, BlankNode)) or not isinstance(
-                quad.subject, (NamedNode, BlankNode)
-            ):
-                continue
-            table_name = _table_name(store, quad.object)
-            if table_name is None:
-                continue
-            columns.setdefault(table_name, set()).update(
-                _term_map_columns(store, quad.subject)
-            )
-    return columns
+    return mapped_references(store)
 
 
 class KrownValidator:

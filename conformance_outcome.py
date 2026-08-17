@@ -10,12 +10,13 @@ from pyoxigraph import BlankNode, Quad, RdfFormat, Store
 
 from database_connection import DatabaseConnection
 from kgi import (
-    MappingError,
+    MappingAnalysis,
     NoDataError,
     NonInvertibleError,
     UnsupportedMappingError,
+    analyze_mapping,
 )
-from kgi.comparison import PartialLoss, compare_databases
+from kgi.comparison import DatabaseContent, PartialLoss, compare_databases
 from kgi.core import _check_for_sql_queries, _parse_mapping_store, reconstruct
 from souffle_conformance import (
     Database as SouffleDatabase,
@@ -23,8 +24,6 @@ from souffle_conformance import (
     SouffleConformanceError,
     rdf_datasets_isomorphic,
 )
-
-DatabaseContent = dict[str, dict[str, list[str]]]
 
 RDF_FORMATS = {
     "turtle": RdfFormat.TURTLE,
@@ -40,7 +39,7 @@ class InversionOutcome(StrEnum):
     PARTIALLY_INVERTED = "partially_inverted"
     NON_INVERTIBLE = "non_invertible"
     NOT_SUPPORTED = "not_supported"
-    FORWARD_MAPPING_FAILED = "forward_mapping_failed"
+    ERROR_TEST_CASE = "error_test_case"
     NOT_TESTED = "not_tested"
     MISMATCH = "mismatch"
     ERROR = "error"
@@ -51,7 +50,7 @@ OUTCOME_LABELS = {
     InversionOutcome.PARTIALLY_INVERTED: "Partially inverted",
     InversionOutcome.NON_INVERTIBLE: "Non-invertible",
     InversionOutcome.NOT_SUPPORTED: "Not supported",
-    InversionOutcome.FORWARD_MAPPING_FAILED: "Forward mapping failed",
+    InversionOutcome.ERROR_TEST_CASE: "Error test case",
     InversionOutcome.NOT_TESTED: "Not tested",
     InversionOutcome.MISMATCH: "Mismatch",
     InversionOutcome.ERROR: "Execution error",
@@ -151,16 +150,15 @@ _db_connection = DatabaseConnection()
 
 
 def _compare_reconstruction(
-    mapping_path: str,
+    analysis: MappingAnalysis,
     source_db_url: str,
     dest_db_url: str,
     allow_empty_destination: bool,
 ) -> CaseOutcome:
-    mapping_content = Path(mapping_path).read_text(encoding="utf-8")
     source_content = _db_connection.get_database_content(source_db_url)
     dest_content = _db_connection.get_database_content(dest_db_url)
     databases_equal, message, losses = compare_databases(
-        source_content, dest_content, mapping_content
+        source_content, dest_content, analysis
     )
     if databases_equal:
         return CaseOutcome(
@@ -199,12 +197,19 @@ def evaluate_kgi_case(
     source_db_url: str,
     dest_db_url: str,
 ) -> CaseOutcome:
-    if not (rdf_path.is_file() and rdf_path.stat().st_size > 0):
-        if not expects_output:
-            return CaseOutcome(
-                InversionOutcome.FORWARD_MAPPING_FAILED,
-                message="Forward mapping produced no output (error test case)",
-            )
+    produced_rdf = rdf_path.is_file() and rdf_path.stat().st_size > 0
+
+    if not expects_output:
+        return CaseOutcome(
+            InversionOutcome.ERROR_TEST_CASE,
+            message=(
+                "The forward mapping produced RDF the specification forbids"
+                if produced_rdf
+                else "The forward mapping stopped, as the specification requires"
+            ),
+        )
+
+    if not produced_rdf:
         if _check_for_sql_queries(_parse_mapping_store(mapping_path)):
             return CaseOutcome(
                 InversionOutcome.NOT_SUPPORTED,
@@ -235,23 +240,27 @@ def evaluate_kgi_case(
             InversionOutcome.NON_INVERTIBLE,
             message=f"Non-invertible mapping detected: {error}",
         )
-    except MappingError as error:
-        return CaseOutcome(
-            InversionOutcome.FORWARD_MAPPING_FAILED,
-            message=f"Forward mapping failed: {error}",
-        )
     except NoDataError:
         if forward_failed:
             return CaseOutcome(
-                InversionOutcome.FORWARD_MAPPING_FAILED,
-                message="Forward mapping failed - inversion could not be attempted",
+                InversionOutcome.ERROR,
+                message=(
+                    "The forward mapping did not produce the expected graph, so the "
+                    "inversion could not be attempted"
+                ),
             )
         return _compare_reconstruction(
-            mapping_path, source_db_url, dest_db_url, allow_empty_destination=True
+            analyze_mapping(mapping_path, rdf_path, source_db_url=source_db_url),
+            source_db_url,
+            dest_db_url,
+            allow_empty_destination=True,
         )
 
     return _compare_reconstruction(
-        mapping_path, source_db_url, dest_db_url, allow_empty_destination=False
+        analyze_mapping(mapping_path, rdf_path, source_db_url=source_db_url),
+        source_db_url,
+        dest_db_url,
+        allow_empty_destination=False,
     )
 
 
@@ -275,19 +284,18 @@ def evaluate_souffle_case(
         if expects_output or error.stage not in FORWARD_STAGES:
             raise
         return CaseOutcome(
-            InversionOutcome.FORWARD_MAPPING_FAILED,
-            message="Forward mapping failed as expected",
+            InversionOutcome.ERROR_TEST_CASE,
+            message="The forward mapping stopped, as the specification requires",
         )
 
     if not expects_output:
-        if rdf_path.stat().st_size == 0:
-            return CaseOutcome(
-                InversionOutcome.FORWARD_MAPPING_FAILED,
-                message="Forward mapping produced no RDF as expected",
-            )
         return CaseOutcome(
-            InversionOutcome.MISMATCH,
-            message="Forward mapping produced RDF for a negative test case",
+            InversionOutcome.ERROR_TEST_CASE,
+            message=(
+                "The forward mapping produced RDF the specification forbids"
+                if rdf_path.stat().st_size
+                else "The forward mapping stopped, as the specification requires"
+            ),
         )
 
     if not rdf_datasets_isomorphic(expected_rdf_path, rdf_path):
@@ -296,12 +304,17 @@ def evaluate_souffle_case(
             message="Forward RDF dataset differs from the expected dataset",
         )
 
-    if _check_for_sql_queries(_parse_mapping_store(str(mapping_path))):
+    try:
+        analysis = analyze_mapping(mapping_path, rdf_path, source_db_url=source_db_url)
+    except UnsupportedMappingError as error:
         return CaseOutcome(
             InversionOutcome.NOT_SUPPORTED,
-            message=(
-                "Inversion not supported: SQL query as logical table is not supported"
-            ),
+            message=f"Inversion not supported: {error}",
+        )
+    except NonInvertibleError as error:
+        return CaseOutcome(
+            InversionOutcome.NON_INVERTIBLE,
+            message=f"Non-invertible mapping detected: {error}",
         )
 
     adapter.run_backward(
@@ -311,5 +324,5 @@ def evaluate_souffle_case(
         with_provenance=with_provenance,
     )
     return _compare_reconstruction(
-        str(mapping_path), source_db_url, dest_db_url, allow_empty_destination=False
+        analysis, source_db_url, dest_db_url, allow_empty_destination=False
     )

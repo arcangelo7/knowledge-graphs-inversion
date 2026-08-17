@@ -16,7 +16,6 @@ from sqlalchemy.exc import OperationalError
 
 import rmlmapper
 from conformance_config import get_database_config
-from database_connection import DatabaseConnection
 from test_suites import R2RMLTestSuite, RMLTestSuite
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -203,10 +202,6 @@ def load_sql_script(db_url: str, script_path: str) -> None:
                     conn.execute(text(statement))
     finally:
         engine.dispose()
-
-
-def get_db_content(db_url: str) -> dict[str, dict[str, list[str]]]:
-    return DatabaseConnection().get_database_content(db_url)
 
 
 def run_forward_mapping(

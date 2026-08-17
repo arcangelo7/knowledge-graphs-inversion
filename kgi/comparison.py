@@ -2,99 +2,23 @@
 #
 # SPDX-License-Identifier: ISC
 
-import io
+import math
+from collections import Counter
 from enum import StrEnum
-from typing import Union
+from typing import TypedDict
 
 import pandas as pd
-from pyoxigraph import BlankNode, Literal, NamedNode, RdfFormat, Store, Triple
 
-from kgi.constants import (
-    RML_CHILD,
-    RML_ITERATOR,
-    RML_LOGICAL_SOURCE,
-    RML_OLD_LOGICAL_SOURCE,
-    RML_OLD_REFERENCE,
-    RML_PARENT,
-    RML_REFERENCE_FORMULATION,
-    RML_REFERENCE_NODE,
-    RML_SQL2008_TABLE,
-    RML_SUBJECT_MAP,
-    RML_TEMPLATE_NODE,
-    RR_CHILD,
-    RR_COLUMN,
-    RR_LOGICAL_TABLE,
-    RR_PARENT,
-    RR_SUBJECT_MAP,
-    RR_TABLE_NAME,
-    RR_TEMPLATE,
-    TEMPLATE_COLUMN_REGEX,
-)
-from kgi.utils import normalize_sql_identifier
-
-RdfSubject = Union[NamedNode, BlankNode, Triple]
-RdfTerm = Union[NamedNode, BlankNode, Literal, Triple]
+from kgi.core import MappingAnalysis, TableAnalysis
 
 
-def _term_value(term: RdfTerm) -> str:
-    assert isinstance(term, (NamedNode, BlankNode, Literal))
-    return term.value
+class TableContent(TypedDict):
+    columns: list[str]
+    data: list[list[object]]
 
 
-def parse_mapping(mapping_content: str) -> Store:
-    store = Store()
-    store.load(
-        input=io.BytesIO(mapping_content.encode("utf-8")), format=RdfFormat.TURTLE
-    )
-    return store
-
-
-def extract_columns_from_mapping(mapping_content: str) -> set[str]:
-    store = parse_mapping(mapping_content)
-    emitted: set[str] = set()
-    for predicate in (RR_COLUMN, RML_OLD_REFERENCE, RML_REFERENCE_NODE):
-        for quad in store.quads_for_pattern(None, predicate, None):
-            emitted.add(_term_value(quad.object).strip('"'))
-    for predicate in (RR_TEMPLATE, RML_TEMPLATE_NODE):
-        for quad in store.quads_for_pattern(None, predicate, None):
-            column_refs = TEMPLATE_COLUMN_REGEX.findall(_term_value(quad.object))
-            emitted.update(column_refs)
-
-    # A join condition equates child and parent columns, so either side is
-    # recoverable only when the other side is emitted by a term map
-    columns = set(emitted)
-    for child_predicate, parent_predicate in (
-        (RR_CHILD, RR_PARENT),
-        (RML_CHILD, RML_PARENT),
-    ):
-        for quad in store.quads_for_pattern(None, child_predicate, None):
-            parent_term = _first_object(store, quad.subject, parent_predicate)
-            if parent_term is None:
-                continue
-            child = _term_value(quad.object).strip('"')
-            parent = _term_value(parent_term).strip('"')
-            if parent in emitted:
-                columns.add(child)
-            if child in emitted:
-                columns.add(parent)
-    return columns
-
-
-def check_mapping_column_coverage(
-    mapping_content: str,
-    source_content: dict[str, dict[str, list[str]]],
-) -> list[str]:
-    mapped_columns = extract_columns_from_mapping(mapping_content)
-    invertibility_issues = []
-    for table_name, table_data in source_content.items():
-        table_columns = set(table_data["columns"])
-        missing_columns = table_columns - mapped_columns
-        if missing_columns:
-            missing_str = ", ".join(sorted(missing_columns))
-            invertibility_issues.append(
-                f"Table '{table_name}' has unmapped columns: {missing_str}"
-            )
-    return invertibility_issues
+DatabaseContent = dict[str, TableContent]
+Row = tuple[object, ...]
 
 
 class PartialLoss(StrEnum):
@@ -104,254 +28,124 @@ class PartialLoss(StrEnum):
     TABLES_LOST = "tables_lost"
 
 
-def get_mapped_table_names(mapping_store: Store) -> set[str]:
-    tables: set[str] = set()
-    for quad in mapping_store.quads_for_pattern(None, RR_TABLE_NAME, None):
-        tables.add(normalize_sql_identifier(_term_value(quad.object)))
-    for quad in mapping_store.quads_for_pattern(
-        None, RML_REFERENCE_FORMULATION, RML_SQL2008_TABLE
-    ):
-        iterator = _first_object(mapping_store, quad.subject, RML_ITERATOR)
-        if iterator is not None:
-            tables.add(normalize_sql_identifier(_term_value(iterator)))
-    return tables
+def _frame(table: TableContent) -> pd.DataFrame:
+    return pd.DataFrame(table["data"], columns=pd.Index(table["columns"]))
 
 
-def _first_object(
-    store: Store, subject: RdfSubject, predicate: NamedNode
-) -> RdfTerm | None:
-    for quad in store.quads_for_pattern(subject, predicate, None):
-        return quad.object
-    return None
+def _cell(value: object) -> object:
+    if value is None or value is pd.NaT or value is pd.NA:
+        return None
+    if isinstance(value, float) and math.isnan(value):
+        return None
+    return value
 
 
-def _subjects_of(store: Store, predicate: NamedNode, obj: RdfTerm) -> list[RdfSubject]:
-    return [quad.subject for quad in store.quads_for_pattern(None, predicate, obj)]
+def _rows(frame: pd.DataFrame) -> Counter[Row]:
+    """Count each row, ignoring column and row order.
 
-
-def _logical_sources_for_table(
-    mapping_store: Store, table_name: str
-) -> list[RdfSubject]:
-    sources = []
-    for quad in mapping_store.quads_for_pattern(None, RR_TABLE_NAME, None):
-        if normalize_sql_identifier(_term_value(quad.object)) == table_name:
-            sources.append(quad.subject)
-    for quad in mapping_store.quads_for_pattern(
-        None, RML_REFERENCE_FORMULATION, RML_SQL2008_TABLE
-    ):
-        iterator = _first_object(mapping_store, quad.subject, RML_ITERATOR)
-        if (
-            iterator is not None
-            and normalize_sql_identifier(_term_value(iterator)) == table_name
-        ):
-            sources.append(quad.subject)
-    return sources
-
-
-def find_subject_map_for_table(
-    mapping_store: Store, table_name: str
-) -> RdfSubject | None:
-    for logical_source in _logical_sources_for_table(mapping_store, table_name):
-        triples_maps: list[RdfSubject] = []
-        for predicate in (RR_LOGICAL_TABLE, RML_OLD_LOGICAL_SOURCE, RML_LOGICAL_SOURCE):
-            triples_maps = _subjects_of(mapping_store, predicate, logical_source)
-            if triples_maps:
-                break
-        if not triples_maps:
-            continue
-        for predicate in (RR_SUBJECT_MAP, RML_SUBJECT_MAP):
-            result = _first_object(mapping_store, triples_maps[0], predicate)
-            if result is not None and isinstance(result, (NamedNode, BlankNode)):
-                return result
-    return None
-
-
-def check_null_in_subject_template(
-    mapping_store: Store,
-    source_df: pd.DataFrame,
-    table_name: str,
-) -> tuple[str | None, bool]:
-    subject_map = find_subject_map_for_table(mapping_store, table_name)
-    if subject_map is None:
-        return None, False
-    template_quad = next(
-        mapping_store.quads_for_pattern(subject_map, RR_TEMPLATE, None), None
+    A relational instance is a multiset of rows, so equality of two tables is
+    equality of these counters.
+    """
+    ordered = frame.reindex(sorted(frame.columns), axis=1)
+    return Counter(
+        tuple(_cell(value) for value in row)
+        for row in ordered.itertuples(index=False, name=None)
     )
-    if template_quad is None:
-        template_quad = next(
-            mapping_store.quads_for_pattern(subject_map, RML_TEMPLATE_NODE, None), None
-        )
-    if template_quad is None:
-        return None, False
-    column_refs = TEMPLATE_COLUMN_REGEX.findall(_term_value(template_quad.object))
-    for col in column_refs:
-        if col in source_df.columns and bool(source_df[col].isna().any()):
-            null_count = int(source_df[col].isna().sum())
-            return (
-                f"{table_name} (PARTIALLY INVERTED: NULL values in subject template column "
-                f"'{col}' cause {null_count} row(s) to be excluded from RDF)",
-                True,
-            )
-    return None, False
 
 
-def detect_non_invertible(
-    mapping_store: Store,
-    source_df: pd.DataFrame,
-    table_name: str,
-) -> tuple[str | None, bool]:
-    null_msg, is_null = check_null_in_subject_template(
-        mapping_store, source_df, table_name
-    )
-    if is_null:
-        return null_msg, True
-    return None, False
+def _emitted_rows(
+    source: pd.DataFrame, subject_reference_sets: tuple[frozenset[str], ...]
+) -> pd.Series:
+    emitted = pd.Series(False, index=source.index)
+    for references in subject_reference_sets:
+        columns = [column for column in references if column in source.columns]
+        emitted |= source[columns].notna().all(axis=1)
+    return emitted
 
 
-def analyze_duplicate_loss(
-    source_df: pd.DataFrame,
-    dest_df: pd.DataFrame,
-    table_name: str,
-) -> tuple[str | None, bool]:
-    source_unique = source_df.drop_duplicates()
-    dest_unique = dest_df.drop_duplicates()
+def _expected_projection(
+    source: pd.DataFrame, table: TableAnalysis
+) -> tuple[pd.DataFrame, set[PartialLoss], list[str]]:
+    """Reduce a source table to what the graph can give back.
 
-    if source_unique.equals(dest_unique) and len(source_df) > len(dest_df):
-        duplicate_rows = []
-        for _, row in source_unique.iterrows():
-            source_count = len(source_df[source_df.eq(row).all(axis=1)])
-            dest_count = len(dest_df[dest_df.eq(row).all(axis=1)])
-            if source_count > dest_count:
-                duplicate_rows.append((source_count, dest_count, dict(row)))
+    Each reduction step names the loss it causes, so the losses are a prediction
+    the comparison then has to confirm.
+    """
+    losses: set[PartialLoss] = set()
+    notes: list[str] = []
 
-        if duplicate_rows:
-            duplicate_info = "; ".join(
-                [
-                    f"Row {row} appears {src_cnt} times in source but {dst_cnt} times in destination"
-                    for src_cnt, dst_cnt, row in duplicate_rows
-                ]
-            )
-            message = (
-                f"{table_name} (PARTIALLY INVERTED: Duplicate rows lost during inversion - {duplicate_info}. "
-                "Consider adding unique identifiers to your mapping template to preserve row distinctness)"
-            )
-            return message, True
+    emitted = _emitted_rows(source, table.subject_reference_sets)
+    dropped = int((~emitted).sum())
+    if dropped:
+        losses.add(PartialLoss.ROWS_LOST)
+        notes.append(f"{dropped} row(s) with NULL in a subject template column")
 
-    return None, False
+    lost_columns = [
+        column for column in source.columns if column not in table.recoverable
+    ]
+    if lost_columns:
+        losses.add(PartialLoss.COLUMNS_LOST)
+        notes.append(f"columns not recovered: {', '.join(lost_columns)}")
+
+    kept = [column for column in source.columns if column in table.recoverable]
+    recovered = source.loc[emitted.to_numpy(), kept]
+    projection = recovered.drop_duplicates()
+    collapsed = len(recovered) - len(projection)
+    if collapsed:
+        losses.add(PartialLoss.MULTIPLICITY_LOST)
+        notes.append(f"{collapsed} duplicate row(s) collapsed")
+    return projection, losses, notes
 
 
 def compare_databases(
-    source_content: dict[str, dict[str, list[str]]],
-    dest_content: dict[str, dict[str, list[str]]],
-    mapping_content: str | None = None,
+    source_content: DatabaseContent,
+    dest_content: DatabaseContent,
+    analysis: MappingAnalysis,
 ) -> tuple[bool, str, frozenset[PartialLoss]]:
-    if not source_content and not dest_content:
-        return True, "Both databases are empty - comparison successful", frozenset()
-    if not source_content or not dest_content:
-        return False, "One database is empty while the other is not", frozenset()
+    """Check the destination against the projection the mapping predicts.
 
-    mapping_graph = parse_mapping(mapping_content) if mapping_content else None
-
-    source_tables = set(source_content.keys())
-    dest_tables = set(dest_content.keys())
-    missing_from_dest = source_tables - dest_tables
-
-    mismatched_tables = []
+    A difference the projection does not account for makes the whole comparison
+    fail, so a loss characterised in one table cannot excuse another table.
+    """
     losses: set[PartialLoss] = set()
+    notes: list[str] = []
+    problems: list[str] = []
 
-    if missing_from_dest:
-        if mapping_graph:
-            mapped_tables = get_mapped_table_names(mapping_graph)
-            unmapped_tables = {t for t in missing_from_dest if t not in mapped_tables}
-            if unmapped_tables == missing_from_dest:
-                unmapped_str = ", ".join(sorted(unmapped_tables))
-                mismatched_tables.append(
-                    f"PARTIALLY INVERTED: Unmapped tables: {unmapped_str}"
+    for table_name in sorted(set(source_content) | set(dest_content)):
+        if table_name not in source_content:
+            problems.append(f"{table_name} (absent from the source database)")
+            continue
+        if table_name not in analysis:
+            if table_name in dest_content:
+                problems.append(
+                    f"{table_name} (unmapped table present in the destination)"
                 )
-                losses.add(PartialLoss.TABLES_LOST)
             else:
-                return (
-                    False,
-                    "Tables in source and destination databases do not match",
-                    frozenset(),
-                )
-        else:
-            return (
-                False,
-                "Tables in source and destination databases do not match",
-                frozenset(),
-            )
+                losses.add(PartialLoss.TABLES_LOST)
+                notes.append(f"{table_name}: unmapped table")
+            continue
+        if table_name not in dest_content:
+            problems.append(f"{table_name} (missing from the destination database)")
+            continue
 
-    common_tables = source_tables & dest_tables
-    for table_name in common_tables:
         source_table = source_content[table_name]
         dest_table = dest_content[table_name]
-
-        if set(source_table["columns"]) != set(dest_table["columns"]):
-            mismatched_tables.append(f"{table_name} (columns mismatch)")
+        projection, table_losses, table_notes = _expected_projection(
+            _frame(source_table), analysis[table_name]
+        )
+        if set(dest_table["columns"]) != set(projection.columns):
+            problems.append(f"{table_name} (columns differ from the recoverable ones)")
             continue
-
-        source_df = pd.DataFrame(
-            source_table["data"], columns=pd.Index(source_table["columns"])
-        )
-        dest_df = pd.DataFrame(
-            dest_table["data"], columns=pd.Index(dest_table["columns"])
-        )
-
-        if source_df.empty and dest_df.empty:
+        if _rows(projection) != _rows(_frame(dest_table)):
+            problems.append(f"{table_name} (data differs from the expected projection)")
             continue
+        losses |= table_losses
+        notes.extend(f"{table_name}: {note}" for note in table_notes)
 
-        source_df = source_df.dropna(how="all")
-        dest_df = dest_df.dropna(how="all")
-        source_df = source_df.reindex(sorted(source_df.columns), axis=1)
-        dest_df = dest_df.reindex(sorted(dest_df.columns), axis=1)
-        source_df = source_df.reset_index(drop=True)
-        dest_df = dest_df.reset_index(drop=True)
-        source_df = source_df.sort_values(by=source_df.columns.tolist()).reset_index(
-            drop=True
-        )
-        dest_df = dest_df.sort_values(by=dest_df.columns.tolist()).reset_index(
-            drop=True
-        )
-
-        if not source_df.equals(dest_df):
-            resolved = False
-            if len(source_df) > len(dest_df):
-                duplicate_analysis, is_dup_issue = analyze_duplicate_loss(
-                    source_df, dest_df, table_name
-                )
-                if duplicate_analysis:
-                    mismatched_tables.append(duplicate_analysis)
-                    if is_dup_issue:
-                        losses.add(PartialLoss.MULTIPLICITY_LOST)
-                    resolved = True
-
-            if not resolved and mapping_graph:
-                issue_msg, is_issue = detect_non_invertible(
-                    mapping_graph, source_df, table_name
-                )
-                if is_issue:
-                    mismatched_tables.append(issue_msg)
-                    losses.add(PartialLoss.ROWS_LOST)
-                    resolved = True
-
-            if not resolved:
-                mismatched_tables.append(f"{table_name} (data mismatch)")
-
-    if mismatched_tables:
-        message = f"Mismatched tables: {', '.join(mismatched_tables)}"
-
-        if mapping_content:
-            invertibility_issues = check_mapping_column_coverage(
-                mapping_content, source_content
-            )
-            if invertibility_issues:
-                invertibility_message = "; ".join(invertibility_issues)
-                message += f" (PARTIALLY INVERTED: {invertibility_message})"
-                losses.add(PartialLoss.COLUMNS_LOST)
-
-        return False, message, frozenset(losses)
-
+    if problems:
+        return False, f"Unexplained differences: {'; '.join(problems)}", frozenset()
+    if losses:
+        return False, f"Characterised loss - {'; '.join(notes)}", frozenset(losses)
     return (
         True,
         "All tables in source and destination databases are identical",
