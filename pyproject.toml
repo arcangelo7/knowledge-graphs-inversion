@@ -94,6 +94,7 @@ include = [
     "kgi",
     "tests",
 ]
+exclude = ["benchmarks/krown_souffle"]
 
 [tool.ruff]
 include = [
@@ -104,6 +105,7 @@ include = [
     "pyproject.toml",
     "tests/**/*.py",
 ]
+extend-exclude = ["benchmarks/krown_souffle"]
 
 [tool.coverage.run]
 source = ["kgi"]

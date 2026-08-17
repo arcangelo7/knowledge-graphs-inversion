@@ -14,7 +14,7 @@ class ForwardEngineDefinition:
     label: str
     version: str
     schema_query: str
-    forked: bool = False
+    souffle_resources: bool = False
     writes_facts: bool = False
 
     @property
@@ -37,7 +37,7 @@ FORWARD_ENGINES: dict[ForwardEngine, ForwardEngineDefinition] = {
         label="Soufflé",
         version="1.0.0",
         schema_query="currentSchema={schema}",
-        forked=True,
+        souffle_resources=True,
         writes_facts=True,
     ),
     "morphkgc": ForwardEngineDefinition(

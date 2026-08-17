@@ -38,7 +38,6 @@ benchmarks/*/results/
 benchmarks/*/scenarios/
 
 KROWN/
-KROWN_Extended/
 ReverseR2RML/*
 !ReverseR2RML/reverseR2RML.py
 gtfs-bench/

@@ -4,8 +4,10 @@
 
 import csv
 import importlib
+import shutil
 import sys
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from threading import Thread
 from types import ModuleType
@@ -17,7 +19,8 @@ MetricValue = int | float | str
 KrownCase = dict[str, object]
 
 FRAMEWORK_DIRECTORY = Path("KROWN") / "execution-framework"
-FORK_FRAMEWORK_DIRECTORY = Path("KROWN_Extended") / "execution-framework"
+SOUFFLE_RESOURCES_DIRECTORY = Path("benchmarks") / "krown_souffle"
+SOUFFLE_FRAMEWORK_DIRECTORY = Path("build") / "krown_souffle"
 RESOURCE_PACKAGE = "bench_executor"
 
 
@@ -104,9 +107,33 @@ class ExecutorFactory(Protocol):
     ) -> ExecutorProtocol: ...
 
 
-def _add_framework_path(project_root: Path, forked: bool = False) -> None:
-    directory = FORK_FRAMEWORK_DIRECTORY if forked else FRAMEWORK_DIRECTORY
-    framework_path = str(project_root / directory)
+@lru_cache(maxsize=1)
+def _souffle_framework(project_root: Path) -> Path:
+    # KROWN's Executor discovers resources by listing the directory of its own
+    # module, so the Soufflé runners must sit beside the modules they extend
+    framework = project_root / SOUFFLE_FRAMEWORK_DIRECTORY
+    package = framework / RESOURCE_PACKAGE
+    if framework.exists():
+        shutil.rmtree(framework)
+    package.mkdir(parents=True)
+    upstream = project_root / FRAMEWORK_DIRECTORY / RESOURCE_PACKAGE
+    entries = {
+        entry.name: entry for entry in upstream.iterdir() if entry.name != "__pycache__"
+    }
+    resources = project_root / SOUFFLE_RESOURCES_DIRECTORY
+    entries.update({resource.name: resource for resource in resources.glob("*.py")})
+    for name, target in entries.items():
+        (package / name).symlink_to(target)
+    return framework
+
+
+def _add_framework_path(project_root: Path, souffle: bool = False) -> None:
+    directory = (
+        _souffle_framework(project_root)
+        if souffle
+        else project_root / FRAMEWORK_DIRECTORY
+    )
+    framework_path = str(directory)
     if framework_path not in sys.path:
         sys.path.insert(0, framework_path)
 
@@ -115,8 +142,8 @@ def resource_config_directory(project_root: Path) -> Path:
     return project_root / FRAMEWORK_DIRECTORY / RESOURCE_PACKAGE / "config"
 
 
-def load_fork_module(project_root: Path, module_name: str) -> ModuleType:
-    _add_framework_path(project_root, forked=True)
+def load_souffle_module(project_root: Path, module_name: str) -> ModuleType:
+    _add_framework_path(project_root, souffle=True)
     return importlib.import_module(f"{RESOURCE_PACKAGE}.{module_name}")
 
 
@@ -124,7 +151,7 @@ def load_resource_module(
     project_root: Path,
     definition: ForwardEngineDefinition,
 ) -> ModuleType:
-    _add_framework_path(project_root, forked=definition.forked)
+    _add_framework_path(project_root, souffle=definition.souffle_resources)
     module = importlib.import_module(
         f"{RESOURCE_PACKAGE}.{definition.module_name}",
     )
@@ -243,7 +270,7 @@ class OfficialKrownExecutor:
         scenario_path: Path,
         definition: ForwardEngineDefinition,
     ):
-        _add_framework_path(project_root, forked=definition.forked)
+        _add_framework_path(project_root, souffle=definition.souffle_resources)
         load_resource_module(project_root, definition)
         executor_module = importlib.import_module("bench_executor.executor")
         executor_class = cast(ExecutorFactory, getattr(executor_module, "Executor"))

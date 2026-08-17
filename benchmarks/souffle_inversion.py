@@ -10,7 +10,7 @@ from typing import Protocol, cast
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from benchmarks.krown_metrics import load_fork_module
+from benchmarks.krown_metrics import load_souffle_module
 from conformance.souffle_artifacts import (
     FACT_FILES,
     PROVENANCE_MARKER_FILES,
@@ -161,5 +161,5 @@ class ReverseSouffleFactory(Protocol):
 
 
 def reverse_souffle_resource(project_root: Path) -> ReverseSouffleFactory:
-    module = load_fork_module(project_root, "reverse_souffle")
+    module = load_souffle_module(project_root, "reverse_souffle")
     return cast(ReverseSouffleFactory, getattr(module, "ReverseSouffle"))
