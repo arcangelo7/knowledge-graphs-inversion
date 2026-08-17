@@ -15,16 +15,16 @@ FROM alloka/souffle:v1.0.0@sha256:0e9288ca6f7a63faf93f4358f210de0ffcab6e3e2405d8
 
 COPY R2RML2Datalog-Translator/functors.cpp /tmp/functors.cpp
 COPY --from=translator-build /source/target/rulegen.jar /opt/kgi/souffle/rulegen.jar
-COPY KROWN_Extended/execution-framework/dockers/Souffle/reverseR2RML.py /opt/kgi/souffle/reverseR2RML.py
 
 RUN g++ -std=c++17 -shared -fPIC /tmp/functors.cpp \
         -o /opt/kgi/souffle/libfunctors.so
 
 FROM souffle-assets AS krown-souffle
 
+COPY ReverseR2RML/reverseR2RML.py /souffle/reverseR2RML.py
+
 RUN mkdir -p /souffle/lib && \
     cp /opt/kgi/souffle/rulegen.jar /souffle/rulegen.jar && \
-    cp /opt/kgi/souffle/reverseR2RML.py /souffle/reverseR2RML.py && \
     cp /opt/kgi/souffle/libfunctors.so /souffle/lib/libfunctors.so
 
 ENV LD_LIBRARY_PATH=/souffle/lib
@@ -88,6 +88,11 @@ COPY --from=souffle-assets /souffle/bin/souffle /usr/local/bin/souffle
 COPY --from=souffle-assets /opt/kgi/souffle /opt/kgi/souffle
 
 ENV SOUFFLE_TRANSLATOR_JAR=/opt/kgi/souffle/rulegen.jar
-ENV SOUFFLE_REVERSE_SCRIPT=/opt/kgi/souffle/reverseR2RML.py
 ENV SOUFFLE_FUNCTOR_LIBRARY=/opt/kgi/souffle/libfunctors.so
 ENV SOUFFLE_EXECUTABLE=/usr/local/bin/souffle
+
+FROM app AS app-souffle
+
+COPY ReverseR2RML/reverseR2RML.py /opt/kgi/souffle/reverseR2RML.py
+
+ENV SOUFFLE_REVERSE_SCRIPT=/opt/kgi/souffle/reverseR2RML.py

@@ -95,6 +95,7 @@ RMLMAPPER_JAVA_OPTIONS = (
 RMLMAPPER_TIMEOUT_SECONDS = 3 * 60 * 60
 KROWN_COOLDOWN_SECONDS = 15
 KROWN_EXTENDED_REPOSITORY = "https://github.com/alloka/KROWN_Extended.git"
+REVERSE_R2RML_REPOSITORY = "https://github.com/dtai-kg/ReverseR2RML.git"
 SOURCE_SCHEMA = "source"
 DESTINATION_SCHEMA = "destination"
 BENCHMARK_DATABASE_CONTAINER = "kgi-benchmark-postgresql"
@@ -535,8 +536,9 @@ class ScenarioOperations:
         souffle_directory: Path,
         with_provenance: bool,
     ) -> None:
-        """Invert with the Datalog approach of the KROWN_Extended submodule.
+        """Invert with the Datalog approach of the ReverseR2RML submodule.
 
+        The KROWN_Extended fork contributes only the container resource that runs it.
         The reverse Datalog program consumes the facts or per-column provenance from
         the matching forward execution and emits assembled source rows.
         """
@@ -700,6 +702,11 @@ class KrownBenchmarkRunner:
         self.souffle_provenance = souffle_provenance
         self.krown_commit = _git_commit(self.project_root / "KROWN")
         self.krown_extended_commit = _git_commit(self.project_root / "KROWN_Extended")
+        self.reverse_r2rml_commit = (
+            _git_commit(self.project_root / "ReverseR2RML")
+            if "souffle" in (forward_engine, inversion_engine)
+            else None
+        )
         self.iterations = iterations
         self.sample_interval = sample_interval
         self.cleanup_tables = cleanup_tables
@@ -801,6 +808,7 @@ class KrownBenchmarkRunner:
             "souffle_provenance": self.souffle_provenance,
             "krown_commit": self.krown_commit,
             "krown_extended_commit": self.krown_extended_commit,
+            "reverse_r2rml_commit": self.reverse_r2rml_commit,
         }
         recorded: dict[str, object] = {
             "mode": payload["mode"],
@@ -811,6 +819,7 @@ class KrownBenchmarkRunner:
             "souffle_provenance": payload["souffle_provenance"],
             "krown_commit": provenance["krown_commit"],
             "krown_extended_commit": provenance["krown_extended_commit"],
+            "reverse_r2rml_commit": provenance["reverse_r2rml_commit"],
         }
         mismatched = {
             key: f"{recorded[key]} instead of {value}"
@@ -1485,6 +1494,8 @@ class KrownBenchmarkRunner:
                 "krown_commit": self.krown_commit,
                 "krown_extended_repository": KROWN_EXTENDED_REPOSITORY,
                 "krown_extended_commit": self.krown_extended_commit,
+                "reverse_r2rml_repository": REVERSE_R2RML_REPOSITORY,
+                "reverse_r2rml_commit": self.reverse_r2rml_commit,
                 "forward_engine_version": self.forward_definition.version,
                 "forward_executor": "KROWN Executor",
                 "backward_executor": (

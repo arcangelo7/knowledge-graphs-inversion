@@ -41,21 +41,21 @@ kgi.reconstruct(
 Start the web interface and its databases with Docker Compose:
 
 ```bash
-git submodule update --init --recursive
+make submodules
 docker compose up --build
 ```
 
-Open [http://localhost:5000](http://localhost:5000), then choose an execution pair, a database, and a test suite. RMLMapper/KGI supports R2RML and RML, while Soufflé/Soufflé runs R2RML only. Both engines run inside the application container.
+Open [http://localhost:5000](http://localhost:5000), then choose a database and a test suite. RMLMapper maps forward and KGI inverts, on both the R2RML and the RML suite, and both tools run inside the application container.
 
 ## Testing
 
-Conformance tests require [Docker](https://www.docker.com/) to run the databases. The default RMLMapper/KGI pair also requires Java 21 or newer. PostgreSQL runs all 121 cases across the R2RML and RML suites:
+Conformance tests require [Docker](https://www.docker.com/) to run the databases and Java 21 or newer to run RMLMapper. PostgreSQL runs all 121 cases across the R2RML and RML suites:
 
 ```bash
 make test-conformance
 ```
 
-MySQL 9.7.1 runs 60 R2RML cases. `R2RMLTC0002f` and `R2RMLTC0018a` run only with PostgreSQL for both execution pairs. The RML cases are skipped because the RML Core RDB test suite does not yet provide MySQL variants:
+MySQL 9.7.1 runs 60 R2RML cases. `R2RMLTC0002f` and `R2RMLTC0018a` run only with PostgreSQL. The RML cases are skipped because the RML Core RDB test suite does not yet provide MySQL variants:
 
 ```bash
 make test-conformance DATABASE=mysql

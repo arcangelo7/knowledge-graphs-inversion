@@ -30,8 +30,9 @@ jobs:
     steps:
       # actions/checkout v7.0.0
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-        with:
-          submodules: recursive
+
+      - name: Check out the test suites
+        run: git submodule update --init r2rml_test_cases rml_io_registry
 
       - name: Install uv
         # astral-sh/setup-uv v8.3.2

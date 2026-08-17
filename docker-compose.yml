@@ -2,35 +2,47 @@
 #
 # SPDX-License-Identifier: ISC
 
+x-dashboard: &dashboard
+  ports:
+    - "5000:5000"
+  volumes:
+    - .:/app
+    - app-venv:/app/.venv
+  working_dir: /app
+  environment:
+    - FLASK_ENV=development
+    - FLASK_DEBUG=1
+  depends_on:
+    postgresql_r2rml:
+      condition: service_healthy
+    dest_postgresql_r2rml:
+      condition: service_healthy
+    postgresql_rml:
+      condition: service_healthy
+    dest_postgresql_rml:
+      condition: service_healthy
+    mysql_r2rml:
+      condition: service_healthy
+    dest_mysql_r2rml:
+      condition: service_healthy
+  restart: unless-stopped
+
 services:
   app:
+    <<: *dashboard
     build:
       context: .
       target: app
     container_name: kgi-app
-    ports:
-      - "5000:5000"
-    volumes:
-      - .:/app
-      - app-venv:/app/.venv
-    working_dir: /app
-    environment:
-      - FLASK_ENV=development
-      - FLASK_DEBUG=1
-    depends_on:
-      postgresql_r2rml:
-        condition: service_healthy
-      dest_postgresql_r2rml:
-        condition: service_healthy
-      postgresql_rml:
-        condition: service_healthy
-      dest_postgresql_rml:
-        condition: service_healthy
-      mysql_r2rml:
-        condition: service_healthy
-      dest_mysql_r2rml:
-        condition: service_healthy
-    restart: unless-stopped
+
+  app_souffle:
+    <<: *dashboard
+    build:
+      context: .
+      target: app-souffle
+    container_name: kgi-app-souffle
+    profiles:
+      - souffle
 
   postgresql_r2rml:
     image: postgres:13

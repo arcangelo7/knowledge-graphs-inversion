@@ -19,6 +19,8 @@ KROWN_RMLMAPPER_IMAGE = kgconstruct/rmlmapper:v8.1.0
 KROWN_SOUFFLE_IMAGE = alloka/souffle:v1.0.0
 CONFORMANCE_SOUFFLE_IMAGE = alloka/souffle:v1.0.0@sha256:0e9288ca6f7a63faf93f4358f210de0ffcab6e3e2405d88c365391da6d54fe89
 MAVEN_IMAGE = maven:3.9.11-eclipse-temurin-17
+PUBLIC_SUBMODULES = KROWN KROWN_Extended R2RML2Datalog-Translator gtfs-bench r2rml_test_cases rml_io_registry
+REVERSE_SUBMODULE = ReverseR2RML
 R2RML_TRANSLATOR_SOURCE = R2RML2Datalog-Translator
 R2RML_TRANSLATOR_COMMIT = $(word 2,$(shell git ls-files --stage $(R2RML_TRANSLATOR_SOURCE)))
 R2RML_TRANSLATOR_BUILD = build/r2rml2datalog-translator-$(R2RML_TRANSLATOR_COMMIT)
@@ -30,7 +32,7 @@ KROWN_SCENARIO_ARG = $(if $(SCENARIO),--scenario=$(SCENARIO))
 KROWN_RESUME_ARG = $(if $(RESUME),--resume=$(RESUME))
 KROWN_RUN = uv run python -m benchmarks.run_krown_benchmark --mode $(MODE) --iterations $(KROWN_I) --interval $(INTERVAL) --suites $(SUITES) --forward-engine $(FORWARD_ENGINE) --inversion-engine $(INVERSION_ENGINE) --souffle-provenance $(SOUFFLE_PROVENANCE) $(KROWN_SCENARIO_ARG) $(KROWN_RESUME_ARG)
 
-.PHONY: validate-krown-options validate-conformance-options submodules translator-assets krown-images benchmark-krown benchmark-gtfs benchmark-all test-conformance
+.PHONY: validate-krown-options validate-conformance-options submodules reverse-submodule translator-assets krown-images benchmark-krown benchmark-gtfs benchmark-all test-conformance
 
 validate-krown-options:
 	@case "$(SOUFFLE_PROVENANCE)" in \
@@ -49,7 +51,10 @@ validate-conformance-options:
 	esac
 
 submodules:
-	git submodule update --init --recursive
+	git submodule update --init --recursive $(PUBLIC_SUBMODULES)
+
+reverse-submodule:
+	git submodule update --init $(REVERSE_SUBMODULE)
 
 translator-assets:
 	@set -e; \
@@ -82,6 +87,7 @@ krown-images:
 		docker build --target krown-rmlmapper -t $(KROWN_RMLMAPPER_IMAGE) .; \
 	fi; \
 	if [ "$(FORWARD_ENGINE)" = "souffle" ] || [ "$(INVERSION_ENGINE)" = "souffle" ]; then \
+		$(MAKE) reverse-submodule; \
 		docker build --target krown-souffle -t $(KROWN_SOUFFLE_IMAGE) .; \
 	fi
 
@@ -111,6 +117,7 @@ benchmark-all: validate-krown-options submodules krown-images
 test-conformance: validate-conformance-options
 	@$(MAKE) submodules
 	@if [ "$(FORWARD_ENGINE)/$(INVERSION_ENGINE)" = "souffle/souffle" ]; then \
+		$(MAKE) reverse-submodule; \
 		$(MAKE) translator-assets; \
 		uv run pytest tests/souffle_conformance.py -v --database=$(DATABASE) \
 			--souffle-jar="$(abspath $(R2RML_TRANSLATOR_JAR))" \

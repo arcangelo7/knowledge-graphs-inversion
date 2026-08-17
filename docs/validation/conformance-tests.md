@@ -6,7 +6,7 @@ SPDX-License-Identifier: ISC
 
 # Conformance tests
 
-The algorithm is validated against two test suites: the W3C [R2RML](https://www.w3.org/TR/r2rml/) test suite and the [RML](https://kg-construct.github.io/rml-core/spec/docs/) RDB test cases from a [fork of rml-io-registry](https://github.com/arcangelo7/rml-io-registry/tree/add-rdb-core-tests). Both are included as git submodules. The default path performs forward mapping with [RMLMapper](https://github.com/RMLio/rmlmapper-java) v8.1.0 and inversion with KGI. A separate R2RML path uses Soufflé in both directions.
+The algorithm is validated against two test suites: the W3C [R2RML](https://www.w3.org/TR/r2rml/) test suite and the [RML](https://kg-construct.github.io/rml-core/spec/docs/) RDB test cases from a [fork of rml-io-registry](https://github.com/arcangelo7/rml-io-registry/tree/add-rdb-core-tests). Both are included as git submodules. Forward mapping uses [RMLMapper](https://github.com/RMLio/rmlmapper-java) v8.1.0 and inversion uses KGI.
 
 ## Defining invertibility
 
@@ -48,29 +48,22 @@ MySQL 9.7.1 runs 60 R2RML cases:
 make test-conformance DATABASE=mysql
 ```
 
-`R2RMLTC0002f` and `R2RMLTC0018a` run only with PostgreSQL for both execution pairs. The 59 RML cases are skipped with MySQL because the RML Core RDB test suite does not yet provide MySQL variants.
-
-Soufflé supports only R2RML and runs each case with and without provenance:
-
-```bash
-make test-conformance FORWARD_ENGINE=souffle INVERSION_ENGINE=souffle DATABASE=postgresql
-```
+`R2RMLTC0002f` and `R2RMLTC0018a` run only with PostgreSQL. The 59 RML cases are skipped with MySQL because the RML Core RDB test suite does not yet provide MySQL variants.
 
 ### Dashboard
 
 Start the dashboard and its PostgreSQL and MySQL databases with Docker Compose:
 
 ```bash
-git submodule update --init --recursive
+make submodules
 docker compose up --build
 ```
 
-Open [http://localhost:5000](http://localhost:5000), then choose the execution pair, database, and test suite. RMLMapper/KGI supports both suites, while Soufflé/Soufflé enables R2RML only.
+Open [http://localhost:5000](http://localhost:5000), then choose the database and the test suite.
 
 ## W3C R2RML test suite
 
 The [R2RML test suite](https://www.w3.org/2001/sw/rdb2rdf/test-cases/) contains 62 test cases.
-The outcome table below describes the RMLMapper/KGI pair.
 
 | Outcome | PostgreSQL | MySQL |
 |---|---:|---:|
@@ -107,28 +100,6 @@ R2RMLTC0020a maps a single-column table through a subject map with an IRI term t
 ### Mismatch (1)
 
 R2RMLTC0012b is the only case that reconstructs values differing from the source, so its inversion is neither complete nor recoverable. It builds the blank node label of the `Lives` table from the template `{fname}{lname}`, and because the two placeholders are adjacent the label `BobSmith` carries no boundary between them, so the reconstruction assigns the whole label to `lname` and leaves `fname` empty.
-
-### Soufflé/Soufflé
-
-The RMLMapper/KGI outcomes above are the reference for the Soufflé pair, which runs every case twice, once from the RDF facts alone and once with provenance. Soufflé is still under development, so the columns below record where each mode stands today rather than a target.
-
-| Outcome | PostgreSQL, RDF | PostgreSQL, provenance | MySQL, RDF | MySQL, provenance |
-|---|---:|---:|---:|---:|
-| Fully inverted | 14 | 19 | 14 | 18 |
-| Partially inverted | 1 | 3 | 1 | 3 |
-| Non-invertible | 2 | 2 | 2 | 2 |
-| Not supported | 13 | 13 | 13 | 13 |
-| Error test case | 12 | 12 | 11 | 11 |
-| Mismatch | 20 | 13 | 19 | 13 |
-| Not tested | 0 | 0 | 2 | 2 |
-
-| Sub-category | PostgreSQL, RDF | PostgreSQL, provenance | MySQL, RDF | MySQL, provenance |
-|---|---:|---:|---:|---:|
-| Rows lost | 1 | 1 | 1 | 1 |
-| Multiplicity lost | 0 | 2 | 0 | 2 |
-| Tables lost | 0 | 1 | 0 | 1 |
-
-Soufflé stops on every error test case, including the three that RMLMapper accepts, so the two pairs report the same count for that class. Where KGI records columns lost, Soufflé rebuilds a different set of columns, so those cases count as mismatches instead.
 
 ## RML test suite
 

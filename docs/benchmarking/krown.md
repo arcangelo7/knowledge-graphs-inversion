@@ -34,14 +34,11 @@ The Makefile exposes these options:
 | `SUITES` | `all` or a comma-separated subset of `raw`, `mappings`, `named-graphs`, `joins` | `all` |
 | `SCENARIO` | Exact generated scenario name | Not set |
 | `RESUME` | Directory of an interrupted benchmark session | Not set |
-| `FORWARD_ENGINE` | `rmlmapper`, `souffle`, `morphkgc` | `rmlmapper` |
-| `INVERSION_ENGINE` | `kgi`, `souffle` | `kgi` |
-| `SOUFFLE_PROVENANCE` | `true`, `false` | `false` |
+| `FORWARD_ENGINE` | `rmlmapper`, `morphkgc` | `rmlmapper` |
+| `INVERSION_ENGINE` | `kgi` | `kgi` |
 | `INTERVAL` | Positive number of seconds between system metric samples | `0.1` |
 
 `forward` measures materialization only. `backward` measures inversion after an unmeasured materialization prepares its input. `roundtrip` measures paired materialization and inversion runs, then validates the reconstructed data by materializing it again and comparing the RDF datasets. Generation, database setup, validation, and cooldown time are excluded from all reported durations.
-
-Soufflé inversion requires Soufflé forward materialization.
 
 Select suites or a single scenario with the same command:
 
@@ -50,14 +47,7 @@ make benchmark-krown I=3 MODE=forward SUITES=raw,mappings
 make benchmark-krown I=3 MODE=backward SUITES=named-graphs SCENARIO=namedgraph_0SM-NG_5POM-NG_1TM_1POM_True
 ```
 
-To inspect Soufflé inversion with and without provenance, run the same scenario twice:
-
-```bash
-make benchmark-krown I=3 MODE=roundtrip FORWARD_ENGINE=souffle INVERSION_ENGINE=souffle SCENARIO=mappings_10_5
-make benchmark-krown I=3 MODE=roundtrip FORWARD_ENGINE=souffle INVERSION_ENGINE=souffle SOUFFLE_PROVENANCE=true SCENARIO=mappings_10_5
-```
-
-`RESUME` accepts the session directory from an interrupted run. Its mode, iteration count, sampling interval, engines, and provenance setting must match the original command. The selected suites must include every scenario already recorded in the partial results.
+`RESUME` accepts the session directory from an interrupted run. Its mode, iteration count, sampling interval, and engines must match the original command. The selected suites must include every scenario already recorded in the partial results.
 
 ## Interpret results
 
@@ -73,7 +63,7 @@ Each scenario reports one of these outcomes:
 | `OUT_OF_MEMORY` | Materialization or inversion stopped after exhausting its available memory. |
 | `TIMEOUT` | Materialization or inversion exceeded its time limit. |
 
-Completed `RawData` scenarios are expected to return `FULL`. Other suites may return `PARTIAL` when the mapping omits source information but still determines a unique recoverable subset. `AMBIGUOUS` describes the inverse problem, not variable program output: the inversion leaves unresolved values out instead of choosing among possible source assignments. This occurs when mapped values cannot be assigned to their source columns, as in joins whose key columns are not emitted. Without Soufflé provenance, it also affects mapping scenarios with more Triples Maps than Predicate-Object Maps. With provenance, every `Mappings` scenario is expected to return `PARTIAL` and complete the RDF round trip.
+Completed `RawData` scenarios are expected to return `FULL`. Other suites may return `PARTIAL` when the mapping omits source information but still determines a unique recoverable subset. `AMBIGUOUS` describes the inverse problem, not variable program output: the inversion leaves unresolved values out instead of choosing among possible source assignments. This occurs when mapped values cannot be assigned to their source columns, as in joins whose key columns are not emitted.
 
 Forward time and inversion time measure their respective stages. Total time is their sum when both are measured. Inversion overhead is available in `roundtrip` mode and is calculated as `inversion time / forward time × 100`.
 

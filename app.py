@@ -82,9 +82,17 @@ config.read("config.ini")
 PROJECT_ROOT = os.path.dirname(__file__)
 PROJECT_PATH = Path(PROJECT_ROOT)
 SOUFFLE_TRANSLATOR_JAR = Path(os.environ["SOUFFLE_TRANSLATOR_JAR"])
-SOUFFLE_REVERSE_SCRIPT = Path(os.environ["SOUFFLE_REVERSE_SCRIPT"])
+SOUFFLE_REVERSE_SCRIPT = os.environ.get("SOUFFLE_REVERSE_SCRIPT")
 SOUFFLE_FUNCTOR_LIBRARY = Path(os.environ["SOUFFLE_FUNCTOR_LIBRARY"])
 SOUFFLE_EXECUTABLE = os.environ["SOUFFLE_EXECUTABLE"]
+SOUFFLE_UNAVAILABLE = (
+    "Soufflé/Soufflé needs the reverse generator from the ReverseR2RML submodule."
+)
+AVAILABLE_ENGINE_PAIRS = {
+    engine_pair: definition
+    for engine_pair, definition in ENGINE_PAIRS.items()
+    if engine_pair != "souffle_souffle" or SOUFFLE_REVERSE_SCRIPT
+}
 
 
 register_suites(PROJECT_ROOT)
@@ -93,9 +101,11 @@ db_connection = DatabaseConnection()
 
 
 def _souffle_adapter(log_path: Path) -> SouffleConformanceAdapter:
+    if SOUFFLE_REVERSE_SCRIPT is None:
+        raise ValueError(SOUFFLE_UNAVAILABLE)
     return SouffleConformanceAdapter(
         SOUFFLE_TRANSLATOR_JAR,
-        SOUFFLE_REVERSE_SCRIPT,
+        Path(SOUFFLE_REVERSE_SCRIPT),
         SOUFFLE_FUNCTOR_LIBRARY,
         execution_mode="local",
         souffle_executable=SOUFFLE_EXECUTABLE,
@@ -165,7 +175,7 @@ def index():
         suites=SUITES,
         all_tests=all_tests,
         database_options=database_options,
-        engine_options=ENGINE_PAIRS,
+        engine_options=AVAILABLE_ENGINE_PAIRS,
         default_engine_pair=DEFAULT_ENGINE_PAIR,
         rml_mysql_unavailable=RML_MYSQL_UNAVAILABLE,
         souffle_rml_unavailable=SOUFFLE_RML_UNAVAILABLE,
@@ -181,6 +191,8 @@ def _validate_request(
             validate_engine_pair(engine_pair, suite_id)
     except ValueError as error:
         return str(error)
+    if engine_pair not in AVAILABLE_ENGINE_PAIRS:
+        return SOUFFLE_UNAVAILABLE
     return None
 
 

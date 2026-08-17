@@ -20,14 +20,7 @@ from .conftest import (
     load_sql_script,
 )
 
-REVERSE_SCRIPT = Path(
-    PROJECT_ROOT,
-    "KROWN_Extended",
-    "execution-framework",
-    "dockers",
-    "Souffle",
-    "reverseR2RML.py",
-)
+REVERSE_SCRIPT = Path(PROJECT_ROOT, "ReverseR2RML", "reverseR2RML.py")
 
 
 @pytest.fixture(scope="session")

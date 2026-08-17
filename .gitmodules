@@ -20,3 +20,6 @@
 [submodule "R2RML2Datalog-Translator"]
 	path = R2RML2Datalog-Translator
 	url = https://github.com/dtai-kg/R2RML2Datalog-Translator.git
+[submodule "ReverseR2RML"]
+	path = ReverseR2RML
+	url = https://github.com/dtai-kg/ReverseR2RML.git
