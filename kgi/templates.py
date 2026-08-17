@@ -7,14 +7,38 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import date, datetime
+from decimal import Decimal
 
 import pandas as pd
 import sqlalchemy
 from sqlalchemy import Column, MetaData, Table
 from sqlalchemy.engine import Connection, Engine
-from sqlalchemy.sql.sqltypes import String
+from sqlalchemy.sql.sqltypes import (
+    Boolean,
+    Date,
+    DateTime,
+    Float,
+    Integer,
+    LargeBinary,
+    Numeric,
+    String,
+    Text,
+)
+from sqlalchemy.types import TypeEngine
 
 from kgi.schema import TableSchema
+
+VALUE_TYPES = (
+    (str, Text),
+    (bytes, LargeBinary),
+    (bool, Boolean),
+    (int, Integer),
+    (float, Float),
+    (Decimal, Numeric),
+    (datetime, DateTime),
+    (date, Date),
+)
 
 
 class RDBTemplate:
@@ -30,7 +54,7 @@ class RDBTemplate:
         self,
         data_chunks: Iterable[pd.DataFrame],
         table_name: str,
-        schema: TableSchema,
+        schema: TableSchema | None,
     ) -> None:
         chunks = iter(data_chunks)
         first_chunk = next(chunks)
@@ -107,18 +131,37 @@ class RDBTemplate:
         connection.execute(table.insert(), converted.to_dict(orient="records"))
 
     @staticmethod
-    def _get_sqla_table(
-        df: pd.DataFrame, table_name: str, schema: TableSchema
-    ) -> Table:
-        """Give the destination the column types the source declared.
+    def _inferred_type(values: pd.Series) -> TypeEngine:
+        """Read the destination type off the values the graph gave back.
 
-        A reconstructed value cannot say whether it came from a DATE or a
-        TIMESTAMP, from a REAL or a DECIMAL, so the schema is the only evidence
-        of the type that keeps the round trip exact.
+        Their Python types already carry the datatypes of the RDF literals, so
+        they are the best evidence left when the source schema is unavailable.
         """
-        infos = {column.name: column for column in schema.columns}
-        return Table(
-            table_name,
-            MetaData(),
-            *(Column(str(name), infos[str(name)].sql_type) for name in df.columns),
+        present = values.dropna()
+        column_type = next(
+            (
+                candidate
+                for python_type, candidate in VALUE_TYPES
+                if any(isinstance(value, python_type) for value in present)
+            ),
+            Text,
         )
+        return column_type()
+
+    @staticmethod
+    def _get_sqla_table(
+        df: pd.DataFrame, table_name: str, schema: TableSchema | None
+    ) -> Table:
+        """Decide the type of every destination column."""
+        if schema is None:
+            columns = [
+                Column(str(name), RDBTemplate._inferred_type(values))
+                for name, values in df.items()
+            ]
+        else:
+            infos = {column.name: column for column in schema.columns}
+            columns = [
+                Column(str(name), infos[str(name)].sql_type) for name in df.columns
+            ]
+
+        return Table(table_name, MetaData(), *columns)

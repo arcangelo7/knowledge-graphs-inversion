@@ -39,6 +39,7 @@ from kgi.constants import (
     RML_REFERENCE_NODE,
     RML_SOURCE,
     RML_SQL2008_QUERY,
+    RML_SQL2008_TABLE,
     RML_TABLE_NAME,
     RML_TEMPLATE,
     RML_TEMPLATE_NODE,
@@ -120,6 +121,17 @@ def _check_for_sql_queries(store: Store) -> bool:
             return True
     return any(
         store.quads_for_pattern(None, RML_REFERENCE_FORMULATION, RML_SQL2008_QUERY)
+    )
+
+
+_SQL_REFERENCE_FORMULATIONS = (RML_SQL2008_TABLE, RML_SQL2008_QUERY)
+
+
+def _check_for_non_relational_sources(store: Store) -> bool:
+    """Report a logical source that names a data format other than SQL."""
+    return any(
+        quad.object not in _SQL_REFERENCE_FORMULATIONS
+        for quad in store.quads_for_pattern(None, RML_REFERENCE_FORMULATION, None)
     )
 
 
@@ -558,10 +570,10 @@ def _build_morph_config(
         "output_format": "N-QUADS",
         "logging_level": "ERROR",
     }
-    data_source: dict[str, str] = {"mappings": str(mapping)}
-    if source_db_url is not None:
-        data_source["db_url"] = source_db_url
-    config["DataSource1"] = data_source
+    config["DataSource1"] = {
+        "mappings": str(mapping),
+        "db_url": source_db_url if source_db_url is not None else "",
+    }
 
     tmp = tempfile.NamedTemporaryFile(
         mode="w", suffix=".ini", delete=False, prefix="kgi_"
@@ -584,6 +596,9 @@ def _load_mapping_rules(
 
     if _check_for_sql_queries(mapping_store):
         raise UnsupportedMappingError("SQL query as logical table is not supported")
+
+    if _check_for_non_relational_sources(mapping_store):
+        raise UnsupportedMappingError("Only relational logical sources are supported")
 
     if _check_for_multiple_subject_maps(mapping_store):
         raise MappingError("TriplesMap contains multiple subjectMaps")
@@ -681,15 +696,18 @@ def reconstruct(
                 raise NonInvertibleError(
                     f"No column of table '{table_name}' can be recovered from the graph"
                 )
-            table_schema = schema_retrievers[source_section].get_table_schema(
-                table_name
+            table_schema = (
+                schema_retrievers[source_section].get_table_schema(table_name)
+                if source_db_url is not None
+                else None
             )
-            source_data_chunks = (
-                apply_schema_ordering(
-                    apply_schema_types(chunk, table_schema), table_schema
+            if table_schema is not None:
+                source_data_chunks = (
+                    apply_schema_ordering(
+                        apply_schema_types(chunk, table_schema), table_schema
+                    )
+                    for chunk in source_data_chunks
                 )
-                for chunk in source_data_chunks
-            )
 
             template.fill_data(source_data_chunks, table_name, table_schema)
             reconstructed_table_count += 1

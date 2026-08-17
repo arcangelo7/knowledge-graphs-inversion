@@ -156,4 +156,4 @@ R2RML allows assigning generated triples to named graphs through `rr:graphMap`, 
 
 ## Output generation
 
-Once the SPARQL query returns results, the algorithm reads the source schema and uses it three times: it casts each column to its original SQL type, restores the original column order, and creates the destination table with those same types. A reconstructed value cannot say on its own whether it came from a `DATE` or a `TIMESTAMP`, so the schema is what keeps the round trip exact. The algorithm then materializes the reconstructed rows in the destination database. The function returns `None`.
+Once the SPARQL query returns results, the algorithm passes the resulting data through two optional refinement steps: schema type application (casting columns to their original SQL types when a database schema is available) and column ordering (matching the original column sequence). It then creates the destination table, taking the column types from that schema when there is one and reading them off the reconstructed values otherwise, and materializes the rows in it. The function returns `None`.
