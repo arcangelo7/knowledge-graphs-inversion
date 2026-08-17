@@ -17,7 +17,7 @@ Given a mapping M and the RDF graph G = M(D) produced by applying M to a relatio
 
 A mapping is **fully invertible** when the inversion is both recoverable and complete. It is **partially invertible** when the inversion is recoverable but incomplete, either because M projects away part of D (unmapped columns or tables, NULL values in subject templates, duplicate rows collapsed by non-unique subject identifiers) or because G carries a column's values without recording which column they belong to (indistinguishable subject templates or graph maps, `rr:column` with IRI term type where the base IRI cannot be separated from the value). Such a column is left out of D' rather than filled with a value that could be wrong, so recoverability is preserved. It is **non-invertible** when no column of a table survives, either because all terms are constants independent of D or because every term map naming a column encodes it ambiguously.
 
-Test cases are therefore classified into five outcomes:
+Test cases are therefore classified into these outcomes:
 
 | Outcome | Meaning |
 |---|---|
@@ -26,6 +26,9 @@ Test cases are therefore classified into five outcomes:
 | Non-invertible | Mapping does not preserve D in G (structural limitation) |
 | Not supported | Engine limitation unrelated to invertibility (e.g. SQL queries as logical sources) |
 | Forward mapping failed | Error test case: the forward mapping produces no RDF output |
+| Not tested | The case does not run on the selected database |
+| Mismatch | D' differs from D and the difference has no characterised cause |
+| Execution error | The run stopped before it could classify the case |
 
 ## Running the test suite
 
@@ -111,6 +114,26 @@ The difference concerns R2RMLTC0002h, which stops at different stages of the tes
 ### Forward mapping failed
 
 The forward mapping produces no RDF output for nine PostgreSQL cases and eight MySQL cases, so inversion cannot be attempted. R2RMLTC0002h accounts for the difference.
+
+### Soufflé/Soufflé
+
+The RMLMapper/KGI outcomes above are the reference for the Soufflé pair, which runs every case twice, once from the RDF facts alone and once with provenance. Soufflé is still under development, so the columns below record where each mode stands today rather than a target.
+
+| Outcome | PostgreSQL, RDF | PostgreSQL, provenance | MySQL, RDF | MySQL, provenance |
+|---|---:|---:|---:|---:|
+| Fully inverted | 15 | 20 | 15 | 19 |
+| Partially inverted | 12 | 13 | 12 | 13 |
+| Not supported | 13 | 13 | 13 | 13 |
+| Forward mapping failed | 12 | 12 | 11 | 11 |
+| Mismatch | 10 | 4 | 9 | 4 |
+| Not tested | 0 | 0 | 2 | 2 |
+
+| Sub-category | PostgreSQL, RDF | PostgreSQL, provenance | MySQL, RDF | MySQL, provenance |
+|---|---:|---:|---:|---:|
+| Columns lost | 11 | 11 | 11 | 11 |
+| Rows lost | 1 | 1 | 1 | 1 |
+| Multiplicity lost | 0 | 2 | 0 | 2 |
+| Tables lost | 1 | 1 | 1 | 1 |
 
 ## RML test suite
 

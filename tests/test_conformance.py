@@ -2,15 +2,18 @@
 #
 # SPDX-License-Identifier: ISC
 
-import os
 import tempfile
+from pathlib import Path
 
 import pytest
 
 from conformance_config import is_r2rml_case_available
-from kgi import MappingError, NoDataError, NonInvertibleError, UnsupportedMappingError
-from kgi.comparison import compare_databases
-from kgi.core import reconstruct
+from conformance_expectations import expected_outcome
+from conformance_outcome import (
+    describe_difference,
+    evaluate_kgi_case,
+    forward_conformance_failed,
+)
 from test_suites import R2RMLTestSuite, RMLTestSuite, TestSuite
 
 from .conftest import (
@@ -18,7 +21,6 @@ from .conftest import (
     R2RML_TEST_IDS,
     RML_TEST_IDS,
     drop_all_tables,
-    get_db_content,
     load_sql_script,
     run_forward_mapping,
 )
@@ -34,55 +36,37 @@ def _run_conformance_test(
 ) -> None:
     drop_all_tables(source_db)
     drop_all_tables(dest_db)
-
-    sql_path = suite.get_sql_script_path(test_id, database)
-    load_sql_script(source_db, sql_path)
+    load_sql_script(source_db, suite.get_sql_script_path(test_id, database))
 
     mapping_path = suite.get_mapping_path(test_id)
-    output_path = os.path.join(tmp_dir, "output.nq")
-
-    run_forward_mapping(mapping_path, output_path, source_db, suite.suite_id, tmp_dir)
-
-    forward_mapping_produced_output = (
-        os.path.isfile(output_path) and os.path.getsize(output_path) > 0
-    )
-    if not forward_mapping_produced_output:
-        metadata = suite.get_test_metadata(test_id)
-        expects_output = metadata and metadata["expected_output"]
-        if not expects_output:
-            pytest.skip("Forward mapping produced no RDF output (error test case)")
-
-    try:
-        result = reconstruct(
-            mapping=mapping_path,
-            rdf_graph=output_path,
-            dest_db_url=dest_db,
-            source_db_url=source_db,
-        )
-        assert result is None
-    except NoDataError:
-        if not forward_mapping_produced_output:
-            pytest.skip("Forward mapping failed - no RDF output produced")
-        return
-    except (UnsupportedMappingError, MappingError, NonInvertibleError):
-        return
-
-    source_content = get_db_content(source_db)
-    dest_content = get_db_content(dest_db)
-
-    with open(mapping_path, "r", encoding="utf-8") as f:
-        mapping_content = f.read()
-
-    databases_equal, message, comparison_status = compare_databases(
-        source_content,
-        dest_content,
-        mapping_content,
+    output_path = Path(tmp_dir, "output.nq")
+    exit_code = run_forward_mapping(
+        mapping_path, str(output_path), source_db, suite.suite_id, tmp_dir
     )
 
-    if comparison_status and comparison_status.startswith("partial:"):
-        return
+    metadata = suite.get_test_metadata(test_id)
+    assert metadata is not None
+    expects_output = bool(metadata["expected_output"])
 
-    assert databases_equal, message
+    observed = evaluate_kgi_case(
+        mapping_path,
+        output_path,
+        expects_output,
+        forward_conformance_failed(
+            expects_output,
+            suite.get_expected_output_path(test_id),
+            output_path,
+            "nquads",
+            exit_code,
+        ),
+        source_db,
+        dest_db,
+    )
+    expected = expected_outcome(suite.suite_id, test_id)
+    assert observed == expected, (
+        f"{suite.suite_id}/{database}/{test_id}: "
+        f"{describe_difference(expected, observed)}"
+    )
 
 
 @pytest.mark.parametrize("test_id", R2RML_TEST_IDS)

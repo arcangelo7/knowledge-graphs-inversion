@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: ISC
 
 import io
+from enum import StrEnum
 from typing import Union
 
 import pandas as pd
@@ -96,23 +97,11 @@ def check_mapping_column_coverage(
     return invertibility_issues
 
 
-PARTIAL_COLUMNS_LOST = "columns_lost"
-PARTIAL_ROWS_LOST = "rows_lost"
-PARTIAL_MULTIPLICITY_LOST = "multiplicity_lost"
-PARTIAL_TABLES_LOST = "tables_lost"
-
-
-def _encode_outcome(subcategories: set[str]) -> str | None:
-    if not subcategories:
-        return None
-    order = [
-        PARTIAL_COLUMNS_LOST,
-        PARTIAL_ROWS_LOST,
-        PARTIAL_MULTIPLICITY_LOST,
-        PARTIAL_TABLES_LOST,
-    ]
-    ordered = [s for s in order if s in subcategories]
-    return "partial:" + ",".join(ordered)
+class PartialLoss(StrEnum):
+    COLUMNS_LOST = "columns_lost"
+    ROWS_LOST = "rows_lost"
+    MULTIPLICITY_LOST = "multiplicity_lost"
+    TABLES_LOST = "tables_lost"
 
 
 def get_mapped_table_names(mapping_store: Store) -> set[str]:
@@ -255,11 +244,11 @@ def compare_databases(
     source_content: dict[str, dict[str, list[str]]],
     dest_content: dict[str, dict[str, list[str]]],
     mapping_content: str | None = None,
-) -> tuple[bool, str, str | None]:
+) -> tuple[bool, str, frozenset[PartialLoss]]:
     if not source_content and not dest_content:
-        return True, "Both databases are empty - comparison successful", None
+        return True, "Both databases are empty - comparison successful", frozenset()
     if not source_content or not dest_content:
-        return False, "One database is empty while the other is not", None
+        return False, "One database is empty while the other is not", frozenset()
 
     mapping_graph = parse_mapping(mapping_content) if mapping_content else None
 
@@ -268,7 +257,7 @@ def compare_databases(
     missing_from_dest = source_tables - dest_tables
 
     mismatched_tables = []
-    subcategories: set[str] = set()
+    losses: set[PartialLoss] = set()
 
     if missing_from_dest:
         if mapping_graph:
@@ -279,18 +268,18 @@ def compare_databases(
                 mismatched_tables.append(
                     f"PARTIALLY INVERTED: Unmapped tables: {unmapped_str}"
                 )
-                subcategories.add(PARTIAL_TABLES_LOST)
+                losses.add(PartialLoss.TABLES_LOST)
             else:
                 return (
                     False,
                     "Tables in source and destination databases do not match",
-                    None,
+                    frozenset(),
                 )
         else:
             return (
                 False,
                 "Tables in source and destination databases do not match",
-                None,
+                frozenset(),
             )
 
     common_tables = source_tables & dest_tables
@@ -334,7 +323,7 @@ def compare_databases(
                 if duplicate_analysis:
                     mismatched_tables.append(duplicate_analysis)
                     if is_dup_issue:
-                        subcategories.add(PARTIAL_MULTIPLICITY_LOST)
+                        losses.add(PartialLoss.MULTIPLICITY_LOST)
                     resolved = True
 
             if not resolved and mapping_graph:
@@ -343,7 +332,7 @@ def compare_databases(
                 )
                 if is_issue:
                     mismatched_tables.append(issue_msg)
-                    subcategories.add(PARTIAL_ROWS_LOST)
+                    losses.add(PartialLoss.ROWS_LOST)
                     resolved = True
 
             if not resolved:
@@ -359,11 +348,12 @@ def compare_databases(
             if invertibility_issues:
                 invertibility_message = "; ".join(invertibility_issues)
                 message += f" (PARTIALLY INVERTED: {invertibility_message})"
-                subcategories.add(PARTIAL_COLUMNS_LOST)
+                losses.add(PartialLoss.COLUMNS_LOST)
 
-        outcome = _encode_outcome(subcategories)
-        if outcome is not None:
-            return False, message, outcome
-        return False, message, None
+        return False, message, frozenset(losses)
 
-    return True, "All tables in source and destination databases are identical", None
+    return (
+        True,
+        "All tables in source and destination databases are identical",
+        frozenset(),
+    )

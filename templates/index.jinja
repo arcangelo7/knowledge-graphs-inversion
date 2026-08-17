@@ -188,6 +188,27 @@ SPDX-License-Identifier: ISC
             margin-left: 5px;
             vertical-align: middle;
         }
+        .mode-badge {
+            display: inline-block;
+            background-color: #0d6efd;
+            color: white;
+            font-size: 0.7em;
+            padding: 1px 5px;
+            border-radius: 3px;
+            margin-left: 5px;
+            vertical-align: middle;
+        }
+        .unexpected-badge {
+            display: inline-block;
+            background-color: #dc3545;
+            color: white;
+            font-size: 0.7em;
+            padding: 1px 5px;
+            border-radius: 3px;
+            margin-left: 5px;
+            vertical-align: middle;
+            cursor: help;
+        }
         .info-icon {
             cursor: help;
             color: var(--text-secondary);
@@ -731,10 +752,12 @@ SPDX-License-Identifier: ISC
                 suite_id: suiteId,
                 engine_pair: enginePair
             })
-            .done(function(response) {
-                response.suite_id = suiteId;
-                testResults[response.test_id] = response;
-                displayTestResults(response);
+            .done(function(responses) {
+                responses.forEach(response => {
+                    response.suite_id = suiteId;
+                    testResults[response.result_key] = response;
+                });
+                displayTestResults(responses);
             })
             .fail(function(jqXHR, textStatus, errorThrown) {
                 const message = jqXHR.responseJSON && jqXHR.responseJSON.error ? jqXHR.responseJSON.error : textStatus;
@@ -786,7 +809,7 @@ SPDX-License-Identifier: ISC
 
             eventSource.onmessage = function(event) {
                 const testResult = JSON.parse(event.data);
-                testResults[testResult.test_id] = testResult;
+                testResults[testResult.result_key] = testResult;
 
                 if (spinnerElement.is(":visible")) {
                     spinnerElement.hide();
@@ -889,34 +912,38 @@ SPDX-License-Identifier: ISC
             $('#results-body .loading-row').remove();
         }
 
-        function displayTestResults(response) {
+        function displayTestResults(responses) {
             const resultsDiv = $('#results');
             $('#stats-box').hide();
             resultsDiv.children().not('#stats-box').remove();
 
-            if (response.status === 'success') {
-                let resultsHtml = `<h2>Test results for ${response.test_id} ${getEnginePairBadge(response.engine_pair)}</h2>`;
-                resultsHtml += generateResultTable(response);
-                resultsDiv.append(resultsHtml);
-            } else {
-                let errorHtml = `<h2 class="text-danger">Error in ${response.test_id}:</h2>`;
+            const first = responses[0];
+            resultsDiv.append(
+                `<h2>Test results for ${first.test_id} ${getEnginePairBadge(first.engine_pair)}</h2>`
+            );
+            const successes = responses.filter(response => response.status === 'success');
+            if (successes.length) {
+                resultsDiv.append(generateResultTable(successes));
+            }
+            responses.filter(response => response.status !== 'success').forEach(response => {
+                let errorHtml = `<h3 class="text-danger">Error in ${response.test_id} [${response.mode}]:</h3>`;
                 errorHtml += '<p>' + response.message + '</p>';
                 if (response.traceback) {
-                    errorHtml += '<h3>Traceback:</h3>';
+                    errorHtml += '<h4>Traceback:</h4>';
                     errorHtml += '<pre>' + response.traceback + '</pre>';
                 }
                 resultsDiv.append(errorHtml);
-            }
+            });
         }
 
-        function generateResultTable(response) {
+        function generateResultTable(responses) {
             let tableHtml = '<table class="table table-striped">';
             tableHtml += '<thead><tr>';
             resultHeaders.forEach(header => {
                 tableHtml += `<th>${header}</th>`;
             });
             tableHtml += '</tr></thead><tbody>';
-            response.results.data.forEach(row => {
+            responses.forEach(response => {
                 tableHtml += generateResultRow(response);
             });
             tableHtml += '</tbody></table>';
@@ -940,25 +967,26 @@ SPDX-License-Identifier: ISC
             let rowHtml = '<tr>';
             rowHtml += `<td>${getSuiteBadge(suiteId)}</td>`;
             const errorBadge = row.error_test ? '<span class="error-test-badge">error test</span>' : '';
-            rowHtml += `<td>${row.testid || 'N/A'}${errorBadge}</td>`;
+            const key = row.result_key || row.testid;
+            rowHtml += `<td>${row.testid || 'N/A'}${modeBadge(row)}${errorBadge}</td>`;
             rowHtml += `<td>${row.purpose || 'N/A'}</td>`;
             rowHtml += `<td class="result-${(row.result || '').toLowerCase()}">${row.result || 'N/A'}</td>`;
-            rowHtml += `<td><button onclick="showFileContent('${row.testid}', 'expected')">View</button></td>`;
-            rowHtml += `<td><button onclick="showFileContent('${row.testid}', 'actual')">View</button></td>`;
-            rowHtml += `<td><button onclick="showMapping('${row.testid}')">View</button></td>`;
+            rowHtml += `<td><button onclick="showFileContent('${key}', 'expected')">View</button></td>`;
+            rowHtml += `<td><button onclick="showFileContent('${key}', 'actual')">View</button></td>`;
+            rowHtml += `<td><button onclick="showMapping('${key}')">View</button></td>`;
             const invStatus = classifyInversionStatus(row.inversion_success, row.comparison_message);
             const tooltipHtml = invStatus.tooltip ? ` <i class="bi bi-info-circle info-icon" data-bs-toggle="tooltip" data-bs-placement="top" title="${invStatus.tooltip}"></i>` : '';
-            rowHtml += `<td class="result-${invStatus.cls}">${invStatus.text}${tooltipHtml}</td>`;
-            rowHtml += `<td><button onclick="showTableComparison('${row.testid}')">View</button></td>`;
+            rowHtml += `<td class="result-${invStatus.cls}">${invStatus.text}${tooltipHtml}${describeExpectation(row)}</td>`;
+            rowHtml += `<td><button onclick="showTableComparison('${key}')">View</button></td>`;
             rowHtml += '</tr>';
             return rowHtml;
         }
 
-        function showFileContent(testId, fileType) {
-            const response = testResults[testId];
+        function showFileContent(resultKey, fileType) {
+            const response = testResults[resultKey];
             if (response && response.results && response.results.data && response.results.data[0]) {
                 const content = fileType === 'expected' ? response.results.data[0].expected_result : response.results.data[0].actual_result;
-                showModal(`${fileType.charAt(0).toUpperCase() + fileType.slice(1)} output for ${testId}`, `<pre style="white-space: pre-wrap; word-wrap: break-word;">${escapeHtml(content)}</pre>`);
+                showModal(`${fileType.charAt(0).toUpperCase() + fileType.slice(1)} output for ${resultKey}`, `<pre style="white-space: pre-wrap; word-wrap: break-word;">${escapeHtml(content)}</pre>`);
             } else {
                 showModal('Error', `Unable to display ${fileType} content. Invalid data structure.`);
             }
@@ -980,15 +1008,40 @@ SPDX-License-Identifier: ISC
             $('#results-header').html(headerHtml);
         }
 
+        const inversionOutcomes = {
+            fully_inverted: { cls: 'passed', text: 'Fully inverted', category: 'passed' },
+            partially_inverted: { cls: 'partially-inverted', text: 'Partially inverted', category: 'partiallyInverted' },
+            non_invertible: { cls: 'non-invertible', text: 'Non-invertible', category: 'nonInvertible' },
+            not_supported: { cls: 'not-supported', text: 'Not supported', category: 'notSupported' },
+            forward_mapping_failed: { cls: 'forward-mapping-failed', text: 'Forward mapping failed', category: 'forwardMappingFailed' },
+            not_tested: { cls: 'not-tested', text: 'Not tested', category: 'notTested' },
+            mismatch: { cls: 'failed', text: 'Mismatch', category: 'failed' },
+            error: { cls: 'failed', text: 'Execution error', category: 'failed' }
+        };
+
         function classifyInversionStatus(inversionSuccess, comparisonMessage) {
-            if (inversionSuccess === 'not_tested') return { cls: 'not-tested', text: 'Not tested', category: 'notTested', tooltip: comparisonMessage.replace(/'/g, '&apos;') };
-            if (inversionSuccess === 'not_supported') return { cls: 'not-supported', text: 'Not Supported', category: 'notSupported', tooltip: (comparisonMessage || 'Not supported').replace(/'/g, '&apos;') };
-            if (inversionSuccess === 'partially_inverted') return { cls: 'partially-inverted', text: 'Partially Inverted', category: 'partiallyInverted', tooltip: (comparisonMessage || 'Partially inverted').replace(/'/g, '&apos;') };
-            if (inversionSuccess === 'non_invertible') return { cls: 'non-invertible', text: 'Non-invertible', category: 'nonInvertible', tooltip: (comparisonMessage || 'Non-invertible').replace(/'/g, '&apos;') };
-            if (inversionSuccess === 'forward_mapping_failed') return { cls: 'forward-mapping-failed', text: 'Forward Mapping Failed', category: 'forwardMappingFailed', tooltip: (comparisonMessage || 'Forward mapping failed').replace(/'/g, '&apos;') };
-            if (inversionSuccess === 'error') return { cls: 'failed', text: 'Error', category: 'failed', tooltip: (comparisonMessage || 'Error').replace(/'/g, '&apos;') };
-            if (inversionSuccess === true) return { cls: 'passed', text: 'Fully Inverted', category: 'passed', tooltip: '' };
-            return { cls: 'failed', text: 'Failure', category: 'failed', tooltip: '' };
+            const outcome = inversionOutcomes[inversionSuccess] || inversionOutcomes.error;
+            return {
+                cls: outcome.cls,
+                text: outcome.text,
+                category: outcome.category,
+                tooltip: (comparisonMessage || outcome.text).replace(/'/g, '&apos;')
+            };
+        }
+
+        function describeExpectation(row) {
+            if (row.matches_expectation !== false) return '';
+            const losses = (row.expected_losses || []).join(', ');
+            const expected = row.expected_inversion
+                ? (inversionOutcomes[row.expected_inversion] || { text: row.expected_inversion }).text
+                : 'no recorded expectation';
+            const label = losses ? `${expected} (${losses})` : expected;
+            return ` <span class="unexpected-badge" title="Expected ${escapeHtml(label)}">unexpected</span>`;
+        }
+
+        function modeBadge(row) {
+            if (!row.mode || row.mode === 'default') return '';
+            return ` <span class="mode-badge">${escapeHtml(row.mode)}</span>`;
         }
 
         function resetAllSuiteStats(suiteIds) {
@@ -1049,29 +1102,30 @@ SPDX-License-Identifier: ISC
             }
             const row = response.results.data[0];
             const tid = row.testid || 'N/A';
+            const key = row.result_key || tid;
             const errorBadge = row.error_test ? '<span class="error-test-badge">error test</span>' : '';
             let html = '<tr>';
-            html += `<td>${tid}${errorBadge}</td>`;
+            html += `<td>${tid}${modeBadge(row)}${errorBadge}</td>`;
             html += `<td class="result-${(row.result || '').toLowerCase()}">${row.result || 'N/A'}</td>`;
-            html += `<td><a href="#" onclick="showFileContent('${tid}', 'expected'); return false;" class="compact-link">View</a></td>`;
-            html += `<td><a href="#" onclick="showFileContent('${tid}', 'actual'); return false;" class="compact-link">View</a></td>`;
-            html += `<td><a href="#" onclick="showMapping('${tid}'); return false;" class="compact-link">View</a></td>`;
+            html += `<td><a href="#" onclick="showFileContent('${key}', 'expected'); return false;" class="compact-link">View</a></td>`;
+            html += `<td><a href="#" onclick="showFileContent('${key}', 'actual'); return false;" class="compact-link">View</a></td>`;
+            html += `<td><a href="#" onclick="showMapping('${key}'); return false;" class="compact-link">View</a></td>`;
             const status = classifyInversionStatus(row.inversion_success, row.comparison_message);
             const tooltipHtml = status.tooltip ? ` <i class="bi bi-info-circle info-icon" data-bs-toggle="tooltip" data-bs-placement="top" title="${status.tooltip}"></i>` : '';
-            html += `<td class="result-${status.cls}">${status.text}${tooltipHtml}</td>`;
-            html += `<td><a href="#" onclick="showTableComparison('${tid}'); return false;" class="compact-link">View</a></td>`;
+            html += `<td class="result-${status.cls}">${status.text}${tooltipHtml}${describeExpectation(row)}</td>`;
+            html += `<td><a href="#" onclick="showTableComparison('${key}'); return false;" class="compact-link">View</a></td>`;
             html += '</tr>';
             return html;
         }
 
         function generateErrorRow(response) {
-            const tid = response.test_id || 'N/A';
+            const tid = escapeHtml(response.test_id || 'N/A') + modeBadge(response);
             const msg = response.message || 'Unknown error';
             const isDual = $('#dual-panel-wrapper').length > 0;
             if (isDual) {
                 const tooltipMsg = escapeHtml(msg).replace(/'/g, '&apos;');
                 let html = '<tr>';
-                html += `<td>${escapeHtml(tid)}</td>`;
+                html += `<td>${tid}</td>`;
                 html += '<td class="result-failed">failed</td>';
                 html += `<td colspan="${compactHeaders.length - 4}"></td>`;
                 html += `<td class="result-failed">Error <i class="bi bi-info-circle info-icon" data-bs-toggle="tooltip" data-bs-placement="top" title="${tooltipMsg}"></i></td>`;
@@ -1083,7 +1137,7 @@ SPDX-License-Identifier: ISC
             let html = '<tr>';
             const suiteId = response.suite_id || '';
             html += `<td>${getSuiteBadge(suiteId)}</td>`;
-            html += `<td>${escapeHtml(tid)}</td>`;
+            html += `<td>${tid}</td>`;
             html += '<td></td>';
             html += '<td class="result-failed">failed</td>';
             html += '<td></td><td></td><td></td>';
@@ -1093,8 +1147,8 @@ SPDX-License-Identifier: ISC
             return html;
         }
 
-        function showMapping(testId) {
-            const response = testResults[testId];
+        function showMapping(resultKey) {
+            const response = testResults[resultKey];
             if (response && response.results && response.results.data && response.results.data[0]) {
                 showModal('Mapping', `<pre>${escapeHtml(response.results.data[0].mapping)}</pre>`);
             } else {
@@ -1127,8 +1181,8 @@ SPDX-License-Identifier: ISC
             }
         }
 
-        function showTableComparison(testId) {
-            const response = testResults[testId];
+        function showTableComparison(resultKey) {
+            const response = testResults[resultKey];
             if (response && response.results && response.results.data && response.results.data[0]) {
                 const originalTables = response.results.data[0].original_tables;
                 const invertedTables = response.results.data[0].inverted_tables;

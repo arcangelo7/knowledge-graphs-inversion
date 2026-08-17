@@ -7,13 +7,9 @@ from pathlib import Path
 import pytest
 
 from conformance_config import is_r2rml_case_available
-from kgi.comparison import compare_databases
-from kgi.core import _check_for_sql_queries, _parse_mapping_store
-from souffle_conformance import (
-    SouffleConformanceAdapter,
-    SouffleConformanceError,
-    rdf_datasets_isomorphic,
-)
+from conformance_expectations import expected_outcome
+from conformance_outcome import describe_difference, evaluate_souffle_case
+from souffle_conformance import SouffleConformanceAdapter
 from test_suites import R2RMLTestSuite
 
 from .conftest import (
@@ -21,7 +17,6 @@ from .conftest import (
     Database,
     R2RML_TEST_IDS,
     drop_all_tables,
-    get_db_content,
     load_sql_script,
 )
 
@@ -73,54 +68,21 @@ def test_souffle_r2rml_conformance(
 
     metadata = r2rml_suite.get_test_metadata(test_id)
     assert metadata is not None
-    expects_output = bool(metadata["expected_output"])
-    rdf_path = tmp_path / "output.nq"
 
-    try:
-        souffle_adapter.run_forward(
-            Path(r2rml_suite.get_mapping_path(test_id)),
-            rdf_path,
-            tmp_path,
-            source_db,
-            database,
-        )
-    except SouffleConformanceError as error:
-        if not expects_output and error.stage in {
-            "forward generation",
-            "forward execution",
-        }:
-            return
-        raise
-
-    if not expects_output:
-        produced_output = rdf_path.is_file() and rdf_path.stat().st_size > 0
-        assert not produced_output, (
-            "forward execution failed: the manifest expects no RDF, but Soufflé "
-            "produced a non-empty dataset"
-        )
-        return
-
-    expected_path = Path(r2rml_suite.get_expected_output_path(test_id))
-    assert rdf_datasets_isomorphic(expected_path, rdf_path), (
-        "forward execution failed: the produced RDF dataset differs from the "
-        "expected dataset"
-    )
-
-    mapping_path = r2rml_suite.get_mapping_path(test_id)
-    if _check_for_sql_queries(_parse_mapping_store(mapping_path)):
-        return
-
-    souffle_adapter.run_backward(
+    observed = evaluate_souffle_case(
+        souffle_adapter,
+        Path(r2rml_suite.get_mapping_path(test_id)),
+        Path(r2rml_suite.get_expected_output_path(test_id)),
+        tmp_path / "output.nq",
         tmp_path,
+        bool(metadata["expected_output"]),
+        database,
         source_db,
         destination_db,
-        with_provenance=with_provenance,
+        with_provenance,
     )
-    source_content = get_db_content(source_db)
-    destination_content = get_db_content(destination_db)
-    assert set(source_content) == set(destination_content), (
-        "comparison failed: source and destination table names differ: "
-        f"{sorted(source_content)} != {sorted(destination_content)}"
+    mode = "provenance" if with_provenance else "rdf"
+    expected = expected_outcome("r2rml", test_id)
+    assert observed == expected, (
+        f"r2rml/{database}/{test_id}/{mode}: {describe_difference(expected, observed)}"
     )
-    databases_equal, message, _ = compare_databases(source_content, destination_content)
-    assert databases_equal, f"comparison failed: {message}"
