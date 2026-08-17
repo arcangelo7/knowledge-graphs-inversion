@@ -75,20 +75,20 @@ The outcome table below describes the RMLMapper/KGI pair.
 | Outcome | PostgreSQL | MySQL |
 |---|---:|---:|
 | Fully inverted | 21 | 20 |
-| Partially inverted | 12 | 11 |
+| Partially inverted | 13 | 13 |
 | Non-invertible | 2 | 2 |
 | Not supported | 13 | 13 |
 | Error test case | 12 | 11 |
-| Mismatch | 2 | 3 |
+| Mismatch | 1 | 1 |
 | Not tested | 0 | 2 |
 
-### Partially inverted (12)
+### Partially inverted (13)
 
 Each case recovers the information preserved in the RDF graph, but the forward mapping discards part of the source. Sub-categories are counted per tag: a test may contribute to more than one sub-category when multiple forms of loss co-occur, so the counts below sum to more than the number of tests.
 
 | Sub-category | PostgreSQL | MySQL |
 |---|---:|---:|
-| Columns lost (unmapped or unassignable columns) | 7 | 6 |
+| Columns lost (unmapped or unassignable columns) | 8 | 8 |
 | Rows lost (NULL in subject template) | 1 | 1 |
 | Multiplicity lost (duplicate rows collapsed) | 4 | 4 |
 | Tables lost (unmapped tables) | 1 | 1 |
@@ -104,15 +104,9 @@ One test (R2RMLTC0012a) is tagged with two sub-categories at once: the `Lives` t
 
 R2RMLTC0020a maps a single-column table through a subject map with an IRI term type over that column. The column is unassignable and no other term map names one, so nothing remains to reconstruct.
 
-### Mismatch (2)
+### Mismatch (1)
 
-Two cases reconstruct values that differ from the source, so the inversion is neither complete nor recoverable.
-
-R2RMLTC0012b builds the blank node label of the `Lives` table from the template `{fname}{lname}`. The two placeholders are adjacent, so the label `BobSmith` carries no boundary between them, and the reconstruction assigns the whole label to `lname` and leaves `fname` empty.
-
-R2RMLTC0016c reads a `DATE` column and writes it back as a `TIMESTAMP`, so `1981-10-10` returns as `1981-10-10 00:00:00`.
-
-With MySQL a third case fails, R2RMLTC0016b: the `REAL` and `FLOAT` columns come back as `DECIMAL(10,0)`, and MySQL rounds `80.25` to `80` and `1.65` to `2`. PostgreSQL keeps the values because its `NUMERIC` type has no default scale.
+R2RMLTC0012b is the only case that reconstructs values differing from the source, so its inversion is neither complete nor recoverable. It builds the blank node label of the `Lives` table from the template `{fname}{lname}`, and because the two placeholders are adjacent the label `BobSmith` carries no boundary between them, so the reconstruction assigns the whole label to `lname` and leaves `fname` empty.
 
 ### Soufflé/Soufflé
 
@@ -143,19 +137,19 @@ The RML test suite comes from a [fork of rml-io-registry](https://github.com/arc
 | Outcome | Count |
 |---|---|
 | Fully inverted | 13 |
-| Partially inverted | 20 |
+| Partially inverted | 21 |
 | Non-invertible | 2 |
 | Not supported | 10 |
 | Error test case | 12 |
-| Mismatch | 2 |
+| Mismatch | 1 |
 
-### Partially inverted (20)
+### Partially inverted (21)
 
 Sub-categories are counted per tag; a test contributes to every form of loss that applies, so the counts below sum to more than the number of tests.
 
 | Sub-category | Count |
 |---|---|
-| Columns lost (unmapped or unassignable columns) | 15 |
+| Columns lost (unmapped or unassignable columns) | 16 |
 | Rows lost (NULL in subject template) | 1 |
 | Multiplicity lost (duplicate rows collapsed) | 4 |
 | Tables lost (unmapped tables) | 1 |
@@ -173,6 +167,6 @@ A column can also be lost through a join condition. RMLTC0021a (an RML-Core addi
 | Constant-only mapping | 1 |
 | Sole column reference has an IRI term type (ambiguous base IRI resolution) | 1 |
 
-### Mismatch (2)
+### Mismatch (1)
 
-RMLTC0012b-RDB and RMLTC0016c-RDB reproduce the two defects described for their R2RML counterparts: the label built from two adjacent template placeholders cannot be split back into `fname` and `lname`, and a `DATE` column returns as a `TIMESTAMP`.
+RMLTC0012b-RDB reproduces the defect described for its R2RML counterpart: the label built from two adjacent template placeholders cannot be split back into `fname` and `lname`.

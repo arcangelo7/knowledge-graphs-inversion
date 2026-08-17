@@ -681,8 +681,9 @@ def reconstruct(
                 raise NonInvertibleError(
                     f"No column of table '{table_name}' can be recovered from the graph"
                 )
-            schema_retriever = schema_retrievers[source_section]
-            table_schema = schema_retriever.get_table_schema(table_name)
+            table_schema = schema_retrievers[source_section].get_table_schema(
+                table_name
+            )
             source_data_chunks = (
                 apply_schema_ordering(
                     apply_schema_types(chunk, table_schema), table_schema
@@ -690,7 +691,7 @@ def reconstruct(
                 for chunk in source_data_chunks
             )
 
-            template.fill_data(source_data_chunks, table_name)
+            template.fill_data(source_data_chunks, table_name, table_schema)
             reconstructed_table_count += 1
 
         if reconstructed_table_count == 0:

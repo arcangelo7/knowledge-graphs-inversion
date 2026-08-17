@@ -5,12 +5,14 @@
 """Schema retrieval and management for knowledge graph inversion."""
 
 from dataclasses import dataclass
+from datetime import date
 from typing import Optional, cast
 
 import pandas as pd
 import sqlalchemy
 from sqlalchemy import inspect
 from sqlalchemy.dialects.mysql import TINYINT, VARBINARY
+from sqlalchemy.types import TypeEngine
 
 
 @dataclass
@@ -18,7 +20,7 @@ class ColumnInfo:
     """Column metadata from database schema."""
 
     name: str
-    data_type: str
+    sql_type: TypeEngine
     python_type: type[object]
     nullable: bool = True
     ordinal_position: int = 0
@@ -72,7 +74,7 @@ class DatabaseSchemaRetriever:
         for idx, col_info in enumerate(columns_info):
             column = ColumnInfo(
                 name=cast(str, col_info["name"]),
-                data_type=str(col_info["type"]),
+                sql_type=col_info["type"],
                 python_type=self._sql_to_python_type(col_info["type"]),
                 nullable=cast(bool, col_info["nullable"]),
                 ordinal_position=idx + 1,
@@ -100,14 +102,14 @@ class DatabaseSchemaRetriever:
             return float
         elif isinstance(sql_type, sqlalchemy.Boolean):
             return bool
-        elif isinstance(sql_type, sqlalchemy.Date):
-            return pd.Timestamp
         elif isinstance(sql_type, (sqlalchemy.DateTime, sqlalchemy.TIMESTAMP)):
             return pd.Timestamp
+        elif isinstance(sql_type, sqlalchemy.Date):
+            return date
         elif isinstance(sql_type, sqlalchemy.String):
             return str
         elif isinstance(sql_type, (sqlalchemy.LargeBinary, VARBINARY)):
-            return str
+            return bytes
         raise TypeError(f"Unsupported SQL type: {sql_type}")
 
     def dispose(self):
@@ -145,6 +147,10 @@ def infer_type_from_value_with_schema(
         }[str(value).lower()]
     if column_info.python_type == pd.Timestamp:
         return pd.to_datetime(str(value))
+    if column_info.python_type is date:
+        return date.fromisoformat(str(value))
+    if column_info.python_type is bytes:
+        return bytes.fromhex(str(value))
     return str(value)
 
 

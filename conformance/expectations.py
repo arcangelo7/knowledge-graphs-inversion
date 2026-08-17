@@ -6,7 +6,6 @@ from conformance.outcome import CaseOutcome, InversionOutcome
 from kgi.comparison import PartialLoss
 
 TestKey = tuple[str, str]
-DatabaseTestKey = tuple[str, str, str]
 
 EXPECTATIONS: dict[TestKey, CaseOutcome] = {
     ("r2rml", "R2RMLTC0000"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
@@ -94,8 +93,10 @@ EXPECTATIONS: dict[TestKey, CaseOutcome] = {
         InversionOutcome.PARTIALLY_INVERTED,
         frozenset({PartialLoss.COLUMNS_LOST}),
     ),
-    # KGI rebuilds the DATE column "BirthDate" as a TIMESTAMP
-    ("r2rml", "R2RMLTC0016c"): CaseOutcome(InversionOutcome.MISMATCH),
+    ("r2rml", "R2RMLTC0016c"): CaseOutcome(
+        InversionOutcome.PARTIALLY_INVERTED,
+        frozenset({PartialLoss.COLUMNS_LOST}),
+    ),
     ("r2rml", "R2RMLTC0016d"): CaseOutcome(
         InversionOutcome.PARTIALLY_INVERTED,
         frozenset({PartialLoss.COLUMNS_LOST}),
@@ -213,8 +214,10 @@ EXPECTATIONS: dict[TestKey, CaseOutcome] = {
         InversionOutcome.PARTIALLY_INVERTED,
         frozenset({PartialLoss.COLUMNS_LOST}),
     ),
-    # KGI rebuilds the DATE column "birthdate" as a TIMESTAMP
-    ("rml", "RMLTC0016c-RDB"): CaseOutcome(InversionOutcome.MISMATCH),
+    ("rml", "RMLTC0016c-RDB"): CaseOutcome(
+        InversionOutcome.PARTIALLY_INVERTED,
+        frozenset({PartialLoss.COLUMNS_LOST}),
+    ),
     ("rml", "RMLTC0016d-RDB"): CaseOutcome(
         InversionOutcome.PARTIALLY_INVERTED,
         frozenset({PartialLoss.COLUMNS_LOST}),
@@ -231,19 +234,3 @@ EXPECTATIONS: dict[TestKey, CaseOutcome] = {
         frozenset({PartialLoss.COLUMNS_LOST}),
     ),
 }
-
-
-# Cases whose outcome depends on the database system
-DATABASE_EXPECTATIONS: dict[DatabaseTestKey, CaseOutcome] = {
-    # KGI rebuilds REAL and FLOAT columns as DECIMAL(10,0), which MySQL rounds
-    ("mysql", "r2rml", "R2RMLTC0016b"): CaseOutcome(InversionOutcome.MISMATCH),
-}
-
-
-def expected_outcome(
-    suite_id: str, test_id: str, database_system: str
-) -> CaseOutcome | None:
-    override = DATABASE_EXPECTATIONS.get((database_system, suite_id, test_id))
-    if override is not None:
-        return override
-    return EXPECTATIONS.get((suite_id, test_id))

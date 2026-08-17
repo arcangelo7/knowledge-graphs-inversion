@@ -12,15 +12,9 @@ import pandas as pd
 import sqlalchemy
 from sqlalchemy import Column, MetaData, Table
 from sqlalchemy.engine import Connection, Engine
-from sqlalchemy.sql.sqltypes import (
-    Boolean,
-    Date,
-    DateTime,
-    Integer,
-    Numeric,
-    String,
-    Text,
-)
+from sqlalchemy.sql.sqltypes import String
+
+from kgi.schema import TableSchema
 
 
 class RDBTemplate:
@@ -32,13 +26,18 @@ class RDBTemplate:
     def create_engine(self) -> Engine:
         return sqlalchemy.create_engine(self.db_url)
 
-    def fill_data(self, data_chunks: Iterable[pd.DataFrame], table_name: str) -> None:
+    def fill_data(
+        self,
+        data_chunks: Iterable[pd.DataFrame],
+        table_name: str,
+        schema: TableSchema,
+    ) -> None:
         chunks = iter(data_chunks)
         first_chunk = next(chunks)
         engine = self.create_engine()
         try:
             with engine.begin() as connection:
-                table = self._get_sqla_table(first_chunk, table_name)
+                table = self._get_sqla_table(first_chunk, table_name, schema)
                 self._prepare_table(connection, table, first_chunk.empty)
                 self._insert_chunk(connection, table, first_chunk)
                 for chunk in chunks:
@@ -108,34 +107,18 @@ class RDBTemplate:
         connection.execute(table.insert(), converted.to_dict(orient="records"))
 
     @staticmethod
-    def _get_sqla_table(df: pd.DataFrame, table_name: str) -> Table:
-        metadata = MetaData()
-        columns = []
+    def _get_sqla_table(
+        df: pd.DataFrame, table_name: str, schema: TableSchema
+    ) -> Table:
+        """Give the destination the column types the source declared.
 
-        for column_name, dtype in df.dtypes.items():
-            column_values = df[column_name].dropna()
-            has_strings = any(isinstance(value, str) for value in column_values)
-
-            if has_strings:
-                column_type = Text()
-            elif "int" in str(dtype):
-                column_type = Integer()
-            elif "float" in str(dtype):
-                column_type = Numeric()
-            elif "bool" in str(dtype):
-                column_type = Boolean()
-            elif "datetime" in str(dtype):
-                column_type = DateTime()
-            elif "date" in str(dtype):
-                column_type = Date()
-            else:
-                column_type = Text()
-
-            columns.append(
-                Column(
-                    str(column_name),
-                    column_type,  # type: ignore[reportArgumentType]
-                )
-            )
-
-        return Table(table_name, metadata, *columns)
+        A reconstructed value cannot say whether it came from a DATE or a
+        TIMESTAMP, from a REAL or a DECIMAL, so the schema is the only evidence
+        of the type that keeps the round trip exact.
+        """
+        infos = {column.name: column for column in schema.columns}
+        return Table(
+            table_name,
+            MetaData(),
+            *(Column(str(name), infos[str(name)].sql_type) for name in df.columns),
+        )

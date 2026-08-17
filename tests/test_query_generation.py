@@ -2,11 +2,13 @@
 #
 # SPDX-License-Identifier: ISC
 
+from datetime import date
 from pathlib import Path
 
 import pandas as pd
 import pytest
 from pyoxigraph import Literal, NamedNode, Quad, QuerySolutions, Store
+from sqlalchemy import DATE, INTEGER, LargeBinary
 
 from kgi.constants import (
     RML_BLANK_NODE,
@@ -445,10 +447,20 @@ def test_incompatible_rdf_conversion_propagates() -> None:
 
 
 def test_incompatible_schema_conversion_propagates() -> None:
-    column = ColumnInfo("id", "INTEGER", int)
+    column = ColumnInfo("id", INTEGER(), int)
 
     with pytest.raises(ValueError):
         infer_type_from_value_with_schema("not-an-integer", column)
+
+
+def test_schema_conversion_keeps_dates_and_decodes_binary() -> None:
+    birth_date = ColumnInfo("birth_date", DATE(), date)
+    photo = ColumnInfo("photo", LargeBinary(), bytes)
+
+    assert infer_type_from_value_with_schema(date(1981, 10, 10), birth_date) == date(
+        1981, 10, 10
+    )
+    assert infer_type_from_value_with_schema("89504E47", photo) == b"\x89PNG"
 
 
 def _join_mappings() -> pd.DataFrame:

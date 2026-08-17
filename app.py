@@ -38,7 +38,7 @@ from conformance.config import (
     validate_engine_pair,
 )
 from conformance.database import DatabaseConnection
-from conformance.expectations import expected_outcome
+from conformance.expectations import EXPECTATIONS
 from conformance.outcome import (
     LOSS_LABELS,
     OUTCOME_LABELS,
@@ -482,7 +482,7 @@ def _case_result(
     purpose: str | bool,
     error_test: bool,
 ) -> dict[str, object]:
-    expected = expected_outcome(suite.suite_id, test_id, database_system)
+    expected = EXPECTATIONS.get((suite.suite_id, test_id))
     return {
         "status": "success",
         "test_id": test_id,

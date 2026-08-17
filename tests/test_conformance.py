@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from conformance.config import is_r2rml_case_available
-from conformance.expectations import expected_outcome
+from conformance.expectations import EXPECTATIONS
 from conformance.outcome import (
     describe_difference,
     evaluate_kgi_case,
@@ -63,7 +63,7 @@ def _run_conformance_test(
         source_db,
         dest_db,
     )
-    expected = expected_outcome(suite.suite_id, test_id, database)
+    expected = EXPECTATIONS.get((suite.suite_id, test_id))
     assert observed == expected, (
         f"{suite.suite_id}/{database}/{test_id}: "
         f"{describe_difference(expected, observed)}"
