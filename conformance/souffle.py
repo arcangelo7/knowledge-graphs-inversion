@@ -446,6 +446,7 @@ class SouffleConformanceAdapter:
     @staticmethod
     def _destination_table(
         source_table: Table,
+        recovered_columns: tuple[SchemaColumn[object], ...],
         destination_metadata: MetaData,
         destination_engine: Engine,
     ) -> Table:
@@ -454,7 +455,7 @@ class SouffleConformanceAdapter:
             destination_metadata,
             *(
                 Column(column.name, column.type, nullable=True)
-                for column in source_table.columns
+                for column in recovered_columns
             ),
         )
         destination_table.create(destination_engine)
@@ -481,11 +482,6 @@ class SouffleConformanceAdapter:
 
             for relation in relations:
                 source_table = source_tables[_normalized_table_name(relation.table)]
-                if source_table.name not in destination_tables:
-                    destination_tables[source_table.name] = self._destination_table(
-                        source_table, destination_metadata, destination_engine
-                    )
-                destination_table = destination_tables[source_table.name]
                 source_columns = {
                     _normalized_column_name(column.name): column
                     for column in source_table.columns
@@ -494,6 +490,14 @@ class SouffleConformanceAdapter:
                     source_columns[_normalized_column_name(name)]
                     for name in relation.columns
                 )
+                if source_table.name not in destination_tables:
+                    destination_tables[source_table.name] = self._destination_table(
+                        source_table,
+                        relation_columns,
+                        destination_metadata,
+                        destination_engine,
+                    )
+                destination_table = destination_tables[source_table.name]
                 rows = read_recovered_rows(shared_directory, relation)
                 records: list[dict[str, object]] = []
                 for row in rows:
