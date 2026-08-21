@@ -15,6 +15,7 @@ from kgi.base import Endpoint
 from kgi.constants import (
     RML_BLANK_NODE,
     RML_CONSTANT,
+    RML_IRI,
     RML_PARENT_TRIPLES_MAP,
     RML_REFERENCE,
     RML_TEMPLATE,
@@ -25,6 +26,7 @@ from kgi.triples import (
     ReferencedSubjectTriple,
     SubjectTriple,
     extract_from_iri_template,
+    has_adjacent_template_captures,
 )
 from kgi.utils import (
     Codex,
@@ -57,6 +59,11 @@ GROUP_SIGNATURE_COLUMNS = [
     "object_join_conditions",
 ]
 _QUERY_CHUNK_SIZE = 10_000
+_SUBJECT_TERM_SIGNATURE_COLUMNS = (
+    "subject_map_type",
+    "subject_map_value",
+    "subject_termtype",
+)
 RdfTerm = NamedNode | BlankNode | Literal | Triple | None
 
 
@@ -352,15 +359,104 @@ def _subject_group_signature(subject_rules: pd.DataFrame) -> frozenset[tuple[str
     return frozenset(signature)
 
 
+def subject_term_signature(rule: pd.Series) -> tuple[str, ...]:
+    return tuple(
+        signature_value(rule[column]) for column in _SUBJECT_TERM_SIGNATURE_COLUMNS
+    )
+
+
+def term_map_is_opaque(
+    map_type: object,
+    map_value: object,
+    term_type: object,
+    references_template: object,
+) -> bool:
+    if map_type == RML_REFERENCE and term_type == RML_IRI:
+        return True
+    if map_type != RML_TEMPLATE:
+        return False
+    if has_adjacent_template_captures(str(references_template)):
+        return True
+    if term_type != RML_IRI:
+        return False
+    stripped = str(map_value).strip()
+    return (
+        stripped.startswith("{") and stripped.endswith("}") and stripped.count("{") == 1
+    )
+
+
+def _predicate_object_term_references(
+    rule: pd.Series,
+) -> tuple[set[str], set[str]]:
+    triple = QueryTriple(rule)
+    opaque: set[str] = set()
+    exposed: set[str] = set()
+    for references, map_type, map_value, term_type, references_template in (
+        (
+            triple.predicate_references,
+            rule["predicate_map_type"],
+            rule["predicate_map_value"],
+            RML_IRI,
+            rule["predicate_references_template"],
+        ),
+        (
+            triple.object_references,
+            rule["object_map_type"],
+            rule["object_map_value"],
+            rule["object_termtype"],
+            rule["object_references_template"],
+        ),
+    ):
+        target = (
+            opaque
+            if term_map_is_opaque(map_type, map_value, term_type, references_template)
+            else exposed
+        )
+        target.update(references)
+    return opaque, exposed
+
+
+def non_subject_term_references(rule: pd.Series) -> tuple[set[str], set[str]]:
+    opaque, exposed = _predicate_object_term_references(rule)
+    triple = QueryTriple(rule)
+    graph_target = (
+        opaque
+        if term_map_is_opaque(
+            rule["graph_map_type"],
+            rule["graph_map_value"],
+            None,
+            rule["graph_references_template"],
+        )
+        else exposed
+    )
+    graph_target.update(triple.graph_references)
+    return opaque, exposed
+
+
+def non_graph_exposed_references(rule: pd.Series) -> set[str]:
+    subject_references = QueryTriple(rule).subject_references
+    subject_exposed = (
+        set()
+        if term_map_is_opaque(
+            rule["subject_map_type"],
+            rule["subject_map_value"],
+            rule["subject_termtype"],
+            rule["subject_references_template"],
+        )
+        else subject_references
+    )
+    _, predicate_object_exposed = _predicate_object_term_references(rule)
+    return subject_exposed | predicate_object_exposed
+
+
 def _subject_group_references(subject_rules: pd.DataFrame) -> tuple[set[str], set[str]]:
     subject_references: set[str] = set()
     non_subject_references: set[str] = set()
     for _, rule in subject_rules.iterrows():
         triple = QueryTriple(rule)
         subject_references.update(triple.subject_references)
-        non_subject_references.update(triple.predicate_references)
-        non_subject_references.update(triple.object_references)
-        non_subject_references.update(triple.graph_references)
+        _, rule_exposed = non_subject_term_references(rule)
+        non_subject_references.update(rule_exposed)
     return subject_references, non_subject_references
 
 
@@ -427,6 +523,44 @@ def query_triples(
         if cast(bool, pd.notna(rule["object_map_type"]))
         and rule["object_map_type"] != RML_BLANK_NODE
     ]
+
+    target_references: set[str] = set()
+    subject_references: dict[tuple[str, ...], set[str]] = {}
+    exposed_subject_references: dict[tuple[str, ...], set[str]] = {}
+    for _, rule in query_source_rules.iterrows():
+        triple = QueryTriple(rule)
+        target_references.update(triple.references)
+        signature = subject_term_signature(rule)
+        _, exposed_references = non_subject_term_references(rule)
+        subject_references.setdefault(signature, set()).update(
+            triple.subject_references
+        )
+        exposed_subject_references.setdefault(signature, set()).update(
+            exposed_references
+        )
+    missing_subject_references = {
+        signature: references
+        - exposed_subject_references[signature]
+        - excluded_references
+        for signature, references in subject_references.items()
+    }
+
+    source_tables = set(query_source_rules["logical_source_value"])
+    for _, rule in mapping_rules.iterrows():
+        if rule["logical_source_value"] in source_tables or cast(
+            bool, pd.isna(rule["object_map_type"])
+        ):
+            continue
+        signature = subject_term_signature(rule)
+        if signature not in missing_subject_references:
+            continue
+        needed_references = missing_subject_references[signature]
+        _, evidence_references = non_subject_term_references(rule)
+        if (
+            evidence_references & needed_references
+            and evidence_references <= target_references
+        ):
+            triples.append(QueryTriple(rule, excluded_references))
 
     for _, subject_rules in query_source_rules.groupby(
         "subject_map_value", dropna=False

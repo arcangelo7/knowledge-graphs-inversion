@@ -32,7 +32,7 @@ def _same_value_filter(left_var: str, right_var: str) -> str:
     )
 
 
-def _has_adjacent_template_captures(references_template: str) -> bool:
+def has_adjacent_template_captures(references_template: str) -> bool:
     parts = references_template.split("([^/]*)")
     return any(part == "" for part in parts[1:-1])
 
@@ -260,9 +260,12 @@ class QueryTriple(Triple):
             object_reference, already_bound = codex.get_id_and_is_bound(
                 object_identifier
             )
-            lines = []
-            lines.append(f"?{subject_reference} {predicate} ?{object_reference}")
+            pattern = f"?{subject_reference} {predicate} ?{object_reference}"
 
+            if has_adjacent_template_captures(object_references_template):
+                return f"{pattern} ."
+
+            lines = [pattern]
             evaluated_template = object_references_template
             current_slice = object_reference
 
@@ -408,15 +411,15 @@ class SubjectTriple(QueryTriple):
             return None
 
         if subject_map_type == RML_TEMPLATE:
+            if has_adjacent_template_captures(
+                str(self.rule["subject_references_template"])
+            ):
+                return None
             all_already_bound = all(
                 str(ref) in codex.codex for ref in self.rule["subject_references"]
             )
             if all_already_bound:
                 if subject_term_type == RML_BLANK_NODE:
-                    return None
-                if _has_adjacent_template_captures(
-                    str(self.rule["subject_references_template"])
-                ):
                     return None
 
             if subject_term_type == RML_IRI:

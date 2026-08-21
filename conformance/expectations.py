@@ -67,8 +67,10 @@ EXPECTATIONS: dict[TestKey, CaseOutcome] = {
         InversionOutcome.PARTIALLY_INVERTED,
         frozenset({PartialLoss.MULTIPLICITY_LOST, PartialLoss.TABLES_LOST}),
     ),
-    # KGI splits the blank node label of "{fname}{lname}" at the wrong offset
-    ("r2rml", "R2RMLTC0012b"): CaseOutcome(InversionOutcome.MISMATCH),
+    ("r2rml", "R2RMLTC0012b"): CaseOutcome(
+        InversionOutcome.PARTIALLY_INVERTED,
+        frozenset({PartialLoss.COLUMNS_LOST, PartialLoss.MULTIPLICITY_LOST}),
+    ),
     ("r2rml", "R2RMLTC0012c"): CaseOutcome(InversionOutcome.ERROR_TEST_CASE),
     ("r2rml", "R2RMLTC0012d"): CaseOutcome(InversionOutcome.ERROR_TEST_CASE),
     ("r2rml", "R2RMLTC0012e"): CaseOutcome(
@@ -191,8 +193,10 @@ EXPECTATIONS: dict[TestKey, CaseOutcome] = {
         InversionOutcome.PARTIALLY_INVERTED,
         frozenset({PartialLoss.MULTIPLICITY_LOST, PartialLoss.TABLES_LOST}),
     ),
-    # KGI splits the blank node label of "{fname}{lname}" at the wrong offset
-    ("rml", "RMLTC0012b-RDB"): CaseOutcome(InversionOutcome.MISMATCH),
+    ("rml", "RMLTC0012b-RDB"): CaseOutcome(
+        InversionOutcome.PARTIALLY_INVERTED,
+        frozenset({PartialLoss.COLUMNS_LOST, PartialLoss.MULTIPLICITY_LOST}),
+    ),
     ("rml", "RMLTC0012c-RDB"): CaseOutcome(InversionOutcome.ERROR_TEST_CASE),
     ("rml", "RMLTC0012d-RDB"): CaseOutcome(InversionOutcome.ERROR_TEST_CASE),
     ("rml", "RMLTC0012e-RDB"): CaseOutcome(

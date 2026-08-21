@@ -26,7 +26,6 @@ from kgi.constants import (
     RDF_TYPE,
     REF_TEMPLATE_REGEX,
     RML_CHILD,
-    RML_IRI,
     RML_ITERATOR,
     RML_LOGICAL_SOURCE,
     RML_OLD_LOGICAL_SOURCE,
@@ -63,7 +62,13 @@ from kgi.exceptions import (
     NonInvertibleError,
     UnsupportedMappingError,
 )
-from kgi.query import retrieve_data
+from kgi.query import (
+    non_graph_exposed_references,
+    non_subject_term_references,
+    retrieve_data,
+    subject_term_signature,
+    term_map_is_opaque,
+)
 from kgi.schema import (
     DatabaseSchemaRetriever,
     apply_schema_ordering,
@@ -310,20 +315,6 @@ def _generate_template(source_rules: pd.DataFrame, db_url: str) -> RDBTemplate:
         raise ValueError(f"Unsupported source type: {source_type}")
 
 
-def _is_column_only_iri(map_type: object, map_value: object, term_type: object) -> bool:
-    if map_type == RML_REFERENCE and term_type == RML_IRI:
-        return True
-    if map_type == RML_TEMPLATE and term_type == RML_IRI:
-        stripped = str(map_value).strip()
-        if (
-            stripped.startswith("{")
-            and stripped.endswith("}")
-            and stripped.count("{") == 1
-        ):
-            return True
-    return False
-
-
 def _term_map_references(
     rule: pd.Series, join_targets: set[str]
 ) -> tuple[set[str], set[str]]:
@@ -341,33 +332,18 @@ def _term_map_references(
     ):
         return _reference_set(rule["subject_references"]), set()
 
-    opaque: set[str] = set()
-    exposed: set[str] = set()
-    for references, map_type, map_value, term_type in (
-        (
-            rule["subject_references"],
-            rule["subject_map_type"],
-            rule["subject_map_value"],
-            rule["subject_termtype"],
-        ),
-        (
-            rule["predicate_references"],
-            rule["predicate_map_type"],
-            rule["predicate_map_value"],
-            RML_IRI,
-        ),
-        (
-            rule["object_references"],
-            rule["object_map_type"],
-            rule["object_map_value"],
-            rule["object_termtype"],
-        ),
-    ):
-        target = (
-            opaque if _is_column_only_iri(map_type, map_value, term_type) else exposed
-        )
-        target.update(_reference_set(references))
-    exposed.update(_reference_set(rule["graph_references"]))
+    subject_references = _reference_set(rule["subject_references"])
+    subject_is_opaque = term_map_is_opaque(
+        rule["subject_map_type"],
+        rule["subject_map_value"],
+        rule["subject_termtype"],
+        rule["subject_references_template"],
+    )
+    opaque = subject_references if subject_is_opaque else set()
+    exposed = set() if subject_is_opaque else subject_references
+    non_subject_opaque, non_subject_exposed = non_subject_term_references(rule)
+    opaque.update(non_subject_opaque)
+    exposed.update(non_subject_exposed)
     return opaque, exposed
 
 
@@ -427,9 +403,8 @@ def _ambiguous_subject_references(source_rules: pd.DataFrame) -> set[str]:
     """
     observed_refs: set[str] = set()
     for _, rule in source_rules.iterrows():
-        observed_refs.update(_reference_set(rule["predicate_references"]))
-        observed_refs.update(_reference_set(rule["object_references"]))
-        observed_refs.update(_reference_set(rule["graph_references"]))
+        _, non_subject_exposed = non_subject_term_references(rule)
+        observed_refs.update(non_subject_exposed)
 
     buckets: dict[tuple[str, frozenset[tuple[str, ...]]], list[set[str]]] = {}
     for _, subject_rules in source_rules.groupby("subject_map_value", dropna=False):
@@ -458,9 +433,7 @@ def _ambiguous_graph_references(source_rules: pd.DataFrame) -> set[str]:
     """
     observable_refs: set[str] = set()
     for _, rule in source_rules.iterrows():
-        observable_refs.update(_reference_set(rule["subject_references"]))
-        observable_refs.update(_reference_set(rule["predicate_references"]))
-        observable_refs.update(_reference_set(rule["object_references"]))
+        observable_refs.update(non_graph_exposed_references(rule))
 
     skeletons: dict[str, dict[str, set[str]]] = {}
     for _, rule in source_rules.iterrows():
@@ -491,6 +464,13 @@ def _unrecoverable_references(mappings: pd.DataFrame) -> dict[str, frozenset[str
             mappings["object_map_type"] == RML_PARENT_TRIPLES_MAP, "object_map_value"
         ]
     )
+    shared_subject_evidence: dict[tuple[str, ...], set[str]] = {}
+    for _, rule in mappings.iterrows():
+        _, exposed_references = non_subject_term_references(rule)
+        shared_subject_evidence.setdefault(subject_term_signature(rule), set()).update(
+            exposed_references
+        )
+
     unrecoverable: dict[str, frozenset[str]] = {}
     for table_name, source_rules in mappings.groupby("logical_source_value"):
         ambiguous = _ambiguous_subject_references(source_rules)
@@ -502,6 +482,10 @@ def _unrecoverable_references(mappings: pd.DataFrame) -> dict[str, frozenset[str
             rule_opaque, rule_exposed = _term_map_references(rule, join_targets)
             opaque.update(rule_opaque)
             exposed.update(rule_exposed)
+            exposed.update(
+                _reference_set(rule["subject_references"])
+                & shared_subject_evidence[subject_term_signature(rule)]
+            )
 
         unrecoverable[str(table_name)] = frozenset(
             ambiguous | (opaque - (exposed - ambiguous))

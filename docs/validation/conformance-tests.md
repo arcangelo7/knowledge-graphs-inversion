@@ -68,25 +68,24 @@ The [R2RML test suite](https://www.w3.org/2001/sw/rdb2rdf/test-cases/) contains 
 | Outcome | PostgreSQL | MySQL |
 |---|---:|---:|
 | Fully inverted | 21 | 20 |
-| Partially inverted | 13 | 13 |
+| Partially inverted | 14 | 14 |
 | Non-invertible | 2 | 2 |
 | Not supported | 13 | 13 |
 | Error test case | 12 | 11 |
-| Mismatch | 1 | 1 |
+| Mismatch | 0 | 0 |
 | Not tested | 0 | 2 |
 
-### Partially inverted (13)
+### Partially inverted (14)
 
 Each case recovers the information preserved in the RDF graph, but the forward mapping discards part of the source. Sub-categories are counted per tag: a test may contribute to more than one sub-category when multiple forms of loss co-occur, so the counts below sum to more than the number of tests.
 
 | Sub-category | PostgreSQL | MySQL |
 |---|---:|---:|
-| Columns lost (unmapped or unassignable columns) | 8 | 8 |
+| Columns lost (unmapped or unassignable columns) | 9 | 9 |
 | Rows lost (NULL in subject template) | 1 | 1 |
-| Multiplicity lost (duplicate rows collapsed) | 4 | 4 |
+| Multiplicity lost (duplicate rows collapsed) | 5 | 5 |
 | Tables lost (unmapped tables) | 1 | 1 |
 
-One test (R2RMLTC0012a) is tagged with two sub-categories at once: the `Lives` table has no triples map, and `IOUs` has non-unique subject identifiers that collapse duplicates.
 
 ### Non-invertible (2)
 
@@ -97,10 +96,6 @@ One test (R2RMLTC0012a) is tagged with two sub-categories at once: the `Lives` t
 
 R2RMLTC0020a maps a single-column table through a subject map with an IRI term type over that column. The column is unassignable and no other term map names one, so nothing remains to reconstruct.
 
-### Mismatch (1)
-
-R2RMLTC0012b is the only case that reconstructs values differing from the source, so its inversion is neither complete nor recoverable. It builds the blank node label of the `Lives` table from the template `{fname}{lname}`, and because the two placeholders are adjacent the label `BobSmith` carries no boundary between them, so the reconstruction assigns the whole label to `lname` and leaves `fname` empty.
-
 ## RML test suite
 
 The RML test suite comes from a [fork of rml-io-registry](https://github.com/arcangelo7/rml-io-registry/tree/add-rdb-core-tests) and contains 59 RDB test cases.
@@ -108,24 +103,22 @@ The RML test suite comes from a [fork of rml-io-registry](https://github.com/arc
 | Outcome | Count |
 |---|---|
 | Fully inverted | 13 |
-| Partially inverted | 21 |
+| Partially inverted | 22 |
 | Non-invertible | 2 |
 | Not supported | 10 |
 | Error test case | 12 |
-| Mismatch | 1 |
+| Mismatch | 0 |
 
-### Partially inverted (21)
+### Partially inverted (22)
 
 Sub-categories are counted per tag; a test contributes to every form of loss that applies, so the counts below sum to more than the number of tests.
 
 | Sub-category | Count |
 |---|---|
-| Columns lost (unmapped or unassignable columns) | 16 |
+| Columns lost (unmapped or unassignable columns) | 17 |
 | Rows lost (NULL in subject template) | 1 |
-| Multiplicity lost (duplicate rows collapsed) | 4 |
+| Multiplicity lost (duplicate rows collapsed) | 5 |
 | Tables lost (unmapped tables) | 1 |
-
-One test (RMLTC0012a) is tagged with two sub-categories at once, mirroring its R2RML counterpart: the `Lives` table has no triples map, and `IOUs` has non-unique subject identifiers that collapse duplicates.
 
 Test cases sharing an identifier across the two suites are not always equivalent: the RML-Core suite sometimes changed the source data. The seven RMLTC0007 variants use a `student` table with an extra `LastName` column that no term map references. This is the same data as their [RMLTC0007-JSON counterparts](https://github.com/kg-construct/rml-core/tree/main/test-cases) in the RML-Core suite, so they classify as partially inverted (columns lost), whereas the R2RML 0007 tests map every column and are fully inverted.
 
@@ -137,7 +130,3 @@ A column can also be lost through a join condition. RMLTC0021a (an RML-Core addi
 |---|---|
 | Constant-only mapping | 1 |
 | Sole column reference has an IRI term type (ambiguous base IRI resolution) | 1 |
-
-### Mismatch (1)
-
-RMLTC0012b-RDB reproduces the defect described for its R2RML counterpart: the label built from two adjacent template placeholders cannot be split back into `fname` and `lname`.

@@ -240,6 +240,176 @@ def test_table_without_recoverable_columns_is_non_invertible() -> None:
     )
 
 
+def test_adjacent_subject_template_without_other_evidence_is_non_invertible() -> None:
+    rule = _two_column_rule("{p1}{p2}", "p1")
+    rule["object_map_type"] = RML_CONSTANT
+    rule["object_map_value"] = "http://example.com/Person"
+    rule["object_termtype"] = RML_IRI
+    mappings = pd.DataFrame([rule])
+    insert_columns(mappings)
+
+    analysis = _analyze_rules(mappings)
+
+    assert analysis["data"].unrecoverable == frozenset({"p1", "p2"})
+    with pytest.raises(NonInvertibleError) as error:
+        _check_for_unrecoverable_tables(analysis)
+    assert str(error.value) == (
+        "No column of table 'data' can be recovered from the graph: p1, p2"
+    )
+
+
+def test_adjacent_subject_template_uses_the_column_exposed_by_its_object(
+    tmp_path: Path,
+) -> None:
+    mappings = pd.DataFrame([_two_column_rule("http://example.com/{p1}{p2}", "p1")])
+    insert_columns(mappings)
+
+    assert _unrecoverable_references(mappings) == {"data": frozenset({"p2"})}
+
+    rdf_file = tmp_path / "data.nq"
+    rdf_file.write_text(
+        '<http://example.com/BobSmith> <http://example.com/p1> "Bob" .\n',
+        encoding="utf-8",
+    )
+
+    reconstructed = _reconstruct(rdf_file, mappings)[["p1"]]
+    assert reconstructed.values.tolist() == [["Bob"]]
+
+
+def test_adjacent_object_template_is_not_used_as_subject_evidence() -> None:
+    target_rule = _two_column_rule("{p1}{p2}", "p3")
+    target_rule["logical_source_value"] = "target"
+    evidence_rule = _two_column_rule("{p1}{p2}", "p1")
+    evidence_rule["logical_source_value"] = "evidence"
+    evidence_rule["object_map_type"] = RML_TEMPLATE
+    evidence_rule["object_map_value"] = "{p1}{p2}"
+    evidence_rule["object_termtype"] = RML_LITERAL
+    mappings = pd.DataFrame([target_rule, evidence_rule])
+    insert_columns(mappings)
+
+    analysis = _analyze_rules(mappings)
+    triples = query_triples(
+        mappings,
+        mappings.loc[mappings["logical_source_value"] == "target"],
+    )
+
+    assert analysis["evidence"].unrecoverable == frozenset({"p1", "p2"})
+    assert analysis["target"].unrecoverable == frozenset({"p1", "p2"})
+    assert [
+        (type(triple), triple.rule["logical_source_value"]) for triple in triples
+    ] == [(QueryTriple, "target"), (SubjectTriple, "target")]
+
+
+def test_adjacent_object_template_does_not_disambiguate_subject_maps() -> None:
+    first_rule = _two_column_rule("http://example.com/{p1}", "p1")
+    first_rule["object_map_type"] = RML_TEMPLATE
+    first_rule["object_map_value"] = "{p1}{p2}"
+    first_rule["object_termtype"] = RML_LITERAL
+    second_rule = _two_column_rule("http://example.com/{p2}", "p1")
+    second_rule["triples_map_id"] = "TriplesMap_p2"
+    second_rule["object_map_type"] = RML_TEMPLATE
+    second_rule["object_map_value"] = "{p1}{p2}"
+    second_rule["object_termtype"] = RML_LITERAL
+    mappings = pd.DataFrame([first_rule, second_rule])
+    insert_columns(mappings)
+
+    assert _unrecoverable_references(mappings) == {"data": frozenset({"p1", "p2"})}
+
+
+def test_adjacent_object_template_uses_separable_cross_table_evidence(
+    tmp_path: Path,
+) -> None:
+    subject_template = "http://example.com/{p1}{p2}"
+    target_rule = _two_column_rule(subject_template, "p1")
+    target_rule["logical_source_value"] = "target"
+    target_rule["predicate_map_value"] = "http://example.com/unsafe"
+    target_rule["object_map_type"] = RML_TEMPLATE
+    target_rule["object_map_value"] = "{p1}{p2}"
+    target_rule["object_termtype"] = RML_LITERAL
+    evidence_rule = _two_column_rule(subject_template, "p1")
+    evidence_rule["logical_source_value"] = "evidence"
+    evidence_rule["predicate_map_value"] = "http://example.com/safe"
+    evidence_rule["object_map_type"] = RML_TEMPLATE
+    evidence_rule["object_map_value"] = "{p1} {p2}"
+    evidence_rule["object_termtype"] = RML_LITERAL
+    mappings = pd.DataFrame([target_rule, evidence_rule])
+    insert_columns(mappings)
+
+    assert _unrecoverable_references(mappings) == {
+        "evidence": frozenset(),
+        "target": frozenset(),
+    }
+
+    rdf_file = tmp_path / "data.nq"
+    rdf_file.write_text(
+        '<http://example.com/BobSmith> <http://example.com/unsafe> "BobSmith" .\n'
+        '<http://example.com/BobSmith> <http://example.com/safe> "Bob Smith" .\n',
+        encoding="utf-8",
+    )
+
+    reconstructed = _reconstruct(rdf_file, mappings, "target")[["p1", "p2"]]
+    assert reconstructed.values.tolist() == [["Bob", "Smith"]]
+
+
+def test_local_object_maps_avoid_unneeded_cross_table_evidence(
+    tmp_path: Path,
+) -> None:
+    subject_template = "http://example.com/{p1}{p2}"
+    first_target_rule = _two_column_rule(subject_template, "p1")
+    first_target_rule["logical_source_value"] = "target"
+    second_target_rule = _two_column_rule(subject_template, "p2")
+    second_target_rule["logical_source_value"] = "target"
+    second_target_rule["predicate_map_value"] = "http://example.com/p2"
+    evidence_rule = _two_column_rule(subject_template, "p1")
+    evidence_rule["logical_source_value"] = "evidence"
+    evidence_rule["predicate_map_value"] = "http://example.com/external"
+    mappings = pd.DataFrame([first_target_rule, second_target_rule, evidence_rule])
+    insert_columns(mappings)
+
+    rdf_file = tmp_path / "data.nq"
+    rdf_file.write_text(
+        '<http://example.com/BobSmith> <http://example.com/p1> "Bob" .\n'
+        '<http://example.com/BobSmith> <http://example.com/p2> "Smith" .\n',
+        encoding="utf-8",
+    )
+
+    reconstructed = _reconstruct(rdf_file, mappings, "target")[["p1", "p2"]]
+    assert reconstructed.values.tolist() == [["Bob", "Smith"]]
+
+
+def test_adjacent_graph_template_columns_are_unrecoverable() -> None:
+    mappings = pd.DataFrame([_graph_rule("p1", "http://example.org/{p2}{p3}")])
+    insert_columns(mappings)
+
+    assert _unrecoverable_references(mappings) == {"data": frozenset({"p2", "p3"})}
+    select_variables, body = _graph_query(mappings)
+
+    assert select_variables == ["?p1"]
+    assert body == (
+        "?p1_uri <http://example.com/p1> ?p1 .\n"
+        "FILTER(REGEX(STR(?p1_uri), 'http://example.com/table/([^/]*)'))\n"
+        "BIND(STRAFTER(STR(?p1_uri), 'http://example.com/table/') as ?p1_uri_slice)\n"
+        "FILTER(!BOUND(?p1) || STR(?p1) = STR(?p1_uri_slice) "
+        "|| ENCODE_FOR_URI(STR(?p1)) = STR(?p1_uri_slice) "
+        "|| STR(?p1) = ENCODE_FOR_URI(STR(?p1_uri_slice)))}"
+    )
+
+
+def test_adjacent_object_template_does_not_disambiguate_graph_maps() -> None:
+    first_rule = _graph_rule("p1", "http://example.org/{p2}")
+    first_rule["object_map_type"] = RML_TEMPLATE
+    first_rule["object_map_value"] = "{p2}{p3}"
+    first_rule["object_termtype"] = RML_LITERAL
+    second_rule = _graph_rule("p1", "http://example.org/{p3}")
+    second_rule["object_map_type"] = RML_TEMPLATE
+    second_rule["object_map_value"] = "{p2}{p3}"
+    second_rule["object_termtype"] = RML_LITERAL
+    mappings = pd.DataFrame([first_rule, second_rule])
+    insert_columns(mappings)
+
+    assert _unrecoverable_references(mappings) == {"data": frozenset({"p2", "p3"})}
+
+
 def test_graph_columns_exposed_by_object_maps_are_read_from_the_default_graph() -> None:
     mappings = pd.DataFrame(
         [
