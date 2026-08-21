@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-from pyoxigraph import Literal, NamedNode, Quad, QuerySolutions, Store
+from pyoxigraph import BlankNode, Literal, NamedNode, Quad, QuerySolutions, Store
 from sqlalchemy import DATE, INTEGER, LargeBinary
 
 from kgi.constants import (
@@ -18,10 +18,14 @@ from kgi.constants import (
     RML_PARENT_TRIPLES_MAP,
     RML_REFERENCE,
     RML_TEMPLATE,
+    RR_LOGICAL_TABLE,
+    RR_PARENT_TRIPLES_MAP,
+    RR_SUBJECT_MAP,
 )
 from kgi.core import (
     _analyze_rules,
     _check_for_unrecoverable_tables,
+    _has_unreferenced_triples_map_without_generated_triples,
     _unrecoverable_references,
 )
 from kgi.endpoints import LocalSparqlGraphStore
@@ -708,6 +712,32 @@ def test_triples_map_without_predicate_object_map_needs_a_join_to_be_invertible(
         str(error.value)
         == "No column of table 'data2' can be recovered from the graph: id"
     )
+
+
+def test_subject_class_generates_triples_without_a_predicate_object_map() -> None:
+    store = Store()
+    triples_map = NamedNode("http://example.com/TriplesMap")
+    subject_map = BlankNode()
+    store.add(Quad(triples_map, RR_LOGICAL_TABLE, BlankNode()))
+    store.add(Quad(triples_map, RR_SUBJECT_MAP, subject_map))
+    store.add(
+        Quad(
+            subject_map,
+            NamedNode("http://www.w3.org/ns/r2rml#class"),
+            NamedNode("http://example.com/Person"),
+        )
+    )
+
+    assert not _has_unreferenced_triples_map_without_generated_triples(store)
+
+
+def test_incoming_join_carries_a_triples_map_without_a_predicate_object_map() -> None:
+    store = Store()
+    triples_map = NamedNode("http://example.com/TriplesMap")
+    store.add(Quad(triples_map, RR_LOGICAL_TABLE, BlankNode()))
+    store.add(Quad(BlankNode(), RR_PARENT_TRIPLES_MAP, triples_map))
+
+    assert not _has_unreferenced_triples_map_without_generated_triples(store)
 
 
 def _predicate_rule(subject_column: str, object_column: str) -> dict[str, object]:

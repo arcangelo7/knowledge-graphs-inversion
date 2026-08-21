@@ -1,0 +1,18 @@
+@prefix rr: <http://www.w3.org/ns/r2rml#> .
+@prefix ex: <http://example.com/> .
+@base <http://example.com/> .
+
+<#TriplesMap> a rr:TriplesMap;
+    rr:logicalTable [ rr:tableName "\"GraphMaps\"" ];
+    rr:subjectMap [ rr:template "person/{\"ID\"}" ];
+    rr:predicateObjectMap [
+        rr:predicate ex:name;
+        rr:objectMap [ rr:column "\"Name\"" ];
+        rr:graphMap [ rr:template "graph/{\"FirstGraph\"}" ]
+    ];
+    rr:predicateObjectMap [
+        rr:predicate ex:name;
+        rr:objectMap [ rr:column "\"Name\"" ];
+        rr:graphMap [ rr:template "graph/{\"SecondGraph\"}" ]
+    ];
+.

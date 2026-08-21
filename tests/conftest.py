@@ -241,15 +241,16 @@ def _collect_test_ids(suite_class: type, base_dir: str) -> list[str]:
 
 
 R2RML_BASE_DIR = os.path.join(PROJECT_ROOT, "r2rml_test_cases")
+INVERSION_BASE_DIR = os.path.join(PROJECT_ROOT, "inversion_test_cases")
 RML_BASE_DIR = os.path.join(PROJECT_ROOT, "rml_io_registry")
 
-R2RML_TEST_IDS = _collect_test_ids(R2RMLTestSuite, R2RML_BASE_DIR)
+R2RML_TEST_IDS = R2RMLTestSuite(R2RML_BASE_DIR, INVERSION_BASE_DIR).list_test_ids()
 RML_TEST_IDS = _collect_test_ids(RMLTestSuite, RML_BASE_DIR)
 
 
 @pytest.fixture(scope="session")
 def r2rml_suite() -> R2RMLTestSuite:
-    return R2RMLTestSuite(R2RML_BASE_DIR)
+    return R2RMLTestSuite(R2RML_BASE_DIR, INVERSION_BASE_DIR)
 
 
 @pytest.fixture(scope="session")

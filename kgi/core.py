@@ -39,6 +39,7 @@ from kgi.constants import (
     RML_SOURCE,
     RML_SQL2008_QUERY,
     RML_SQL2008_TABLE,
+    RML_SUBJECT_MAP,
     RML_TABLE_NAME,
     RML_TEMPLATE,
     RML_TEMPLATE_NODE,
@@ -182,6 +183,51 @@ _PARENT_TRIPLES_MAP_PREDICATES = (
     RR_PARENT_TRIPLES_MAP,
     NamedNode(RML_PARENT_TRIPLES_MAP),
 )
+_PREDICATE_OBJECT_MAP_PREDICATES = (
+    NamedNode("http://www.w3.org/ns/r2rml#predicateObjectMap"),
+    NamedNode("http://w3id.org/rml/predicateObjectMap"),
+)
+_SUBJECT_MAP_PREDICATES = (RR_SUBJECT_MAP, RML_SUBJECT_MAP)
+_CLASS_PREDICATES = (
+    NamedNode("http://www.w3.org/ns/r2rml#class"),
+    NamedNode("http://w3id.org/rml/class"),
+)
+
+
+def _has_unreferenced_triples_map_without_generated_triples(
+    store: Store,
+) -> bool:
+    triples_maps: set[NamedNode | BlankNode] = set()
+    for predicate in (RR_LOGICAL_TABLE, RML_LOGICAL_SOURCE, RML_OLD_LOGICAL_SOURCE):
+        for quad in store.quads_for_pattern(None, predicate, None):
+            if isinstance(quad.subject, (NamedNode, BlankNode)):
+                triples_maps.add(quad.subject)
+
+    for triples_map in triples_maps:
+        has_predicate_object_map = any(
+            any(store.quads_for_pattern(triples_map, predicate, None))
+            for predicate in _PREDICATE_OBJECT_MAP_PREDICATES
+        )
+        has_subject_class = any(
+            any(store.quads_for_pattern(subject_map.object, class_predicate, None))
+            for subject_predicate in _SUBJECT_MAP_PREDICATES
+            for subject_map in store.quads_for_pattern(
+                triples_map, subject_predicate, None
+            )
+            if isinstance(subject_map.object, (NamedNode, BlankNode))
+            for class_predicate in _CLASS_PREDICATES
+        )
+        is_join_target = any(
+            any(store.quads_for_pattern(None, predicate, triples_map))
+            for predicate in _PARENT_TRIPLES_MAP_PREDICATES
+        )
+        if (
+            not has_predicate_object_map
+            and not has_subject_class
+            and not is_join_target
+        ):
+            return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -586,6 +632,12 @@ def _load_mapping_rules(
 
     if _check_for_multiple_subject_maps(mapping_store):
         raise MappingError("TriplesMap contains multiple subjectMaps")
+
+    if _has_unreferenced_triples_map_without_generated_triples(mapping_store):
+        raise NonInvertibleError(
+            "Triples Map without a predicate-object map or subject class is not "
+            "referenced by a join"
+        )
 
     if source_db_url is None:
         extracted_url = _extract_db_url_from_mapping(mapping_store)

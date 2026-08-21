@@ -218,10 +218,16 @@ def evaluate_kgi_case(
                     "supported"
                 ),
             )
-        return CaseOutcome(
-            InversionOutcome.FULLY_INVERTED,
-            message="Forward mapping produced empty output - no data to invert",
-        )
+        if forward_failed:
+            return CaseOutcome(
+                InversionOutcome.ERROR,
+                message=(
+                    "The forward mapping did not produce the expected graph, so the "
+                    "inversion could not be attempted"
+                ),
+            )
+        if not rdf_path.is_file():
+            rdf_path.touch()
 
     try:
         reconstruct(

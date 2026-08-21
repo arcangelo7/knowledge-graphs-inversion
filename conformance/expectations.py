@@ -112,6 +112,27 @@ EXPECTATIONS: dict[TestKey, CaseOutcome] = {
     ("r2rml", "R2RMLTC0019b"): CaseOutcome(InversionOutcome.ERROR_TEST_CASE),
     ("r2rml", "R2RMLTC0020a"): CaseOutcome(InversionOutcome.NON_INVERTIBLE),
     ("r2rml", "R2RMLTC0020b"): CaseOutcome(InversionOutcome.ERROR_TEST_CASE),
+    ("r2rml", "INVTC0001"): CaseOutcome(
+        InversionOutcome.PARTIALLY_INVERTED,
+        frozenset({PartialLoss.COLUMNS_LOST}),
+    ),
+    ("r2rml", "INVTC0002"): CaseOutcome(
+        InversionOutcome.PARTIALLY_INVERTED,
+        frozenset({PartialLoss.COLUMNS_LOST}),
+    ),
+    ("r2rml", "INVTC0003"): CaseOutcome(
+        InversionOutcome.PARTIALLY_INVERTED,
+        frozenset({PartialLoss.COLUMNS_LOST}),
+    ),
+    ("r2rml", "INVTC0004"): CaseOutcome(
+        InversionOutcome.PARTIALLY_INVERTED,
+        frozenset({PartialLoss.COLUMNS_LOST}),
+    ),
+    ("r2rml", "INVTC0005"): CaseOutcome(
+        InversionOutcome.PARTIALLY_INVERTED,
+        frozenset({PartialLoss.COLUMNS_LOST}),
+    ),
+    ("r2rml", "INVTC0006"): CaseOutcome(InversionOutcome.NON_INVERTIBLE),
     ("rml", "RMLTC0000-RDB"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
     ("rml", "RMLTC0001a-RDB"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
     ("rml", "RMLTC0001b-RDB"): CaseOutcome(InversionOutcome.FULLY_INVERTED),

@@ -49,6 +49,14 @@ R2RML specifies that if any column referenced by the subject template contains N
 
 When a value must be extracted only from a template, the extraction logic relies on literal separators between placeholders to determine where one value ends and the next begins. Templates like `{FirstName}{LastName}` with no separator between them are ambiguous: given the string `JohnSmith`, there is no way to determine the boundary. If those columns are also available through object maps, KGI uses the object values instead of relying on the ambiguous subject template.
 
+## Unemitted join keys
+
+A join condition may use columns only to decide which subjects are related. If neither side of the join appears in any RDF term, the graph preserves the relationship but not the original key value. The related rows remain recoverable while the join columns are omitted.
+
+## Triples Maps without predicate-object maps
+
+A [Triples Map](https://www.w3.org/TR/r2rml/#dfn-triples-map) may have no predicate-object map, in which case no RDF is generated. A map with no predicate-object map, subject class, or incoming join is non-invertible.
+
 ## Blank nodes
 
-R2RML requires templates for blank node generation, so the same string extraction applies when the blank node label still preserves the generated value. When querying a local RDF file, the algorithm parses it directly and can use the original blank node labels. When querying a remote triple store, blank node labels are not stable: stores may replace or encode them internally. If the same columns are already available through object maps, KGI uses those values instead of relying on the blank node label.
+R2RML requires templates for blank node generation, so the same string extraction applies when the blank node label still preserves the generated value. KGI reads local N-Triples and N-Quads files, where it can use the parsed blank node labels. Remote stores are outside this input path, and their blank node labels would not provide stable reconstruction evidence.

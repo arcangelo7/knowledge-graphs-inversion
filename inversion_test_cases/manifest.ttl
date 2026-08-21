@@ -1,0 +1,118 @@
+@prefix test: <http://www.w3.org/2006/03/test-description#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix rdb2rdftest: <http://purl.org/NET/rdb2rdf-test#> .
+@base <https://w3id.org/kg-inversion/test-cases/> .
+
+<#d-inv-001> a rdb2rdftest:DataBase;
+    dcterms:title "Adjacent template values";
+    dcterms:identifier "D-INV-001";
+    rdb2rdftest:sqlScriptFile "d-inv-001.sql";
+    rdb2rdftest:relatedTestCase <#INVTC0001>;
+.
+
+<#INVTC0001> a rdb2rdftest:R2RML;
+    dcterms:title "Adjacent template placeholders without other evidence";
+    dcterms:identifier "INVTC0001";
+    test:purpose "Tests the loss of column boundaries when adjacent placeholders are exposed only by one template";
+    test:specificationReference "#from-template";
+    test:reviewStatus test:unreviewed;
+    rdb2rdftest:database <#d-inv-001>;
+    rdb2rdftest:output "mapped.nq";
+    rdb2rdftest:hasExpectedOutput true;
+    rdb2rdftest:mappingDocument "r2rml.ttl";
+.
+
+<#d-inv-002> a rdb2rdftest:DataBase;
+    dcterms:title "Indistinguishable subject templates";
+    dcterms:identifier "D-INV-002";
+    rdb2rdftest:sqlScriptFile "d-inv-002.sql";
+    rdb2rdftest:relatedTestCase <#INVTC0002>;
+.
+
+<#INVTC0002> a rdb2rdftest:R2RML;
+    dcterms:title "Indistinguishable subject templates";
+    dcterms:identifier "INVTC0002";
+    test:purpose "Tests subject-only columns that compatible templates cannot attribute to their source term map";
+    test:specificationReference "#from-template";
+    test:reviewStatus test:unreviewed;
+    rdb2rdftest:database <#d-inv-002>;
+    rdb2rdftest:output "mapped.nq";
+    rdb2rdftest:hasExpectedOutput true;
+    rdb2rdftest:mappingDocument "r2rml.ttl";
+.
+
+<#d-inv-003> a rdb2rdftest:DataBase;
+    dcterms:title "Indistinguishable graph maps";
+    dcterms:identifier "D-INV-003";
+    rdb2rdftest:sqlScriptFile "d-inv-003.sql";
+    rdb2rdftest:relatedTestCase <#INVTC0003>;
+.
+
+<#INVTC0003> a rdb2rdftest:R2RML;
+    dcterms:title "Indistinguishable graph maps";
+    dcterms:identifier "INVTC0003";
+    test:purpose "Tests graph-only columns that compatible graph templates cannot attribute to their source term map";
+    test:specificationReference "#dfn-graph-map";
+    test:reviewStatus test:unreviewed;
+    rdb2rdftest:database <#d-inv-003>;
+    rdb2rdftest:output "mapped.nq";
+    rdb2rdftest:hasExpectedOutput true;
+    rdb2rdftest:mappingDocument "r2rml.ttl";
+.
+
+<#d-inv-004> a rdb2rdftest:DataBase;
+    dcterms:title "Column-valued IRI term map";
+    dcterms:identifier "D-INV-004";
+    rdb2rdftest:sqlScriptFile "d-inv-004.sql";
+    rdb2rdftest:relatedTestCase <#INVTC0004>;
+.
+
+<#INVTC0004> a rdb2rdftest:R2RML;
+    dcterms:title "Column converted directly into an IRI";
+    dcterms:identifier "INVTC0004";
+    test:purpose "Tests a column whose value cannot be separated from the base IRI after forward mapping";
+    test:specificationReference "#from-column";
+    test:reviewStatus test:unreviewed;
+    rdb2rdftest:database <#d-inv-004>;
+    rdb2rdftest:output "mapped.nq";
+    rdb2rdftest:hasExpectedOutput true;
+    rdb2rdftest:mappingDocument "r2rml.ttl";
+.
+
+<#d-inv-005> a rdb2rdftest:DataBase;
+    dcterms:title "Join key absent from RDF terms";
+    dcterms:identifier "D-INV-005";
+    rdb2rdftest:sqlScriptFile "d-inv-005.sql";
+    rdb2rdftest:relatedTestCase <#INVTC0005>;
+.
+
+<#INVTC0005> a rdb2rdftest:R2RML;
+    dcterms:title "Join key never emitted as an RDF term";
+    dcterms:identifier "INVTC0005";
+    test:purpose "Tests a self-join whose key controls relationships but is absent from every generated RDF term";
+    test:specificationReference "#dfn-join-condition";
+    test:reviewStatus test:unreviewed;
+    rdb2rdftest:database <#d-inv-005>;
+    rdb2rdftest:output "mapped.nq";
+    rdb2rdftest:hasExpectedOutput true;
+    rdb2rdftest:mappingDocument "r2rml.ttl";
+.
+
+<#d-inv-006> a rdb2rdftest:DataBase;
+    dcterms:title "Triples Map with no predicate-object maps";
+    dcterms:identifier "D-INV-006";
+    rdb2rdftest:sqlScriptFile "d-inv-006.sql";
+    rdb2rdftest:relatedTestCase <#INVTC0006>;
+.
+
+<#INVTC0006> a rdb2rdftest:R2RML;
+    dcterms:title "Triples Map without a predicate-object map";
+    dcterms:identifier "INVTC0006";
+    test:purpose "Tests a non-empty logical table whose Triples Map generates no triples";
+    test:specificationReference "#dfn-triples-map";
+    test:reviewStatus test:unreviewed;
+    rdb2rdftest:database <#d-inv-006>;
+    rdb2rdftest:output "mapped.nq";
+    rdb2rdftest:hasExpectedOutput true;
+    rdb2rdftest:mappingDocument "r2rml.ttl";
+.

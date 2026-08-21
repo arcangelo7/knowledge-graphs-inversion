@@ -48,78 +48,113 @@ class TestSuite:
 
 
 class R2RMLTestSuite(TestSuite):
-    def __init__(self, base_dir: str):
+    def __init__(self, base_dir: str, inversion_base_dir: str | None = None):
         self.suite_id = "r2rml"
         self.name = SUITE_LABELS[self.suite_id]
         self.base_dir = base_dir
         self.test_id_prefix = "R2RMLTC"
-        self.databases_dir = os.path.join(base_dir, "databases")
-        self.manifest_store = Store()
-        self.manifest_store.load(
+        self._test_ids: list[str] = []
+        self._catalogs: dict[str, tuple[str, Store]] = {}
+        self._load_catalog(base_dir, self.test_id_prefix)
+        if inversion_base_dir is not None:
+            self._load_catalog(inversion_base_dir, "INVTC")
+
+    def _load_catalog(self, base_dir: str, test_id_prefix: str) -> None:
+        manifest_store = Store()
+        manifest_store.load(
             path=os.path.join(base_dir, "manifest.ttl"), format=RdfFormat.TURTLE
+        )
+        test_ids = sorted(
+            entry
+            for entry in os.listdir(base_dir)
+            if os.path.isdir(os.path.join(base_dir, entry))
+            and entry.startswith(test_id_prefix)
+        )
+        self._test_ids.extend(test_ids)
+        self._catalogs.update(
+            {test_id: (base_dir, manifest_store) for test_id in test_ids}
         )
 
     def list_test_ids(self) -> list[str]:
-        return sorted(
-            [
-                f
-                for f in os.listdir(self.base_dir)
-                if os.path.isdir(os.path.join(self.base_dir, f))
-                and f.startswith(self.test_id_prefix)
-            ]
-        )
+        return list(self._test_ids)
+
+    def _get_catalog(self, test_id: str) -> tuple[str, Store]:
+        return self._catalogs[test_id]
 
     def _get_mapping_filename(self, test_id: str) -> str:
         letter: str = test_id[-1].lower()
         return f"r2rml{letter}.ttl" if letter.isalpha() else "r2rml.ttl"
 
     def get_mapping_path(self, test_id: str) -> str:
-        return os.path.join(self.base_dir, test_id, self._get_mapping_filename(test_id))
+        base_dir, _ = self._get_catalog(test_id)
+        return os.path.join(base_dir, test_id, self._get_mapping_filename(test_id))
 
-    def _find_subject(self, predicate: NamedNode, obj: RdfTerm) -> RdfSubject | None:
-        for quad in self.manifest_store.quads_for_pattern(None, predicate, obj):
+    def _find_subject(
+        self, manifest_store: Store, predicate: NamedNode, obj: RdfTerm
+    ) -> RdfSubject | None:
+        for quad in manifest_store.quads_for_pattern(None, predicate, obj):
             return quad.subject
         return None
 
     def _find_object(
-        self, subject: RdfSubject | None, predicate: NamedNode
+        self,
+        manifest_store: Store,
+        subject: RdfSubject | None,
+        predicate: NamedNode,
     ) -> RdfTerm | None:
-        for quad in self.manifest_store.quads_for_pattern(subject, predicate, None):
+        for quad in manifest_store.quads_for_pattern(subject, predicate, None):
             return quad.object
         return None
 
     def _find_object_value(
-        self, subject: RdfSubject | None, predicate: NamedNode
+        self,
+        manifest_store: Store,
+        subject: RdfSubject | None,
+        predicate: NamedNode,
     ) -> str:
-        term = self._find_object(subject, predicate)
+        term = self._find_object(manifest_store, subject, predicate)
         assert isinstance(term, (NamedNode, BlankNode, Literal))
         return term.value
 
     def get_sql_script_path(self, test_id: str, database_system: str) -> str:
-        test_uri = self._find_subject(DCELEMENTS_IDENTIFIER, Literal(test_id))
-        database_uri = self._find_object(test_uri, RDB2RDFTEST_DATABASE)
+        base_dir, manifest_store = self._get_catalog(test_id)
+        test_uri = self._find_subject(
+            manifest_store, DCELEMENTS_IDENTIFIER, Literal(test_id)
+        )
+        database_uri = self._find_object(manifest_store, test_uri, RDB2RDFTEST_DATABASE)
         assert isinstance(database_uri, (NamedNode, BlankNode))
-        database_script = self._find_object_value(database_uri, RDB2RDFTEST_SQL_SCRIPT)
+        database_script = self._find_object_value(
+            manifest_store, database_uri, RDB2RDFTEST_SQL_SCRIPT
+        )
         base_name, ext = os.path.splitext(database_script)
         system_specific = f"{base_name}-{database_system}{ext}"
-        if os.path.exists(os.path.join(self.databases_dir, system_specific)):
-            return os.path.join(self.databases_dir, system_specific)
-        return os.path.join(self.databases_dir, database_script)
+        databases_dir = os.path.join(base_dir, "databases")
+        if os.path.exists(os.path.join(databases_dir, system_specific)):
+            return os.path.join(databases_dir, system_specific)
+        return os.path.join(databases_dir, database_script)
 
     def get_expected_output_path(self, test_id: str) -> str:
+        base_dir, _ = self._get_catalog(test_id)
         last_char = test_id[-1]
         suffix = last_char.lower() if last_char.isalpha() else ""
-        return os.path.join(self.base_dir, test_id, f"mapped{suffix}.nq")
+        return os.path.join(base_dir, test_id, f"mapped{suffix}.nq")
 
     def get_test_metadata(self, test_id: str) -> dict[str, str | bool] | None:
-        test_uri = self._find_subject(DCELEMENTS_IDENTIFIER, Literal(test_id))
+        _, manifest_store = self._get_catalog(test_id)
+        test_uri = self._find_subject(
+            manifest_store, DCELEMENTS_IDENTIFIER, Literal(test_id)
+        )
         if test_uri is None:
             return None
-        title = self._find_object(test_uri, DCELEMENTS_TITLE)
-        purpose = self._find_object(test_uri, TESTDEC_PURPOSE)
-        expected_output = self._find_object(test_uri, RDB2RDFTEST_HAS_EXPECTED_OUTPUT)
-        mapping_doc = self._find_object(test_uri, RDB2RDFTEST_MAPPING_DOC)
-        output_file = self._find_object(test_uri, RDB2RDFTEST_OUTPUT)
+        title = self._find_object(manifest_store, test_uri, DCELEMENTS_TITLE)
+        purpose = self._find_object(manifest_store, test_uri, TESTDEC_PURPOSE)
+        expected_output = self._find_object(
+            manifest_store, test_uri, RDB2RDFTEST_HAS_EXPECTED_OUTPUT
+        )
+        mapping_doc = self._find_object(
+            manifest_store, test_uri, RDB2RDFTEST_MAPPING_DOC
+        )
+        output_file = self._find_object(manifest_store, test_uri, RDB2RDFTEST_OUTPUT)
         has_expected = (
             isinstance(expected_output, Literal)
             and expected_output.value == "true"
@@ -202,7 +237,10 @@ SUITES: dict[str, TestSuite] = {}
 
 
 def register_suites(project_root: str) -> None:
-    SUITES["r2rml"] = R2RMLTestSuite(os.path.join(project_root, "r2rml_test_cases"))
+    SUITES["r2rml"] = R2RMLTestSuite(
+        os.path.join(project_root, "r2rml_test_cases"),
+        os.path.join(project_root, "inversion_test_cases"),
+    )
     SUITES["rml"] = RMLTestSuite(os.path.join(project_root, "rml_io_registry"))
 
 

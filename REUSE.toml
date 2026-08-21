@@ -16,6 +16,7 @@ path = [
     "CHANGELOG.md",
     "README.md",
     "RELEASE.md",
+    "inversion_test_cases/**",
     "rmlmapper*.jar",
 ]
 SPDX-FileCopyrightText = "2026 Arcangelo Massari <arcangelo.massari@unibo.it>"
