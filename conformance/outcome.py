@@ -22,7 +22,12 @@ from kgi import (
     UnsupportedMappingError,
     analyze_mapping,
 )
-from kgi.comparison import DatabaseContent, PartialLoss, compare_databases
+from kgi.comparison import (
+    DatabaseContent,
+    PartialLoss,
+    compare_databases,
+    databases_identical,
+)
 from kgi.core import _check_for_sql_queries, _parse_mapping_store, reconstruct
 
 RDF_FORMATS = {
@@ -270,6 +275,26 @@ def evaluate_kgi_case(
     )
 
 
+def _compare_recorded_provenance(
+    source_db_url: str, dest_db_url: str, error: NonInvertibleError
+) -> CaseOutcome:
+    source_content = _db_connection.get_database_content(source_db_url)
+    dest_content = _db_connection.get_database_content(dest_db_url)
+    if databases_identical(source_content, dest_content):
+        return CaseOutcome(
+            InversionOutcome.FULLY_INVERTED,
+            message="All tables in source and destination databases are identical",
+            source_content=source_content,
+            dest_content=dest_content,
+        )
+    return CaseOutcome(
+        InversionOutcome.NON_INVERTIBLE,
+        message=f"Non-invertible mapping detected: {error}",
+        source_content=source_content,
+        dest_content=dest_content,
+    )
+
+
 def evaluate_souffle_case(
     adapter: SouffleConformanceAdapter,
     mapping_path: Path,
@@ -318,10 +343,18 @@ def evaluate_souffle_case(
             message=f"Inversion not supported: {error}",
         )
     except NonInvertibleError as error:
-        return CaseOutcome(
-            InversionOutcome.NON_INVERTIBLE,
-            message=f"Non-invertible mapping detected: {error}",
+        if not with_provenance:
+            return CaseOutcome(
+                InversionOutcome.NON_INVERTIBLE,
+                message=f"Non-invertible mapping detected: {error}",
+            )
+        adapter.run_backward(
+            shared_directory,
+            source_db_url,
+            dest_db_url,
+            with_provenance=True,
         )
+        return _compare_recorded_provenance(source_db_url, dest_db_url, error)
 
     adapter.run_backward(
         shared_directory,

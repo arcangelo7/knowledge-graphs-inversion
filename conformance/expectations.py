@@ -259,3 +259,32 @@ EXPECTATIONS: dict[TestKey, CaseOutcome] = {
         frozenset({PartialLoss.COLUMNS_LOST}),
     ),
 }
+
+SOUFFLE_PROVENANCE_EXPECTATIONS: dict[TestKey, CaseOutcome] = {
+    ("r2rml", "R2RMLTC0005a"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
+    ("r2rml", "R2RMLTC0005b"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
+    ("r2rml", "R2RMLTC0012a"): CaseOutcome(
+        InversionOutcome.PARTIALLY_INVERTED,
+        frozenset({PartialLoss.TABLES_LOST}),
+    ),
+    ("r2rml", "R2RMLTC0012b"): CaseOutcome(
+        InversionOutcome.PARTIALLY_INVERTED,
+        frozenset({PartialLoss.COLUMNS_LOST}),
+    ),
+    ("r2rml", "R2RMLTC0012e"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
+    ("r2rml", "R2RMLTC0020a"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
+    ("r2rml", "INVTC0001"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
+    ("r2rml", "INVTC0002"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
+    ("r2rml", "INVTC0003"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
+    ("r2rml", "INVTC0004"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
+    ("r2rml", "INVTC0005"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
+}
+
+
+def expected_outcome(
+    suite_id: str, test_id: str, souffle_provenance: bool = False
+) -> CaseOutcome | None:
+    key = (suite_id, test_id)
+    if souffle_provenance and key in SOUFFLE_PROVENANCE_EXPECTATIONS:
+        return SOUFFLE_PROVENANCE_EXPECTATIONS[key]
+    return EXPECTATIONS.get(key)

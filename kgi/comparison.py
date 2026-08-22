@@ -97,16 +97,27 @@ def _expected_projection(
     return projection, losses, notes
 
 
+def _table_reproduced(source: TableContent, dest: TableContent) -> bool:
+    source_frame = _frame(source)
+    return set(dest["columns"]) == set(source_frame.columns) and _rows(
+        source_frame
+    ) == _rows(_frame(dest))
+
+
+def databases_identical(
+    source_content: DatabaseContent, dest_content: DatabaseContent
+) -> bool:
+    return set(source_content) == set(dest_content) and all(
+        _table_reproduced(source_content[name], dest_content[name])
+        for name in source_content
+    )
+
+
 def compare_databases(
     source_content: DatabaseContent,
     dest_content: DatabaseContent,
     analysis: MappingAnalysis,
 ) -> tuple[bool, str, frozenset[PartialLoss]]:
-    """Check the destination against the projection the mapping predicts.
-
-    A difference the projection does not account for makes the whole comparison
-    fail, so a loss characterised in one table cannot excuse another table.
-    """
     losses: set[PartialLoss] = set()
     notes: list[str] = []
     problems: list[str] = []
@@ -130,13 +141,19 @@ def compare_databases(
 
         source_table = source_content[table_name]
         dest_table = dest_content[table_name]
+        if _table_reproduced(source_table, dest_table):
+            continue
+
+        source_frame = _frame(source_table)
+        dest_frame = _frame(dest_table)
+        dest_columns = set(dest_table["columns"])
         projection, table_losses, table_notes = _expected_projection(
-            _frame(source_table), analysis[table_name]
+            source_frame, analysis[table_name]
         )
-        if set(dest_table["columns"]) != set(projection.columns):
+        if dest_columns != set(projection.columns):
             problems.append(f"{table_name} (columns differ from the recoverable ones)")
             continue
-        if _rows(projection) != _rows(_frame(dest_table)):
+        if _rows(projection) != _rows(dest_frame):
             problems.append(f"{table_name} (data differs from the expected projection)")
             continue
         losses |= table_losses

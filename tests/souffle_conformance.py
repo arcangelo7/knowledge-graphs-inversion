@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from conformance.config import is_r2rml_case_available
-from conformance.expectations import EXPECTATIONS
+from conformance.expectations import expected_outcome
 from conformance.outcome import describe_difference, evaluate_souffle_case
 from conformance.souffle import SouffleConformanceAdapter
 from conformance.suites import R2RMLTestSuite
@@ -75,7 +75,7 @@ def test_souffle_r2rml_conformance(
         with_provenance,
     )
     mode = "provenance" if with_provenance else "rdf"
-    expected = EXPECTATIONS.get(("r2rml", test_id))
+    expected = expected_outcome("r2rml", test_id, souffle_provenance=with_provenance)
     assert observed == expected, (
         f"r2rml/{database}/{test_id}/{mode}: {describe_difference(expected, observed)}"
     )

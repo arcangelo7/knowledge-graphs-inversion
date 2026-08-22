@@ -103,3 +103,14 @@ def test_an_exact_reconstruction_reports_no_loss() -> None:
     assert equal is True
     assert losses == frozenset()
     assert message == "All tables in source and destination databases are identical"
+
+
+def test_a_column_the_graph_cannot_give_back_is_not_a_loss_when_recovered() -> None:
+    columns = ["fname", "lname", "amount"]
+    content = _content([["Bob", "Smith", "30"]], columns)
+
+    equal, message, losses = compare_databases(content, content, _analysis(PEOPLE))
+
+    assert equal is True
+    assert losses == frozenset()
+    assert message == "All tables in source and destination databases are identical"

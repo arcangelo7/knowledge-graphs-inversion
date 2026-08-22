@@ -41,6 +41,7 @@ from conformance.souffle_artifacts import (
     REVERSE_PROGRAM,
     SUPPORT_REPORT,
     SourceRelation,
+    declared_output_files,
     parse_source_relations,
     read_recovered_rows,
     write_rdf_dataset,
@@ -410,11 +411,17 @@ class SouffleConformanceAdapter:
                 shared_directory,
                 FORWARD_PROVENANCE_PROGRAM,
             )
+            declared = declared_output_files(
+                shared_directory / FORWARD_PROVENANCE_PROGRAM
+            )
             self._require_files(
                 "forward execution",
                 provenance_execution,
                 shared_directory,
-                (*FACT_FILES, *PROVENANCE_MARKER_FILES),
+                (
+                    *FACT_FILES,
+                    *(name for name in PROVENANCE_MARKER_FILES if name in declared),
+                ),
             )
         relations = parse_source_relations(shared_directory)
 

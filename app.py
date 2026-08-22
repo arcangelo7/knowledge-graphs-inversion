@@ -38,7 +38,7 @@ from conformance.config import (
     validate_engine_pair,
 )
 from conformance.database import DatabaseConnection
-from conformance.expectations import EXPECTATIONS
+from conformance.expectations import expected_outcome
 from conformance.outcome import (
     LOSS_LABELS,
     OUTCOME_LABELS,
@@ -492,9 +492,12 @@ def _case_result(
     outcome: CaseOutcome,
     raw_results: list[list[str]],
     purpose: str | bool,
+    souffle_provenance: bool,
     error_test: bool,
 ) -> dict[str, object]:
-    expected = EXPECTATIONS.get((suite.suite_id, test_id))
+    expected = expected_outcome(
+        suite.suite_id, test_id, souffle_provenance=souffle_provenance
+    )
     return {
         "status": "success",
         "test_id": test_id,
@@ -568,6 +571,7 @@ def _run_rmlmapper_kgi_test(
                 _with_database_content(outcome, source_db_url, dest_db_url),
                 raw_results,
                 metadata["purpose"],
+                souffle_provenance=False,
                 error_test=not metadata["expected_output"],
             )
         ]
@@ -678,6 +682,7 @@ def _run_souffle_souffle_test(
                 _with_database_content(outcome, source_db_url, dest_db_url),
                 raw_results,
                 metadata["purpose"],
+                souffle_provenance=with_provenance,
                 error_test=not expects_output,
             )
         )

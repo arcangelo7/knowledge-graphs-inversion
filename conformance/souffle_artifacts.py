@@ -14,6 +14,7 @@ SUPPORT_REPORT = "support.json"
 PROVENANCE_MARKER_FILES = ("ProvTriple.csv", "ProvQuad.csv")
 
 RECOVERED_DECLARATION = re.compile(r"^\.decl Recovered_(\w+)\((.*)\)$")
+OUTPUT_DECLARATION = re.compile(r'^\.output \w+\(filename="([^"]+)"')
 LOGICAL_TABLE_SUFFIX = re.compile(r"_lt\d+$")
 
 
@@ -52,6 +53,17 @@ def parse_source_relations(shared_directory: Path) -> tuple[SourceRelation, ...]
             )
         )
     return tuple(relations)
+
+
+def declared_output_files(program: Path) -> frozenset[str]:
+    return frozenset(
+        match.group(1)
+        for match in (
+            OUTPUT_DECLARATION.match(line)
+            for line in program.read_text(encoding="utf-8").splitlines()
+        )
+        if match
+    )
 
 
 def read_recovered_rows(
