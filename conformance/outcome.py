@@ -11,6 +11,9 @@ from pyoxigraph import BlankNode, Quad, RdfFormat, Store
 from conformance.database import DatabaseConnection
 from conformance.souffle import (
     Database as SouffleDatabase,
+)
+from conformance.souffle import (
+    InversionMode,
     SouffleConformanceAdapter,
     SouffleConformanceError,
     rdf_datasets_isomorphic,
@@ -305,8 +308,10 @@ def evaluate_souffle_case(
     database: SouffleDatabase,
     source_db_url: str,
     dest_db_url: str,
-    with_provenance: bool,
+    inversion_mode: InversionMode | bool,
 ) -> CaseOutcome:
+    if isinstance(inversion_mode, bool):
+        inversion_mode = "provenance" if inversion_mode else "rdf"
     try:
         adapter.run_forward(
             mapping_path, rdf_path, shared_directory, source_db_url, database
@@ -343,7 +348,7 @@ def evaluate_souffle_case(
             message=f"Inversion not supported: {error}",
         )
     except NonInvertibleError as error:
-        if not with_provenance:
+        if inversion_mode == "rdf":
             return CaseOutcome(
                 InversionOutcome.NON_INVERTIBLE,
                 message=f"Non-invertible mapping detected: {error}",
@@ -352,7 +357,7 @@ def evaluate_souffle_case(
             shared_directory,
             source_db_url,
             dest_db_url,
-            with_provenance=True,
+            inversion_mode,
         )
         return _compare_recorded_provenance(source_db_url, dest_db_url, error)
 
@@ -360,7 +365,7 @@ def evaluate_souffle_case(
         shared_directory,
         source_db_url,
         dest_db_url,
-        with_provenance=with_provenance,
+        inversion_mode,
     )
     return _compare_reconstruction(
         analysis, source_db_url, dest_db_url, allow_empty_destination=False

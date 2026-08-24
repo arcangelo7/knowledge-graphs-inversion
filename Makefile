@@ -14,6 +14,7 @@ FORWARD_ENGINE ?= rmlmapper
 INVERSION_ENGINE ?= kgi
 INTERVAL ?= 0.1
 SOUFFLE_PROVENANCE ?= false
+SOUFFLE_MODES ?= rdf,provenance
 DATABASE ?= postgresql
 KROWN_RMLMAPPER_IMAGE = kgconstruct/rmlmapper:v8.1.0
 KROWN_SOUFFLE_IMAGE = alloka/souffle:v1.0.0
@@ -21,6 +22,7 @@ CONFORMANCE_SOUFFLE_IMAGE = alloka/souffle:v1.0.0@sha256:0e9288ca6f7a63faf93f435
 MAVEN_IMAGE = maven:3.9.11-eclipse-temurin-17
 PUBLIC_SUBMODULES = KROWN R2RML2Datalog-Translator gtfs-bench r2rml_test_cases rml_io_registry
 REVERSE_SUBMODULE = ReverseR2RML
+REVERSE_SCRIPT ?= $(abspath $(REVERSE_SUBMODULE)/reverseR2RML.py)
 R2RML_TRANSLATOR_SOURCE = R2RML2Datalog-Translator
 R2RML_TRANSLATOR_COMMIT = $(word 2,$(shell git ls-files --stage $(R2RML_TRANSLATOR_SOURCE)))
 R2RML_TRANSLATOR_BUILD = build/r2rml2datalog-translator-$(R2RML_TRANSLATOR_COMMIT)
@@ -121,7 +123,9 @@ test-conformance: validate-conformance-options
 		$(MAKE) translator-assets; \
 		uv run pytest tests/souffle_conformance.py -v --database=$(DATABASE) \
 			--souffle-jar="$(abspath $(R2RML_TRANSLATOR_JAR))" \
-			--souffle-library="$(abspath $(R2RML_FUNCTOR_LIBRARY))"; \
+			--souffle-library="$(abspath $(R2RML_FUNCTOR_LIBRARY))" \
+			--reverse-script="$(REVERSE_SCRIPT)" \
+			--souffle-modes="$(SOUFFLE_MODES)"; \
 	else \
 		uv run pytest tests/test_conformance.py -v --database=$(DATABASE); \
 	fi

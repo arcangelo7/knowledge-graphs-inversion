@@ -49,6 +49,7 @@ from conformance.souffle_artifacts import (
 
 Database = Literal["postgresql", "mysql"]
 ExecutionMode = Literal["docker", "local"]
+InversionMode = Literal["rdf", "provenance", "hybrid"]
 Stage = Literal[
     "forward generation",
     "forward execution",
@@ -366,22 +367,32 @@ class SouffleConformanceAdapter:
         shared_directory: Path,
         source_db_url: str,
         destination_db_url: str,
-        with_provenance: bool,
+        inversion_mode: InversionMode,
     ) -> None:
+        uses_sidecars = inversion_mode != "rdf"
         generation_command = (
             "python3",
             self._reverse_script_path(),
             self._shared_path(shared_directory, FORWARD_PROGRAM),
             self._shared_path(
                 shared_directory,
-                FORWARD_PROVENANCE_PROGRAM if with_provenance else REVERSE_PROGRAM,
+                FORWARD_PROVENANCE_PROGRAM if uses_sidecars else REVERSE_PROGRAM,
             ),
             "--mode",
-            "forward" if with_provenance else "reverse",
+            {
+                "rdf": "reverse",
+                "provenance": "forward",
+                "hybrid": "hybrid",
+            }[inversion_mode],
         )
-        if with_provenance:
+        if inversion_mode == "provenance":
             generation_command += (
                 "--with-provenance",
+                "--reverse-output",
+                self._shared_path(shared_directory, REVERSE_PROGRAM),
+            )
+        elif inversion_mode == "hybrid":
+            generation_command += (
                 "--reverse-output",
                 self._shared_path(shared_directory, REVERSE_PROGRAM),
             )
@@ -395,7 +406,7 @@ class SouffleConformanceAdapter:
             generation_command,
         )
         generated_programs = (REVERSE_PROGRAM, SUPPORT_REPORT)
-        if with_provenance:
+        if uses_sidecars:
             generated_programs = (FORWARD_PROVENANCE_PROGRAM, *generated_programs)
         self._require_files(
             "inverse generation",
@@ -405,7 +416,7 @@ class SouffleConformanceAdapter:
             require_nonempty=True,
         )
 
-        if with_provenance:
+        if uses_sidecars:
             provenance_execution = self._run_souffle(
                 "forward execution",
                 shared_directory,
