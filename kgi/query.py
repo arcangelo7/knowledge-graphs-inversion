@@ -385,68 +385,49 @@ def term_map_is_opaque(
     )
 
 
-def _predicate_object_term_references(
-    rule: pd.Series,
-) -> tuple[set[str], set[str]]:
-    triple = QueryTriple(rule)
-    opaque: set[str] = set()
-    exposed: set[str] = set()
-    for references, map_type, map_value, term_type, references_template in (
-        (
-            triple.predicate_references,
-            rule["predicate_map_type"],
-            rule["predicate_map_value"],
-            RML_IRI,
-            rule["predicate_references_template"],
-        ),
-        (
-            triple.object_references,
-            rule["object_map_type"],
-            rule["object_map_value"],
-            rule["object_termtype"],
-            rule["object_references_template"],
-        ),
+def _position_term_type(rule: pd.Series, position: str) -> object:
+    if position == "predicate":
+        return RML_IRI
+    if position == "graph":
+        return None
+    return rule[f"{position}_termtype"]
+
+
+def _position_references(rule: pd.Series, position: str) -> tuple[set[str], set[str]]:
+    """Split the references of one term map into the opaque ones and the exposed ones."""
+    references = {str(value) for value in rule[f"{position}_references"]}
+    if term_map_is_opaque(
+        rule[f"{position}_map_type"],
+        rule[f"{position}_map_value"],
+        _position_term_type(rule, position),
+        rule[f"{position}_references_template"],
     ):
-        target = (
-            opaque
-            if term_map_is_opaque(map_type, map_value, term_type, references_template)
-            else exposed
-        )
-        target.update(references)
-    return opaque, exposed
+        return references, set()
+    return set(), references
+
+
+def _exposed_references(rule: pd.Series, positions: tuple[str, ...]) -> set[str]:
+    return set().union(
+        *(_position_references(rule, position)[1] for position in positions)
+    )
 
 
 def non_subject_term_references(rule: pd.Series) -> tuple[set[str], set[str]]:
-    opaque, exposed = _predicate_object_term_references(rule)
-    triple = QueryTriple(rule)
-    graph_target = (
-        opaque
-        if term_map_is_opaque(
-            rule["graph_map_type"],
-            rule["graph_map_value"],
-            None,
-            rule["graph_references_template"],
-        )
-        else exposed
-    )
-    graph_target.update(triple.graph_references)
+    opaque: set[str] = set()
+    exposed: set[str] = set()
+    for position in ("predicate", "object", "graph"):
+        position_opaque, position_exposed = _position_references(rule, position)
+        opaque.update(position_opaque)
+        exposed.update(position_exposed)
     return opaque, exposed
 
 
 def non_graph_exposed_references(rule: pd.Series) -> set[str]:
-    subject_references = QueryTriple(rule).subject_references
-    subject_exposed = (
-        set()
-        if term_map_is_opaque(
-            rule["subject_map_type"],
-            rule["subject_map_value"],
-            rule["subject_termtype"],
-            rule["subject_references_template"],
-        )
-        else subject_references
-    )
-    _, predicate_object_exposed = _predicate_object_term_references(rule)
-    return subject_exposed | predicate_object_exposed
+    return _exposed_references(rule, ("subject", "predicate", "object"))
+
+
+def non_object_exposed_references(rule: pd.Series) -> set[str]:
+    return _exposed_references(rule, ("subject", "predicate", "graph"))
 
 
 def _subject_group_references(subject_rules: pd.DataFrame) -> tuple[set[str], set[str]]:

@@ -185,6 +185,31 @@ def test_indistinguishable_subject_templates_lose_their_exclusive_columns(
     assert sorted(reconstructed.values.tolist()) == [["a"], ["x"]]
 
 
+def test_indistinguishable_object_maps_lose_their_exclusive_columns() -> None:
+    mappings = pd.DataFrame([_rule("p1", "p2"), _rule("p1", "p3")])
+    insert_columns(mappings)
+
+    assert _unrecoverable_references(mappings) == {"data": frozenset({"p2", "p3"})}
+    select_variables, body = _graph_query(mappings)
+
+    assert select_variables == ["?p1"]
+    assert body == (
+        "?p1_uri <http://example.com/p1> ?p2_object .\n"
+        "?p1_uri <http://example.com/p1> ?p3_object .\n"
+        "FILTER(REGEX(STR(?p1_uri), 'http://example.com/table/([^/]*)'))\n"
+        "BIND(STRAFTER(STR(?p1_uri), 'http://example.com/table/') as ?p1)}"
+    )
+
+    distinguished_by_predicate = pd.DataFrame(
+        [_predicate_rule("p1", "p2"), _predicate_rule("p1", "p3")]
+    )
+    insert_columns(distinguished_by_predicate)
+
+    assert _unrecoverable_references(distinguished_by_predicate) == {
+        "data": frozenset()
+    }
+
+
 def test_indistinguishable_graph_templates_lose_their_exclusive_columns() -> None:
     mappings = pd.DataFrame(
         [

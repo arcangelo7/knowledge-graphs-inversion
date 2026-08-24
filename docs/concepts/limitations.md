@@ -33,9 +33,11 @@ When a subject template maps multiple source rows to the same IRI, those rows co
 
 Some mappings put a column's values in the graph without recording which column they came from. The values are there, but nothing says where they belong, so the algorithm leaves those columns out of the reconstruction instead of filling them with values that could be wrong. The other columns are reconstructed as usual. When a table has no column left, inversion stops with `NonInvertibleError`.
 
-Three mapping patterns produce such columns.
+Four mapping patterns produce such columns.
 
 *Indistinguishable subject templates.* When several triples maps for the same source table use compatible subject templates and emit the same predicate-object patterns, a subject-only column is unassignable. For example, if one triples map uses `http://example.com/{p4}` as its subject and no triple elsewhere exposes `p4`, the graph contains several subjects with the same observable literals and no RDF-level discriminator that identifies which one represents `p4`.
+
+*Indistinguishable object maps.* Two object maps that hang off the same subject and the same predicate, and that build terms of the same shape, are interchangeable too. For example, `http://example.org/friend/{p2}` and `http://example.org/friend/{p3}` under one predicate produce two IRIs, and the triples they belong to differ in nothing else, so neither IRI can be traced back to `p2` or `p3`. Two column-valued object maps behave the same way, because their literals carry no sign of the column that produced them. Columns that only such object maps expose are unassignable. Object maps that a language tag, a datatype, a graph map or a different template pattern tells apart are inverted normally.
 
 *Indistinguishable graph maps.* Graph maps that build named-graph IRIs from the same pattern, such as `http://example.org/graph{p2}` and `http://example.org/graph{p3}`, are interchangeable: a graph IRI does not say which graph map produced it. Columns that only those graph maps expose are unassignable. Graph maps with distinguishable patterns are inverted normally, one `GRAPH` clause each.
 

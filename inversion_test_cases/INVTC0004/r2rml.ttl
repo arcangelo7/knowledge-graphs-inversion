@@ -3,13 +3,16 @@
 @base <http://example.com/> .
 
 <#TriplesMap> a rr:TriplesMap;
-    rr:logicalTable [ rr:tableName "\"ColumnIri\"" ];
-    rr:subjectMap [
-        rr:column "\"PersonIri\"";
-        rr:termType rr:IRI
+    rr:logicalTable [ rr:tableName "\"GraphMaps\"" ];
+    rr:subjectMap [ rr:template "person/{\"ID\"}" ];
+    rr:predicateObjectMap [
+        rr:predicate ex:name;
+        rr:objectMap [ rr:column "\"Name\"" ];
+        rr:graphMap [ rr:template "graph/{\"FirstGraph\"}" ]
     ];
     rr:predicateObjectMap [
         rr:predicate ex:name;
-        rr:objectMap [ rr:column "\"Name\"" ]
+        rr:objectMap [ rr:column "\"Name\"" ];
+        rr:graphMap [ rr:template "graph/{\"SecondGraph\"}" ]
     ];
 .
