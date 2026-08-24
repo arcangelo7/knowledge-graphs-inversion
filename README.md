@@ -49,13 +49,13 @@ Open [http://localhost:5000](http://localhost:5000), then choose a database and 
 
 ## Testing
 
-Conformance tests require [Docker](https://www.docker.com/) to run the databases and Java 21 or newer to run RMLMapper. PostgreSQL runs 127 catalog cases: 62 official R2RML cases, six inversion-limit cases, and 59 RML cases:
+Conformance tests require [Docker](https://www.docker.com/) to run the databases and Java 21 or newer to run RMLMapper. PostgreSQL runs 128 catalog cases: 62 official R2RML cases, seven inversion-limit cases, and 59 RML cases:
 
 ```bash
 make test-conformance
 ```
 
-MySQL 9.7.1 runs 66 R2RML cases: 60 official cases and the six inversion-limit cases. `R2RMLTC0002f` and `R2RMLTC0018a` run only with PostgreSQL. The RML cases are skipped because the RML Core RDB test suite does not yet provide MySQL variants:
+MySQL 9.7.1 runs 67 R2RML cases: 60 official cases and the seven inversion-limit cases. `R2RMLTC0002f` and `R2RMLTC0018a` run only with PostgreSQL. The RML cases are skipped because the RML Core RDB test suite does not yet provide MySQL variants:
 
 ```bash
 make test-conformance DATABASE=mysql

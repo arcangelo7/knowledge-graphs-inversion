@@ -132,7 +132,11 @@ EXPECTATIONS: dict[TestKey, CaseOutcome] = {
         InversionOutcome.PARTIALLY_INVERTED,
         frozenset({PartialLoss.COLUMNS_LOST}),
     ),
-    ("r2rml", "INVTC0006"): CaseOutcome(InversionOutcome.NON_INVERTIBLE),
+    ("r2rml", "INVTC0006"): CaseOutcome(
+        InversionOutcome.PARTIALLY_INVERTED,
+        frozenset({PartialLoss.COLUMNS_LOST}),
+    ),
+    ("r2rml", "INVTC0007"): CaseOutcome(InversionOutcome.NON_INVERTIBLE),
     ("rml", "RMLTC0000-RDB"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
     ("rml", "RMLTC0001a-RDB"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
     ("rml", "RMLTC0001b-RDB"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
@@ -261,23 +265,13 @@ EXPECTATIONS: dict[TestKey, CaseOutcome] = {
 }
 
 SOUFFLE_PROVENANCE_EXPECTATIONS: dict[TestKey, CaseOutcome] = {
-    ("r2rml", "R2RMLTC0005a"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
-    ("r2rml", "R2RMLTC0005b"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
-    ("r2rml", "R2RMLTC0012a"): CaseOutcome(
-        InversionOutcome.PARTIALLY_INVERTED,
-        frozenset({PartialLoss.TABLES_LOST}),
-    ),
-    ("r2rml", "R2RMLTC0012b"): CaseOutcome(
-        InversionOutcome.PARTIALLY_INVERTED,
-        frozenset({PartialLoss.COLUMNS_LOST}),
-    ),
-    ("r2rml", "R2RMLTC0012e"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
     ("r2rml", "R2RMLTC0020a"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
     ("r2rml", "INVTC0001"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
     ("r2rml", "INVTC0002"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
     ("r2rml", "INVTC0003"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
     ("r2rml", "INVTC0004"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
     ("r2rml", "INVTC0005"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
+    ("r2rml", "INVTC0006"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
 }
 
 

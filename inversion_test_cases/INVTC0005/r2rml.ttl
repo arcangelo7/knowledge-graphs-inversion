@@ -3,16 +3,13 @@
 @base <http://example.com/> .
 
 <#TriplesMap> a rr:TriplesMap;
-    rr:logicalTable [ rr:tableName "\"StudentSports\"" ];
-    rr:subjectMap [ rr:template "http://example.com/student/{\"ID\"}/{\"Name\"}" ];
+    rr:logicalTable [ rr:tableName "\"ColumnIri\"" ];
+    rr:subjectMap [
+        rr:column "\"PersonIri\"";
+        rr:termType rr:IRI
+    ];
     rr:predicateObjectMap [
-        rr:predicate ex:sameSportAs;
-        rr:objectMap [
-            rr:parentTriplesMap <#TriplesMap>;
-            rr:joinCondition [
-                rr:child "\"Sport\"";
-                rr:parent "\"Sport\""
-            ]
-        ]
+        rr:predicate ex:name;
+        rr:objectMap [ rr:column "\"Name\"" ]
     ];
 .

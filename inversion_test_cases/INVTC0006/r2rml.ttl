@@ -1,7 +1,18 @@
 @prefix rr: <http://www.w3.org/ns/r2rml#> .
+@prefix ex: <http://example.com/> .
 @base <http://example.com/> .
 
 <#TriplesMap> a rr:TriplesMap;
-    rr:logicalTable [ rr:tableName "\"SilentTriplesMap\"" ];
-    rr:subjectMap [ rr:template "silent/{\"ID\"}" ];
+    rr:logicalTable [ rr:tableName "\"StudentSports\"" ];
+    rr:subjectMap [ rr:template "http://example.com/student/{\"ID\"}/{\"Name\"}" ];
+    rr:predicateObjectMap [
+        rr:predicate ex:sameSportAs;
+        rr:objectMap [
+            rr:parentTriplesMap <#TriplesMap>;
+            rr:joinCondition [
+                rr:child "\"Sport\"";
+                rr:parent "\"Sport\""
+            ]
+        ]
+    ];
 .

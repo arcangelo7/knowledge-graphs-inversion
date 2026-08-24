@@ -65,6 +65,7 @@ from kgi.exceptions import (
 )
 from kgi.query import (
     non_graph_exposed_references,
+    non_object_exposed_references,
     non_subject_term_references,
     retrieve_data,
     subject_term_signature,
@@ -471,6 +472,47 @@ def _ambiguous_subject_references(source_rules: pd.DataFrame) -> set[str]:
     return ambiguous
 
 
+def _ambiguous_object_references(source_rules: pd.DataFrame) -> set[str]:
+    """Columns reachable only through object maps that cannot be told apart.
+
+    Object maps hanging off the same subject, predicate and graph map and building
+    terms of the same shape are interchangeable, so a value found in one of them
+    could belong to any of the columns those object maps reference.
+    """
+    context_columns = (
+        "predicate_map_type",
+        "predicate_map_value",
+        "graph_map_type",
+        "graph_map_value",
+        "object_termtype",
+        "object_references_template",
+        "lang_datatype",
+    )
+    observable_refs: set[str] = set()
+    buckets: dict[tuple[str, ...], dict[str, set[str]]] = {}
+    for _, rule in source_rules.iterrows():
+        observable_refs.update(non_object_exposed_references(rule))
+        if rule["object_map_type"] not in (RML_TEMPLATE, RML_REFERENCE):
+            continue
+        object_refs = _reference_set(rule["object_references"])
+        if not object_refs:
+            continue
+        key = subject_term_signature(rule) + tuple(
+            _signature_value(rule[column]) for column in context_columns
+        )
+        object_maps = buckets.setdefault(key, {})
+        object_maps.setdefault(
+            _signature_value(rule["object_map_value"]), set()
+        ).update(object_refs)
+
+    ambiguous: set[str] = set()
+    identified_refs: set[str] = set()
+    for object_maps in buckets.values():
+        target = ambiguous if len(object_maps) > 1 else identified_refs
+        target.update(*object_maps.values())
+    return ambiguous - observable_refs - identified_refs
+
+
 def _ambiguous_graph_references(source_rules: pd.DataFrame) -> set[str]:
     """Columns reachable only through graph maps that cannot be told apart.
 
@@ -520,6 +562,7 @@ def _unrecoverable_references(mappings: pd.DataFrame) -> dict[str, frozenset[str
     unrecoverable: dict[str, frozenset[str]] = {}
     for table_name, source_rules in mappings.groupby("logical_source_value"):
         ambiguous = _ambiguous_subject_references(source_rules)
+        ambiguous.update(_ambiguous_object_references(source_rules))
         ambiguous.update(_ambiguous_graph_references(source_rules))
 
         opaque: set[str] = set()

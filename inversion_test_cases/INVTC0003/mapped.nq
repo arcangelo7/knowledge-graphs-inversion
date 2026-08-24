@@ -1,2 +1,3 @@
-<http://example.com/person/1> <http://example.com/name> "Alice" <http://example.com/graph/first> .
-<http://example.com/person/1> <http://example.com/name> "Alice" <http://example.com/graph/second> .
+<http://example.com/person/1> <http://example.com/knows> <http://example.com/friend/bob> .
+<http://example.com/person/1> <http://example.com/knows> <http://example.com/friend/carol> .
+<http://example.com/person/1> <http://example.com/name> "Alice" .

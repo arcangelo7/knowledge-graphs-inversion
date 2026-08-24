@@ -42,17 +42,17 @@
 .
 
 <#d-inv-003> a rdb2rdftest:DataBase;
-    dcterms:title "Indistinguishable graph maps";
+    dcterms:title "Indistinguishable object maps";
     dcterms:identifier "D-INV-003";
     rdb2rdftest:sqlScriptFile "d-inv-003.sql";
     rdb2rdftest:relatedTestCase <#INVTC0003>;
 .
 
 <#INVTC0003> a rdb2rdftest:R2RML;
-    dcterms:title "Indistinguishable graph maps";
+    dcterms:title "Indistinguishable object maps";
     dcterms:identifier "INVTC0003";
-    test:purpose "Tests graph-only columns that compatible graph templates cannot attribute to their source term map";
-    test:specificationReference "#dfn-graph-map";
+    test:purpose "Tests object-only columns that compatible object maps under one predicate cannot attribute to their source term map";
+    test:specificationReference "#dfn-object-map";
     test:reviewStatus test:unreviewed;
     rdb2rdftest:database <#d-inv-003>;
     rdb2rdftest:output "mapped.nq";
@@ -61,17 +61,17 @@
 .
 
 <#d-inv-004> a rdb2rdftest:DataBase;
-    dcterms:title "Column-valued IRI term map";
+    dcterms:title "Indistinguishable graph maps";
     dcterms:identifier "D-INV-004";
     rdb2rdftest:sqlScriptFile "d-inv-004.sql";
     rdb2rdftest:relatedTestCase <#INVTC0004>;
 .
 
 <#INVTC0004> a rdb2rdftest:R2RML;
-    dcterms:title "Column converted directly into an IRI";
+    dcterms:title "Indistinguishable graph maps";
     dcterms:identifier "INVTC0004";
-    test:purpose "Tests a column whose value cannot be separated from the base IRI after forward mapping";
-    test:specificationReference "#from-column";
+    test:purpose "Tests graph-only columns that compatible graph templates cannot attribute to their source term map";
+    test:specificationReference "#dfn-graph-map";
     test:reviewStatus test:unreviewed;
     rdb2rdftest:database <#d-inv-004>;
     rdb2rdftest:output "mapped.nq";
@@ -80,17 +80,17 @@
 .
 
 <#d-inv-005> a rdb2rdftest:DataBase;
-    dcterms:title "Join key absent from RDF terms";
+    dcterms:title "Column-valued IRI term map";
     dcterms:identifier "D-INV-005";
     rdb2rdftest:sqlScriptFile "d-inv-005.sql";
     rdb2rdftest:relatedTestCase <#INVTC0005>;
 .
 
 <#INVTC0005> a rdb2rdftest:R2RML;
-    dcterms:title "Join key never emitted as an RDF term";
+    dcterms:title "Column converted directly into an IRI";
     dcterms:identifier "INVTC0005";
-    test:purpose "Tests a self-join whose key controls relationships but is absent from every generated RDF term";
-    test:specificationReference "#dfn-join-condition";
+    test:purpose "Tests a column whose value cannot be separated from the base IRI after forward mapping";
+    test:specificationReference "#from-column";
     test:reviewStatus test:unreviewed;
     rdb2rdftest:database <#d-inv-005>;
     rdb2rdftest:output "mapped.nq";
@@ -99,19 +99,38 @@
 .
 
 <#d-inv-006> a rdb2rdftest:DataBase;
-    dcterms:title "Triples Map with no predicate-object maps";
+    dcterms:title "Join key absent from RDF terms";
     dcterms:identifier "D-INV-006";
     rdb2rdftest:sqlScriptFile "d-inv-006.sql";
     rdb2rdftest:relatedTestCase <#INVTC0006>;
 .
 
 <#INVTC0006> a rdb2rdftest:R2RML;
-    dcterms:title "Triples Map without a predicate-object map";
+    dcterms:title "Join key never emitted as an RDF term";
     dcterms:identifier "INVTC0006";
+    test:purpose "Tests a self-join whose key controls relationships but is absent from every generated RDF term";
+    test:specificationReference "#dfn-join-condition";
+    test:reviewStatus test:unreviewed;
+    rdb2rdftest:database <#d-inv-006>;
+    rdb2rdftest:output "mapped.nq";
+    rdb2rdftest:hasExpectedOutput true;
+    rdb2rdftest:mappingDocument "r2rml.ttl";
+.
+
+<#d-inv-007> a rdb2rdftest:DataBase;
+    dcterms:title "Triples Map with no predicate-object maps";
+    dcterms:identifier "D-INV-007";
+    rdb2rdftest:sqlScriptFile "d-inv-007.sql";
+    rdb2rdftest:relatedTestCase <#INVTC0007>;
+.
+
+<#INVTC0007> a rdb2rdftest:R2RML;
+    dcterms:title "Triples Map without a predicate-object map";
+    dcterms:identifier "INVTC0007";
     test:purpose "Tests a non-empty logical table whose Triples Map generates no triples";
     test:specificationReference "#dfn-triples-map";
     test:reviewStatus test:unreviewed;
-    rdb2rdftest:database <#d-inv-006>;
+    rdb2rdftest:database <#d-inv-007>;
     rdb2rdftest:output "mapped.nq";
     rdb2rdftest:hasExpectedOutput true;
     rdb2rdftest:mappingDocument "r2rml.ttl";
