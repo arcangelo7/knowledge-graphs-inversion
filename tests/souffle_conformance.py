@@ -52,8 +52,7 @@ def test_souffle_r2rml_conformance(
     pytestconfig: pytest.Config,
 ) -> None:
     selected_modes = {
-        mode.strip()
-        for mode in str(pytestconfig.getoption("souffle_modes")).split(",")
+        mode.strip() for mode in str(pytestconfig.getoption("souffle_modes")).split(",")
     }
     if inversion_mode not in selected_modes:
         pytest.skip(f"Soufflé {inversion_mode} mode not selected")
