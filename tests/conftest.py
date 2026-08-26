@@ -89,6 +89,16 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default="",
         help="functor library used by Soufflé conformance tests",
     )
+    parser.addoption(
+        "--reverse-script",
+        default="",
+        help="ReverseR2RML script used by Soufflé conformance tests",
+    )
+    parser.addoption(
+        "--souffle-modes",
+        default="rdf,provenance",
+        help="comma-separated Soufflé inversion modes",
+    )
 
 
 @pytest.fixture(scope="session")
