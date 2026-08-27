@@ -63,6 +63,7 @@ from benchmarks.krown_stats import (
 from benchmarks.krown_validator import KrownValidator
 from benchmarks.souffle_inversion import (
     SouffleInversionError,
+    SouffleMode,
     attach_database_to_krown_network,
     copy_souffle_files,
     inversion_input_files,
@@ -236,7 +237,7 @@ def generate_scenario(
     scenarios_root: Path,
     data_generator_dir: Path,
     resource: str,
-    with_souffle_provenance: bool,
+    souffle_mode: SouffleMode,
 ) -> Path:
     if scenarios_root.exists():
         shutil.rmtree(scenarios_root)
@@ -280,7 +281,7 @@ def generate_scenario(
             f"Unexpected generated scenario: expected={scenario.generated_name}, "
             f"actual={scenario_path.name}"
         )
-    if with_souffle_provenance:
+    if souffle_mode != "rdf":
         metadata_file = metadata_files[0]
         metadata = cast(
             dict[str, object],
@@ -291,7 +292,7 @@ def generate_scenario(
         if len(mapping_steps) != 1:
             raise ValueError("Expected one KROWN mapping step")
         mapping_steps[0]["resource"] = "ReverseSouffle"
-        mapping_steps[0]["command"] = "execute_forward_provenance"
+        mapping_steps[0]["command"] = f"execute_forward_{souffle_mode}"
         metadata_file.write_text(
             json.dumps(metadata, indent=2) + "\n",
             encoding="utf-8",
@@ -346,7 +347,12 @@ class ScenarioOperations:
         matching_steps = [
             step
             for step in self._metadata_steps()
-            if step["command"] in ("execute_mapping", "execute_forward_provenance")
+            if step["command"]
+            in (
+                "execute_mapping",
+                "execute_forward_provenance",
+                "execute_forward_hybrid",
+            )
         ]
         if len(matching_steps) != 1:
             raise ValueError("Expected one mapping step in KROWN metadata")
@@ -533,7 +539,7 @@ class ScenarioOperations:
     def backward_souffle(
         self,
         souffle_directory: Path,
-        with_provenance: bool,
+        souffle_mode: SouffleMode,
     ) -> None:
         """Invert with the Datalog approach of the ReverseR2RML submodule.
 
@@ -545,7 +551,7 @@ class ScenarioOperations:
         copy_souffle_files(
             souffle_directory,
             self.shared_dir,
-            inversion_input_files(souffle_directory, with_provenance),
+            inversion_input_files(souffle_directory, souffle_mode),
         )
         resource = reverse_souffle_resource(project_root)(
             str(self.scenario_path / "data"),
@@ -558,7 +564,7 @@ class ScenarioOperations:
             self.mapping_file.name,
             "out.nt",
             "ntriples",
-            with_provenance=with_provenance,
+            souffle_mode=souffle_mode,
             support_report=SUPPORT_REPORT,
             rdb_username=self.database.username,
             rdb_password=self.database.password,
@@ -588,12 +594,12 @@ class ScenarioOperations:
         self,
         souffle_directory: Path,
         destination: Path,
-        with_provenance: bool,
+        souffle_mode: SouffleMode,
     ) -> None:
         copy_souffle_files(
             souffle_directory,
             destination,
-            inversion_input_files(souffle_directory, with_provenance),
+            inversion_input_files(souffle_directory, souffle_mode),
         )
         recovered_files = tuple(
             relation.recovered_file
@@ -679,15 +685,15 @@ class KrownBenchmarkRunner:
         scenario_name: str | None,
         forward_engine: ForwardEngine = "rmlmapper",
         inversion_engine: InversionEngine = "kgi",
-        souffle_provenance: bool = False,
+        souffle_mode: SouffleMode = "rdf",
         cleanup_tables: bool = True,
         resume_session: Path | None = None,
     ):
         if inversion_engine == "souffle" and forward_engine != "souffle":
             raise ValueError("Soufflé inversion requires Soufflé as the forward engine")
-        if souffle_provenance and inversion_engine != "souffle":
+        if souffle_mode != "rdf" and inversion_engine != "souffle":
             raise ValueError(
-                "Soufflé provenance requires Soufflé as the inversion engine"
+                "Soufflé provenance modes require Soufflé as the inversion engine"
             )
         self.project_root = Path(__file__).resolve().parent.parent
         self.data_generator_dir = self.project_root / "KROWN" / "data-generator"
@@ -698,7 +704,7 @@ class KrownBenchmarkRunner:
         self.forward_engine = forward_engine
         self.forward_definition = FORWARD_ENGINES[forward_engine]
         self.inversion_engine = inversion_engine
-        self.souffle_provenance = souffle_provenance
+        self.souffle_mode: SouffleMode = souffle_mode
         self.krown_commit = _git_commit(self.project_root / "KROWN")
         self.reverse_r2rml_commit = (
             _git_commit(self.project_root / "ReverseR2RML")
@@ -721,7 +727,7 @@ class KrownBenchmarkRunner:
             self.timestamp = int(time.time())
             self.session_dir = self.results_dir / (
                 f"krown_{self.timestamp}_{self.mode}_"
-                f"{self.forward_engine}_{self.inversion_engine}"
+                f"{self.forward_engine}_{self.inversion_engine}_{self.souffle_mode}"
             )
             self.measured_runs: dict[str, list[dict[str, object]]] = {}
         else:
@@ -775,7 +781,10 @@ class KrownBenchmarkRunner:
             )
 
     def _expected_outcome(self, scenario: KrownScenario) -> str:
-        if self.souffle_provenance and scenario.generator == "Mappings":
+        if (
+            self.souffle_mode in ("provenance", "hybrid")
+            and scenario.generator == "Mappings"
+        ):
             return "PARTIAL"
         return scenario.expected_outcome
 
@@ -803,7 +812,7 @@ class KrownBenchmarkRunner:
             "sample_interval_seconds": self.sample_interval,
             "forward_engine": self.forward_engine,
             "inversion_engine": self.inversion_engine,
-            "souffle_provenance": self.souffle_provenance,
+            "souffle_mode": self.souffle_mode,
             "krown_commit": self.krown_commit,
             "reverse_r2rml_commit": self.reverse_r2rml_commit,
         }
@@ -813,7 +822,7 @@ class KrownBenchmarkRunner:
             "sample_interval_seconds": payload["sample_interval_seconds"],
             "forward_engine": payload["forward_engine"],
             "inversion_engine": payload["inversion_engine"],
-            "souffle_provenance": payload["souffle_provenance"],
+            "souffle_mode": payload["souffle_mode"],
             "krown_commit": provenance["krown_commit"],
             "reverse_r2rml_commit": provenance["reverse_r2rml_commit"],
         }
@@ -1200,12 +1209,14 @@ class KrownBenchmarkRunner:
                 raise error
             if self.forward_definition.writes_facts:
                 souffle_files = FACT_FILES
-                if self.souffle_provenance:
+                if self.souffle_mode != "rdf":
                     souffle_files = (
                         FORWARD_PROGRAM,
                         FORWARD_PROVENANCE_PROGRAM,
                         REVERSE_PROGRAM,
-                        *inversion_input_files(operations.shared_dir, True),
+                        *inversion_input_files(
+                            operations.shared_dir, self.souffle_mode
+                        ),
                     )
                 preserve_souffle_files(
                     operations.shared_dir,
@@ -1345,7 +1356,7 @@ class KrownBenchmarkRunner:
             if self.inversion_engine == "souffle":
                 operations.backward_souffle(
                     cast(Path, forward.souffle_directory),
-                    self.souffle_provenance,
+                    self.souffle_mode,
                 )
             else:
                 self.run_stage(
@@ -1370,7 +1381,7 @@ class KrownBenchmarkRunner:
             operations.preserve_souffle_artifacts(
                 cast(Path, forward.souffle_directory),
                 run_path,
-                self.souffle_provenance,
+                self.souffle_mode,
             )
 
         inversion_time = read_step_duration(run_path / "metrics.csv", 1)
@@ -1477,7 +1488,7 @@ class KrownBenchmarkRunner:
             "mode": self.mode,
             "forward_engine": self.forward_engine,
             "inversion_engine": self.inversion_engine,
-            "souffle_provenance": self.souffle_provenance,
+            "souffle_mode": self.souffle_mode,
             "measurement_scope": "system",
             "sample_interval_seconds": self.sample_interval,
             "sparql_engine": SPARQL_ENGINE,
@@ -1755,7 +1766,7 @@ class KrownBenchmarkRunner:
                         self.scenarios_root,
                         self.data_generator_dir,
                         self.forward_definition.resource,
-                        self.souffle_provenance,
+                        self.souffle_mode,
                     )
                     operations = ScenarioOperations(
                         scenario, scenario_path, self.database
@@ -1882,14 +1893,6 @@ def parse_sample_interval(value: str) -> float:
     return parsed
 
 
-def parse_boolean(value: str) -> bool:
-    if value == "true":
-        return True
-    if value == "false":
-        return False
-    raise argparse.ArgumentTypeError("Value must be true or false")
-
-
 def parse_suites(value: str) -> tuple[str, ...]:
     if value == "all":
         return SUITES
@@ -1949,10 +1952,10 @@ def _benchmark_main(arguments: list[str]) -> int:
         help="Inversion engine: kgi (SPARQL) or souffle (Datalog)",
     )
     parser.add_argument(
-        "--souffle-provenance",
-        type=parse_boolean,
-        default=False,
-        help="Use column provenance for Soufflé inversion: true or false",
+        "--souffle-mode",
+        choices=("rdf", "provenance", "hybrid"),
+        default="rdf",
+        help="Soufflé inversion input: rdf, provenance, or hybrid",
     )
     args = parser.parse_args(arguments)
     try:
@@ -1964,7 +1967,7 @@ def _benchmark_main(arguments: list[str]) -> int:
             scenario_name=args.scenario,
             forward_engine=args.forward_engine,
             inversion_engine=args.inversion_engine,
-            souffle_provenance=args.souffle_provenance,
+            souffle_mode=cast(SouffleMode, args.souffle_mode),
             resume_session=args.resume,
         )
     except ValueError as error:

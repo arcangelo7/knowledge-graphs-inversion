@@ -34,8 +34,9 @@ The Makefile exposes these options:
 | `SUITES` | `all` or a comma-separated subset of `raw`, `mappings`, `named-graphs`, `joins` | `all` |
 | `SCENARIO` | Exact generated scenario name | Not set |
 | `RESUME` | Directory of an interrupted benchmark session | Not set |
-| `FORWARD_ENGINE` | `rmlmapper`, `morphkgc` | `rmlmapper` |
-| `INVERSION_ENGINE` | `kgi` | `kgi` |
+| `FORWARD_ENGINE` | `rmlmapper`, `morphkgc`, `souffle` | `rmlmapper` |
+| `INVERSION_ENGINE` | `kgi`, `souffle` | `kgi` |
+| `SOUFFLE_MODE` | `rdf`, `provenance`, `hybrid` | `rdf` |
 | `INTERVAL` | Positive number of seconds between system metric samples | `0.1` |
 
 `forward` measures materialization only. `backward` measures inversion after an unmeasured materialization prepares its input. `roundtrip` measures paired materialization and inversion runs, then validates the reconstructed data by materializing it again and comparing the RDF datasets. Generation, database setup, validation, and cooldown time are excluded from all reported durations.
@@ -45,6 +46,7 @@ Select suites or a single scenario with the same command:
 ```bash
 make benchmark-krown I=3 MODE=forward SUITES=raw,mappings
 make benchmark-krown I=3 MODE=backward SUITES=named-graphs SCENARIO=namedgraph_0SM-NG_5POM-NG_1TM_1POM_True
+make benchmark-krown FORWARD_ENGINE=souffle INVERSION_ENGINE=souffle SOUFFLE_MODE=hybrid
 ```
 
 `RESUME` accepts the session directory from an interrupted run. Its mode, iteration count, sampling interval, and engines must match the original command. The selected suites must include every scenario already recorded in the partial results.

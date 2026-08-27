@@ -13,8 +13,8 @@ MODE ?= roundtrip
 FORWARD_ENGINE ?= rmlmapper
 INVERSION_ENGINE ?= kgi
 INTERVAL ?= 0.1
-SOUFFLE_PROVENANCE ?= false
-SOUFFLE_MODES ?= rdf,provenance
+SOUFFLE_MODE ?= rdf
+SOUFFLE_MODES ?= rdf,provenance,hybrid
 DATABASE ?= postgresql
 KROWN_RMLMAPPER_IMAGE = kgconstruct/rmlmapper:v8.1.0
 KROWN_SOUFFLE_IMAGE = alloka/souffle:v1.0.0
@@ -32,14 +32,14 @@ KROWN_I = $(if $(strip $(I)),$(I),5)
 GTFS_I = $(if $(strip $(I)),$(I),10)
 KROWN_SCENARIO_ARG = $(if $(SCENARIO),--scenario=$(SCENARIO))
 KROWN_RESUME_ARG = $(if $(RESUME),--resume=$(RESUME))
-KROWN_RUN = uv run python -m benchmarks.run_krown_benchmark --mode $(MODE) --iterations $(KROWN_I) --interval $(INTERVAL) --suites $(SUITES) --forward-engine $(FORWARD_ENGINE) --inversion-engine $(INVERSION_ENGINE) --souffle-provenance $(SOUFFLE_PROVENANCE) $(KROWN_SCENARIO_ARG) $(KROWN_RESUME_ARG)
+KROWN_RUN = uv run python -m benchmarks.run_krown_benchmark --mode $(MODE) --iterations $(KROWN_I) --interval $(INTERVAL) --suites $(SUITES) --forward-engine $(FORWARD_ENGINE) --inversion-engine $(INVERSION_ENGINE) --souffle-mode $(SOUFFLE_MODE) $(KROWN_SCENARIO_ARG) $(KROWN_RESUME_ARG)
 
 .PHONY: validate-krown-options validate-conformance-options submodules reverse-submodule translator-assets krown-images benchmark-krown benchmark-gtfs benchmark-all test-conformance
 
 validate-krown-options:
-	@case "$(SOUFFLE_PROVENANCE)" in \
-		true|false) ;; \
-		*) echo "SOUFFLE_PROVENANCE must be true or false" >&2; exit 2 ;; \
+	@case "$(SOUFFLE_MODE)" in \
+		rdf|provenance|hybrid) ;; \
+		*) echo "SOUFFLE_MODE must be rdf, provenance, or hybrid" >&2; exit 2 ;; \
 	esac
 
 validate-conformance-options:

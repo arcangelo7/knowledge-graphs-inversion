@@ -316,7 +316,12 @@ class OfficialKrownExecutor:
         matching = [
             index
             for index, step in enumerate(self.steps, start=1)
-            if step["command"] in ("execute_mapping", "execute_forward_provenance")
+            if step["command"]
+            in (
+                "execute_mapping",
+                "execute_forward_provenance",
+                "execute_forward_hybrid",
+            )
         ]
         if len(matching) != 1:
             raise RuntimeError("KROWN case must have one mapping step")

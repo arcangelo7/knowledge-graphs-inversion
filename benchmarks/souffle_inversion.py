@@ -5,7 +5,7 @@
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Literal, Protocol, cast
 
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
@@ -19,6 +19,8 @@ from conformance.souffle_artifacts import (
 
 KROWN_NETWORK = "bench_executor"
 PROVENANCE_GLOB = "ProvCol_*.csv"
+HYBRID_PROVENANCE_GLOB = "HybridProv_*.csv"
+SouffleMode = Literal["rdf", "provenance", "hybrid"]
 
 
 class SouffleInversionError(RuntimeError):
@@ -34,9 +36,17 @@ def provenance_files(directory: Path) -> tuple[str, ...]:
     return (*PROVENANCE_MARKER_FILES, *column_files)
 
 
-def inversion_input_files(directory: Path, with_provenance: bool) -> tuple[str, ...]:
-    if with_provenance:
+def hybrid_provenance_files(directory: Path) -> tuple[str, ...]:
+    return tuple(path.name for path in sorted(directory.glob(HYBRID_PROVENANCE_GLOB)))
+
+
+def inversion_input_files(
+    directory: Path, souffle_mode: SouffleMode
+) -> tuple[str, ...]:
+    if souffle_mode == "provenance":
         return (*FACT_FILES, *provenance_files(directory))
+    if souffle_mode == "hybrid":
+        return (*FACT_FILES, *hybrid_provenance_files(directory))
     return FACT_FILES
 
 
@@ -140,7 +150,7 @@ class ReverseSouffleResource(Protocol):
         output_file: str,
         serialization: str,
         support_report: str,
-        with_provenance: bool,
+        souffle_mode: SouffleMode,
         rdb_username: str,
         rdb_password: str,
         rdb_host: str,

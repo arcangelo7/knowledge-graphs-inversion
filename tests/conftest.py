@@ -96,7 +96,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
     parser.addoption(
         "--souffle-modes",
-        default="rdf,provenance",
+        default="rdf,provenance,hybrid",
         help="comma-separated Soufflé inversion modes",
     )
 
