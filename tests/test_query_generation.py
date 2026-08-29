@@ -695,7 +695,7 @@ def test_parent_triples_map_without_predicate_object_map_is_read_from_the_join(
     insert_columns(mappings)
 
     assert _unrecoverable_references(mappings) == {
-        "data1": frozenset(),
+        "data1": frozenset({"p1"}),
         "data2": frozenset(),
     }
     assert _build_query(mappings, "data2")[1] == (
@@ -718,6 +718,32 @@ def test_parent_triples_map_without_predicate_object_map_is_read_from_the_join(
 
     reconstructed = _reconstruct(rdf_file, mappings, "data2")
     assert sorted(reconstructed[["id"]].values.tolist()) == [["10"], ["20"]]
+
+    reconstructed = _reconstruct(rdf_file, mappings, "data1")
+    assert sorted(reconstructed[["id"]].values.tolist()) == [["1"], ["2"]]
+
+
+def test_join_key_exposed_by_another_object_map_is_reconstructed(tmp_path) -> None:
+    mappings = _join_mappings()
+    exposed_join_key = mappings.iloc[0].copy()
+    exposed_join_key["predicate_map_value"] = "http://example.com/joinKey"
+    exposed_join_key["object_map_type"] = RML_REFERENCE
+    exposed_join_key["object_map_value"] = "p1"
+    exposed_join_key["object_termtype"] = RML_LITERAL
+    exposed_join_key["object_join_conditions"] = None
+    mappings = pd.concat([mappings, exposed_join_key.to_frame().T], ignore_index=True)
+    insert_columns(mappings)
+
+    rdf_file = tmp_path / "data.nq"
+    rdf_file.write_text(
+        "<http://example.com/table1/1> <http://example.com/j1> "
+        "<http://example.com/table2/10> .\n"
+        '<http://example.com/table1/1> <http://example.com/joinKey> "a" .\n',
+        encoding="utf-8",
+    )
+
+    reconstructed = _reconstruct(rdf_file, mappings, "data1")
+    assert reconstructed.to_dict(orient="records") == [{"id": "1", "p1": "a"}]
 
 
 def test_triples_map_without_predicate_object_map_needs_a_join_to_be_invertible() -> (

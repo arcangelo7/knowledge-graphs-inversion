@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: ISC
 
 import configparser
+import json
 import logging
 import os
 import pathlib
@@ -394,6 +395,24 @@ def _term_map_references(
     return opaque, exposed
 
 
+def _opaque_join_references(rule: pd.Series, mappings: pd.DataFrame) -> set[str]:
+    parent_rules = mappings.loc[mappings["triples_map_id"] == rule["object_map_value"]]
+    parent_subject_references = set().union(
+        *(
+            _reference_set(parent_rule["subject_references"])
+            for _, parent_rule in parent_rules.iterrows()
+        )
+    )
+    join_conditions = json.loads(
+        cast(str, rule["object_join_conditions"]).replace("'", '"')
+    )
+    return {
+        str(condition["child_value"])
+        for condition in join_conditions.values()
+        if condition["parent_value"] not in parent_subject_references
+    }
+
+
 def _check_for_constant_only_mappings(mappings: pd.DataFrame) -> bool:
     for _, rule in mappings.iterrows():
         subject_map_type = rule["subject_map_type"]
@@ -552,9 +571,19 @@ def _unrecoverable_references(mappings: pd.DataFrame) -> dict[str, frozenset[str
             mappings["object_map_type"] == RML_PARENT_TRIPLES_MAP, "object_map_value"
         ]
     )
+    opaque_join_references_by_rule = {
+        rule_index: _opaque_join_references(rule, mappings)
+        for rule_index, rule in mappings.loc[
+            mappings["object_map_type"] == RML_PARENT_TRIPLES_MAP
+        ].iterrows()
+    }
     shared_subject_evidence: dict[tuple[str, ...], set[str]] = {}
-    for _, rule in mappings.iterrows():
+    for rule_index, rule in mappings.iterrows():
         _, exposed_references = non_subject_term_references(rule)
+        if rule["object_map_type"] == RML_PARENT_TRIPLES_MAP:
+            exposed_references.difference_update(
+                opaque_join_references_by_rule[rule_index]
+            )
         shared_subject_evidence.setdefault(subject_term_signature(rule), set()).update(
             exposed_references
         )
@@ -567,8 +596,14 @@ def _unrecoverable_references(mappings: pd.DataFrame) -> dict[str, frozenset[str
 
         opaque: set[str] = set()
         exposed: set[str] = set()
-        for _, rule in source_rules.iterrows():
+        for rule_index, rule in source_rules.iterrows():
             rule_opaque, rule_exposed = _term_map_references(rule, join_targets)
+            if rule["object_map_type"] == RML_PARENT_TRIPLES_MAP:
+                opaque_join_references = opaque_join_references_by_rule[rule_index]
+                rule_opaque.update(opaque_join_references)
+                rule_exposed.difference_update(
+                    opaque_join_references - non_object_exposed_references(rule)
+                )
             opaque.update(rule_opaque)
             exposed.update(rule_exposed)
             exposed.update(

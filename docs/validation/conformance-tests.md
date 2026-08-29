@@ -6,7 +6,7 @@ SPDX-License-Identifier: ISC
 
 # Conformance tests
 
-The R2RML run contains the 62 W3C [R2RML](https://www.w3.org/TR/r2rml/) cases followed by seven local cases that isolate structural inversion limits. The local catalog follows the W3C manifest and asset layout but uses `INVTC` identifiers, so it remains outside the official numbering. The RML run contains 59 RDB cases from a [fork of rml-io-registry](https://github.com/arcangelo7/rml-io-registry/tree/add-rdb-core-tests). The two official catalogs are included as git submodules. Forward mapping uses [RMLMapper](https://github.com/RMLio/rmlmapper-java) v8.1.0 and inversion uses KGI.
+The R2RML run contains the 62 W3C [R2RML](https://www.w3.org/TR/r2rml/) cases followed by eight local cases that isolate structural inversion limits. The local catalog follows the W3C manifest and asset layout but uses `INVTC` identifiers, so it remains outside the official numbering. The RML run contains 59 RDB cases from a [fork of rml-io-registry](https://github.com/arcangelo7/rml-io-registry/tree/add-rdb-core-tests), while the two official catalogs are included as git submodules. Forward mapping uses [RMLMapper](https://github.com/RMLio/rmlmapper-java) v8.1.0 and inversion uses KGI.
 
 ## Defining invertibility
 
@@ -30,36 +30,34 @@ Test cases are therefore classified into these outcomes:
 
 ## Running the test suite
 
-Use the root Makefile entry point. Docker must be running, and Java 21 or newer must be available for RMLMapper. The RMLMapper v8.1.0 jar is downloaded automatically on the first forward mapping run:
+Use the root Makefile entry point, with Docker running and Java 21 or newer available for RMLMapper. The RMLMapper v8.1.0 jar is downloaded automatically on the first forward mapping run:
 
 ```bash
 make test-conformance
 ```
 
-`DATABASE` accepts `postgresql` and `mysql`. PostgreSQL is the default and runs 128 catalog cases: 69 R2RML cases and 59 RML cases:
+`DATABASE` accepts `postgresql` and `mysql`. PostgreSQL is the default and runs 129 catalog cases: 70 R2RML cases and 59 RML cases:
 
 ```bash
 make test-conformance DATABASE=postgresql
 ```
 
-MySQL 9.7.1 runs 67 R2RML cases:
+MySQL 9.7.1 runs 68 R2RML cases:
 
 ```bash
 make test-conformance DATABASE=mysql
 ```
 
-`R2RMLTC0002f` and `R2RMLTC0018a` run only with PostgreSQL, while the seven `INVTC` cases run on both databases. The 59 RML cases are skipped with MySQL because the RML Core RDB test suite does not yet provide MySQL variants.
+`R2RMLTC0002f` and `R2RMLTC0018a` run only with PostgreSQL, while the eight `INVTC` cases run on both databases. The 59 RML cases are skipped with MySQL because the RML Core RDB test suite does not yet provide MySQL variants.
 
 ### Dashboard
 
-Start the dashboard and its PostgreSQL and MySQL databases with Docker Compose:
+Start the dashboard and its PostgreSQL and MySQL databases with Docker Compose, then open [http://localhost:5000](http://localhost:5000) and choose the database and the test suite:
 
 ```bash
 make submodules
 docker compose up --build
 ```
-
-Open [http://localhost:5000](http://localhost:5000), then choose the database and the test suite.
 
 ## W3C R2RML test suite
 
@@ -77,7 +75,7 @@ The [R2RML test suite](https://www.w3.org/2001/sw/rdb2rdf/test-cases/) contains 
 
 ### Partially inverted (14)
 
-Each case recovers the information preserved in the RDF graph, but the forward mapping discards part of the source. Sub-categories are counted per tag: a test may contribute to more than one sub-category when multiple forms of loss co-occur, so the counts below sum to more than the number of tests.
+Each case recovers the information preserved in the RDF graph, but the forward mapping discards part of the source, while sub-categories are counted per tag. A test may contribute to more than one sub-category when multiple forms of loss co-occur, so the counts below sum to more than the number of tests.
 
 | Sub-category | PostgreSQL | MySQL |
 |---|---:|---:|
@@ -112,7 +110,8 @@ R2RMLTC0020a maps a single-column table through a subject map with an IRI term t
 | Indistinguishable graph maps | `INVTC0004` | Partially inverted: columns lost |
 | Column-valued IRI term map | `INVTC0005` | Partially inverted: columns lost |
 | Join key absent from every RDF term | `INVTC0006` | Partially inverted: columns lost |
-| Triples Map without a predicate-object map, subject class, or incoming join | `INVTC0007` | Non-invertible |
+| Parent Triples Map reached only through a join | `INVTC0007` | Partially inverted: columns lost |
+| Triples Map without a predicate-object map, subject class, or incoming join | `INVTC0008` | Non-invertible |
 
 ## RML test suite
 

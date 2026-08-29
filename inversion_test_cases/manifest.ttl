@@ -118,19 +118,38 @@
 .
 
 <#d-inv-007> a rdb2rdftest:DataBase;
-    dcterms:title "Triples Map with no predicate-object maps";
+    dcterms:title "Join target without predicate-object maps";
     dcterms:identifier "D-INV-007";
     rdb2rdftest:sqlScriptFile "d-inv-007.sql";
     rdb2rdftest:relatedTestCase <#INVTC0007>;
 .
 
 <#INVTC0007> a rdb2rdftest:R2RML;
-    dcterms:title "Triples Map without a predicate-object map";
+    dcterms:title "Join target reached only as an RDF object";
     dcterms:identifier "INVTC0007";
+    test:purpose "Tests a parent Triples Map without predicate-object maps whose subject identifier is recoverable from reference object map triples";
+    test:specificationReference "#dfn-parent-triples-map";
+    test:reviewStatus test:unreviewed;
+    rdb2rdftest:database <#d-inv-007>;
+    rdb2rdftest:output "mapped.nq";
+    rdb2rdftest:hasExpectedOutput true;
+    rdb2rdftest:mappingDocument "r2rml.ttl";
+.
+
+<#d-inv-008> a rdb2rdftest:DataBase;
+    dcterms:title "Triples Map with no predicate-object maps";
+    dcterms:identifier "D-INV-008";
+    rdb2rdftest:sqlScriptFile "d-inv-008.sql";
+    rdb2rdftest:relatedTestCase <#INVTC0008>;
+.
+
+<#INVTC0008> a rdb2rdftest:R2RML;
+    dcterms:title "Triples Map without a predicate-object map";
+    dcterms:identifier "INVTC0008";
     test:purpose "Tests a non-empty logical table whose Triples Map generates no triples";
     test:specificationReference "#dfn-triples-map";
     test:reviewStatus test:unreviewed;
-    rdb2rdftest:database <#d-inv-007>;
+    rdb2rdftest:database <#d-inv-008>;
     rdb2rdftest:output "mapped.nq";
     rdb2rdftest:hasExpectedOutput true;
     rdb2rdftest:mappingDocument "r2rml.ttl";
