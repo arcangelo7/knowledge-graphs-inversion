@@ -6,16 +6,15 @@ SPDX-License-Identifier: ISC
 
 # KROWN
 
-The [KROWN](https://github.com/kg-construct/KROWN) benchmark measures RDF materialization and relational data reconstruction across 58 scenarios. It covers changes in source data, mappings, Named Graphs, and joins.
+The [KROWN](https://github.com/kg-construct/KROWN) benchmark measures RDF materialization and relational data recovery in 72 cases. They cover source data, mappings, Named Graphs, and joins.
 
 | Suite | Scenarios | Parameters covered |
 | --- | ---: | --- |
 | `raw` | 11 | Row count, column count, and cell size |
+| `duplicates-empty` | 10 | Percentages of duplicate rows and empty values |
 | `mappings` | 7 | Triples Maps and Predicate-Object Maps |
 | `named-graphs` | 24 | Static and dynamic graph maps in Subject Maps and Predicate-Object Maps |
-| `joins` | 16 | One-to-many, many-to-one, and many-to-many relations, plus join conditions |
-
-Duplicate and empty-value scenarios are excluded because they are non-invertible by definition: RDF does not preserve duplicate rows, and empty values in subject templates can suppress rows.
+| `joins` | 20 | Relations, join conditions, and duplicate join results |
 
 ## Run the benchmark
 
@@ -31,7 +30,7 @@ The Makefile exposes these options:
 | --- | --- | --- |
 | `I` | Odd integer greater than or equal to 3 | `5` |
 | `MODE` | `forward`, `backward`, `roundtrip` | `roundtrip` |
-| `SUITES` | `all` or a comma-separated subset of `raw`, `mappings`, `named-graphs`, `joins` | `all` |
+| `SUITES` | `all` or a comma-separated subset of `raw`, `duplicates-empty`, `mappings`, `named-graphs`, `joins` | `all` |
 | `SCENARIO` | Exact generated scenario name | Not set |
 | `RESUME` | Directory of an interrupted benchmark session | Not set |
 | `FORWARD_ENGINE` | `rmlmapper`, `morphkgc`, `souffle` | `rmlmapper` |
@@ -65,7 +64,7 @@ Each scenario reports one of these outcomes:
 | `OUT_OF_MEMORY` | Materialization or inversion stopped after exhausting its available memory. |
 | `TIMEOUT` | Materialization or inversion exceeded its time limit. |
 
-Completed `RawData` scenarios are expected to return `FULL`. Other suites may return `PARTIAL` when the mapping omits source information but still determines a unique recoverable subset. `AMBIGUOUS` describes the inverse problem, not variable program output: the inversion leaves unresolved values out instead of choosing among possible source assignments. This occurs when mapped values cannot be assigned to their source columns, as in joins whose key columns are not emitted.
+`RawData` and the 0% duplicate and empty-value scenarios should return `FULL` because their RDF graphs retain all source data. Cases above 0% should return `PARTIAL` because each RDF graph defines one source subset, although it loses rows or empty values. Join cases should return `AMBIGUOUS` because their keys cannot be linked to one source row. Other suites may return `PARTIAL` when the mapping omits source data but still defines one subset. `AMBIGUOUS` means that the inverse problem has several valid answers, so inversion leaves unresolved values out.
 
 Forward time and inversion time measure their respective stages. Total time is their sum when both are measured. Inversion overhead is available in `roundtrip` mode and is calculated as `inversion time / forward time × 100`.
 

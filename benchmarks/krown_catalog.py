@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: ISC
 
 import json
+import random
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -10,20 +11,25 @@ from typing import cast
 ParameterValue = bool | int | float | str
 
 KROWN_REPOSITORY = "https://github.com/kg-construct/KROWN.git"
-SUITES = ("raw", "mappings", "named-graphs", "joins")
+SUITES = ("raw", "duplicates-empty", "mappings", "named-graphs", "joins")
 GENERATOR_SUITES = {
     "RawData": "raw",
+    "Duplicates": "duplicates-empty",
+    "EmptyValues": "duplicates-empty",
     "Mappings": "mappings",
     "NamedGraph": "named-graphs",
     "JoinsRelation": "joins",
     "JoinsMultiple": "joins",
+    "JoinsDuplicate": "joins",
 }
 OFFICIAL_CONFIG_FILES = (
     "benchmark-raw-rmlmapper.json",
+    "benchmark-duplicates-empty-values-rmlmapper.json",
     "benchmark-mappings-rmlmapper.json",
     "benchmark-namedgraph-rmlmapper.json",
     "benchmark-joins-relation-rmlmapper.json",
     "benchmark-joins-multiple-rmlmapper.json",
+    "benchmark-joins-duplicates-rmlmapper.json",
 )
 
 
@@ -59,7 +65,10 @@ class KrownScenario:
 
     @property
     def expected_outcome(self) -> str:
-        if self.generator == "RawData":
+        if self.generator == "RawData" or (
+            self.generator in ("Duplicates", "EmptyValues")
+            and cast(float, self.parameters["percentage"]) == 0
+        ):
             return "FULL"
         # Scenarios whose surplus triples maps or graph maps carry columns the graph
         # cannot attribute: those columns are left out, so the mapping can no longer
@@ -85,6 +94,10 @@ class KrownScenario:
                 f"{cast(int, parameters['number_of_properties'])}_"
                 f"{cast(int, parameters['value_size'])}"
             )
+        if self.generator == "Duplicates":
+            return f"duplicates_{cast(float, parameters['percentage'])}_percentage"
+        if self.generator == "EmptyValues":
+            return f"empty_{cast(float, parameters['percentage'])}_percentage"
         if self.generator == "Mappings":
             return (
                 f"mappings_{cast(int, parameters['number_of_tms'])}_"
@@ -114,6 +127,12 @@ class KrownScenario:
                 f"{cast(int, parameters['jc'])}jc_"
                 f"{cast(float, parameters['percentage'])}"
             )
+        if self.generator == "JoinsDuplicate":
+            return (
+                "joins_duplicates_"
+                f"{cast(int, parameters['number_of_duplicates'])}_"
+                f"{parameters['percentage']}"
+            )
         raise ValueError(f"Unsupported KROWN generator: {self.generator}")
 
     @property
@@ -134,6 +153,17 @@ class KrownScenario:
         rows = cast(int, self.parameters["number_of_members"])
         if self.generator == "RawData":
             return rows * cast(int, self.parameters["number_of_properties"])
+        if self.generator == "Duplicates":
+            duplicate_rows = int(
+                rows * cast(float, self.parameters["percentage"]) / 100
+            )
+            distinct_rows = rows - duplicate_rows + int(duplicate_rows > 0)
+            return distinct_rows * cast(int, self.parameters["number_of_properties"])
+        if self.generator == "EmptyValues":
+            empty_rows = int(rows * cast(float, self.parameters["percentage"]) / 100)
+            return (rows - empty_rows) * cast(
+                int, self.parameters["number_of_properties"]
+            )
         if self.generator == "Mappings":
             return (
                 rows
@@ -145,6 +175,19 @@ class KrownScenario:
                 int, self.parameters["number_of_ng_pom"]
             )
             return rows * cast(int, self.parameters["number_of_poms"]) * graph_count
+        if self.generator == "JoinsDuplicate":
+            properties = cast(int, self.parameters["number_of_properties"])
+            duplicates = cast(int, self.parameters["number_of_duplicates"])
+            duplicate_rows = rows * cast(float, self.parameters["percentage"]) / 100
+            sample_size = int(min(duplicate_rows / duplicates * (duplicates + 1), rows))
+            randomizer = random.Random(0)
+            randomizer.sample(range(rows), sample_size)
+            sampled_parent_rows = randomizer.sample(range(rows), sample_size)
+            existing_join_rows = rows - properties
+            overwritten_join_rows = sum(
+                index < existing_join_rows for index in sampled_parent_rows
+            )
+            return existing_join_rows - overwritten_join_rows + sample_size
         return None
 
     @property
@@ -188,6 +231,14 @@ def _mappings_name(triples_maps: int, predicate_object_maps: int) -> str:
     return f"mappings_{triples_maps}_{predicate_object_maps}"
 
 
+def _duplicates_name(percentage: int) -> str:
+    return f"duplicates_{float(percentage)}_percentage"
+
+
+def _empty_values_name(percentage: int) -> str:
+    return f"empty_{float(percentage)}_percentage"
+
+
 def _named_graph_name(
     subject_graphs: int,
     predicate_object_graphs: int,
@@ -206,6 +257,12 @@ def _join_relation_name(n: int, m: int) -> str:
 
 def _join_conditions_name(conditions: int) -> str:
     return f"joins_mutiple_1-1_{conditions}jc_50.0"
+
+
+def _join_duplicates_name(value: int) -> str:
+    if value == 0:
+        return "joins_duplicates_10_0"
+    return f"joins_duplicates_{value}_50.0"
 
 
 SERIES = (
@@ -235,6 +292,20 @@ SERIES = (
             (_raw_name(100_000, 20, value), value)
             for value in (500, 1_000, 5_000, 10_000)
         ),
+    ),
+    KrownSeries(
+        "duplicates_percentage",
+        "Duplicates",
+        "duplicates-empty",
+        "Duplicate rows (%)",
+        tuple((_duplicates_name(value), value) for value in (0, 25, 50, 75, 100)),
+    ),
+    KrownSeries(
+        "empty_values_percentage",
+        "Empty values",
+        "duplicates-empty",
+        "Rows with empty values (%)",
+        tuple((_empty_values_name(value), value) for value in (0, 25, 50, 75, 100)),
     ),
     KrownSeries(
         "mappings_triples_maps",
@@ -329,6 +400,13 @@ SERIES = (
         "joins",
         "Join conditions",
         tuple((_join_conditions_name(value), value) for value in (1, 5, 10, 15)),
+    ),
+    KrownSeries(
+        "joins_duplicates",
+        "Joins: duplicates",
+        "joins",
+        "Duplicates",
+        tuple((_join_duplicates_name(value), value) for value in (0, 5, 10, 15)),
     ),
 )
 

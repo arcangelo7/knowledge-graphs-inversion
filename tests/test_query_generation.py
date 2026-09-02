@@ -8,7 +8,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 from pyoxigraph import BlankNode, Literal, NamedNode, Quad, QuerySolutions, Store
-from sqlalchemy import DATE, INTEGER, LargeBinary
+from sqlalchemy import BIGINT, DATE, INTEGER, LargeBinary
 
 from kgi.constants import (
     RML_BLANK_NODE,
@@ -650,6 +650,15 @@ def test_incompatible_schema_conversion_propagates() -> None:
 
     with pytest.raises(ValueError):
         infer_type_from_value_with_schema("not-an-integer", column)
+
+
+def test_schema_conversion_preserves_bigint() -> None:
+    column = ColumnInfo("id", BIGINT(), int)
+
+    assert infer_type_from_value_with_schema("9223372036854775807", column) == (
+        9223372036854775807
+    )
+    assert infer_type_from_value_with_schema("1.0", column) == 1
 
 
 def test_schema_conversion_keeps_dates_and_decodes_binary() -> None:

@@ -93,6 +93,7 @@ class KrownValidator:
 
     def _table_result(self, table_name: str) -> dict[str, object]:
         original_columns = self._columns(self.source_schema, table_name)
+        destination_columns = self._columns(self.destination_schema, table_name)
         reconstructed_columns = self._populated_columns(
             self.destination_schema, table_name
         )
@@ -107,13 +108,20 @@ class KrownValidator:
         ordered_projection = [
             column for column in original_columns if column in reconstructed_columns
         ]
-        column_subset = (
-            bool(reconstructed_columns)
-            and not extra_columns
-            and reconstructed_columns == ordered_projection
-        )
+        if reconstructed_rows == 0:
+            column_subset = destination_columns == original_columns
+        else:
+            column_subset = (
+                bool(reconstructed_columns)
+                and not extra_columns
+                and reconstructed_columns == ordered_projection
+            )
 
-        if column_subset:
+        if reconstructed_rows == 0:
+            foreign_values = False
+            missing_values = original_rows > 0
+            multiplicities_match = original_rows == 0
+        elif column_subset:
             foreign_values = self._difference_exists(
                 self.destination_schema,
                 table_name,
@@ -178,6 +186,7 @@ class KrownValidator:
                 "original_rows": original_rows,
                 "reconstructed_rows": reconstructed_rows,
                 "original_columns": original_columns,
+                "destination_columns": destination_columns,
                 "reconstructed_columns": reconstructed_columns,
             },
             "exact": exact,
@@ -192,6 +201,11 @@ class KrownValidator:
             check=True,
             env=environment,
         )
+
+    @staticmethod
+    def rdf_dataset_empty(rdf_file: Path) -> bool:
+        with rdf_file.open(encoding="utf-8") as file:
+            return not any(line.strip() for line in file)
 
     @classmethod
     def _rdf_datasets_equal(cls, original: Path, roundtrip: Path) -> bool:
@@ -256,10 +270,9 @@ class KrownValidator:
             for table_name in expected_tables:
                 table_results[table_name] = self._table_result(table_name)
 
-        if missing_mapped_columns:
+        if roundtrip_rdf is None:
             rdf_round_trip = None
         else:
-            assert roundtrip_rdf is not None
             rdf_round_trip = self._rdf_datasets_equal(original_rdf, roundtrip_rdf)
 
         sound = table_names_match and all(

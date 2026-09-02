@@ -6,6 +6,7 @@
 
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal, InvalidOperation
 from typing import Optional, cast
 
 import pandas as pd
@@ -127,7 +128,10 @@ def infer_type_from_value_with_schema(
         return None
 
     if column_info.python_type is int:
-        return int(float(str(value)))
+        try:
+            return int(Decimal(str(value)))
+        except InvalidOperation as error:
+            raise ValueError from error
     if column_info.python_type is float:
         return float(str(value))
     if column_info.python_type is bool:

@@ -432,7 +432,7 @@ class ScenarioOperations:
             )
 
         table_name = _quoted(source_table.name)
-        definitions = [f"{_quoted('id')} INTEGER PRIMARY KEY"]
+        definitions = [f"{_quoted('id')} BIGINT"]
         definitions.extend(f"{_quoted(column)} TEXT" for column in columns[1:])
         with engine.begin() as connection:
             connection.execute(text(f"DROP TABLE IF EXISTS {table_name} CASCADE"))
@@ -445,7 +445,8 @@ class ScenarioOperations:
             cursor = raw_connection.cursor()
             with source_table.csv_file.open(encoding="utf-8") as file:
                 cursor.copy_expert(
-                    f"COPY {table_name} FROM STDIN WITH (FORMAT CSV, HEADER TRUE)",
+                    f"COPY {table_name} FROM STDIN WITH "
+                    "(FORMAT CSV, HEADER TRUE, NULL 'NULL')",
                     file,
                 )
             raw_connection.commit()
@@ -1100,13 +1101,11 @@ class KrownBenchmarkRunner:
         iteration: int,
     ) -> dict[str, object]:
         expected_tables = [table.name for table in operations.source_tables]
-        # The mapping reads columns the reconstruction could not recover, so it cannot
-        # rebuild the graph and running it would only fail on the absent columns
         missing_mapped_columns = self.validator.missing_mapped_columns(
             expected_tables, operations.mapping_file
         )
         roundtrip_rdf = None
-        if not missing_mapped_columns:
+        if not missing_mapped_columns or self.validator.rdf_dataset_empty(original_rdf):
             roundtrip_rdf = operations.shared_dir / f"roundtrip_{iteration}.nq"
             if self.forward_engine == "rmlmapper":
                 self.run_stage(
@@ -1931,7 +1930,9 @@ def _benchmark_main(arguments: list[str]) -> int:
         "--suites",
         type=parse_suites,
         default=SUITES,
-        help="Comma-separated suites: raw,mappings,named-graphs,joins",
+        help=(
+            "Comma-separated suites: raw,duplicates-empty,mappings,named-graphs,joins"
+        ),
     )
     parser.add_argument("--scenario")
     parser.add_argument(
