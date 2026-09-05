@@ -279,6 +279,7 @@ EXPECTATIONS: dict[TestKey, CaseOutcome] = {
 SOUFFLE_PROVENANCE_EXPECTATIONS: dict[TestKey, CaseOutcome] = {
     ("r2rml", "R2RMLTC0020a"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
     ("r2rml", "INVTC0001a"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
+    ("r2rml", "INVTC0001b"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
     ("r2rml", "INVTC0002a"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
     ("r2rml", "INVTC0002b"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
     ("r2rml", "INVTC0002c"): CaseOutcome(InversionOutcome.FULLY_INVERTED),

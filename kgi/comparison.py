@@ -113,6 +113,11 @@ def databases_identical(
     )
 
 
+def _is_empty_cell(value: object) -> bool:
+    cell = _cell(value)
+    return cell is None or cell == ""
+
+
 def compare_databases(
     source_content: DatabaseContent,
     dest_content: DatabaseContent,
@@ -150,9 +155,27 @@ def compare_databases(
         projection, table_losses, table_notes = _expected_projection(
             source_frame, analysis[table_name]
         )
-        if dest_columns != set(projection.columns):
+        projection_columns = set(projection.columns)
+        # A column beyond the recoverable ones is fine if it was never actually
+        # populated: some rows can be individually irrecoverable (e.g. an
+        # ambiguous template split) even though the column is recoverable for
+        # others, and that per-row gap must not be mistaken for unmapped data.
+        extra_columns = dest_columns - projection_columns
+        if projection_columns - dest_columns:
             problems.append(f"{table_name} (columns differ from the recoverable ones)")
             continue
+        if extra_columns:
+            populated_extra = [
+                column
+                for column in extra_columns
+                if not dest_frame[column].map(_is_empty_cell).all()
+            ]
+            if populated_extra:
+                problems.append(
+                    f"{table_name} (columns differ from the recoverable ones)"
+                )
+                continue
+            dest_frame = dest_frame.drop(columns=list(extra_columns))
         if _rows(projection) != _rows(dest_frame):
             problems.append(f"{table_name} (data differs from the expected projection)")
             continue
