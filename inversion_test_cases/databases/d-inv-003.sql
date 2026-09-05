@@ -1,8 +1,6 @@
-DROP TABLE IF EXISTS "ObjectMaps";
-CREATE TABLE "ObjectMaps" (
-    "ID" INTEGER,
-    "Name" VARCHAR(50),
-    "FirstFriend" VARCHAR(50),
-    "SecondFriend" VARCHAR(50)
+DROP TABLE IF EXISTS "ColumnIri";
+CREATE TABLE "ColumnIri" (
+    "PersonIri" VARCHAR(100),
+    "Name" VARCHAR(50)
 );
-INSERT INTO "ObjectMaps" VALUES (1, 'Alice', 'bob', 'carol');
+INSERT INTO "ColumnIri" VALUES ('people/alice', 'Alice');

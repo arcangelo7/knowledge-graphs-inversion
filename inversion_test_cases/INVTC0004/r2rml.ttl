@@ -3,16 +3,16 @@
 @base <http://example.com/> .
 
 <#TriplesMap> a rr:TriplesMap;
-    rr:logicalTable [ rr:tableName "\"GraphMaps\"" ];
-    rr:subjectMap [ rr:template "person/{\"ID\"}" ];
+    rr:logicalTable [ rr:tableName "\"StudentSports\"" ];
+    rr:subjectMap [ rr:template "http://example.com/student/{\"ID\"}/{\"Name\"}" ];
     rr:predicateObjectMap [
-        rr:predicate ex:name;
-        rr:objectMap [ rr:column "\"Name\"" ];
-        rr:graphMap [ rr:template "graph/{\"FirstGraph\"}" ]
-    ];
-    rr:predicateObjectMap [
-        rr:predicate ex:name;
-        rr:objectMap [ rr:column "\"Name\"" ];
-        rr:graphMap [ rr:template "graph/{\"SecondGraph\"}" ]
+        rr:predicate ex:sameSportAs;
+        rr:objectMap [
+            rr:parentTriplesMap <#TriplesMap>;
+            rr:joinCondition [
+                rr:child "\"Sport\"";
+                rr:parent "\"Sport\""
+            ]
+        ]
     ];
 .

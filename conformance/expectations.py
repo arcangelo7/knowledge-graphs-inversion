@@ -112,11 +112,27 @@ EXPECTATIONS: dict[TestKey, CaseOutcome] = {
     ("r2rml", "R2RMLTC0019b"): CaseOutcome(InversionOutcome.ERROR_TEST_CASE),
     ("r2rml", "R2RMLTC0020a"): CaseOutcome(InversionOutcome.NON_INVERTIBLE),
     ("r2rml", "R2RMLTC0020b"): CaseOutcome(InversionOutcome.ERROR_TEST_CASE),
-    ("r2rml", "INVTC0001"): CaseOutcome(
+    ("r2rml", "INVTC0001a"): CaseOutcome(
         InversionOutcome.PARTIALLY_INVERTED,
         frozenset({PartialLoss.COLUMNS_LOST}),
     ),
-    ("r2rml", "INVTC0002"): CaseOutcome(
+    ("r2rml", "INVTC0001b"): CaseOutcome(
+        InversionOutcome.PARTIALLY_INVERTED,
+        frozenset({PartialLoss.COLUMNS_LOST}),
+    ),
+    ("r2rml", "INVTC0002a"): CaseOutcome(
+        InversionOutcome.PARTIALLY_INVERTED,
+        frozenset({PartialLoss.COLUMNS_LOST}),
+    ),
+    ("r2rml", "INVTC0002b"): CaseOutcome(
+        InversionOutcome.PARTIALLY_INVERTED,
+        frozenset({PartialLoss.COLUMNS_LOST}),
+    ),
+    ("r2rml", "INVTC0002c"): CaseOutcome(
+        InversionOutcome.PARTIALLY_INVERTED,
+        frozenset({PartialLoss.COLUMNS_LOST}),
+    ),
+    ("r2rml", "INVTC0002d"): CaseOutcome(
         InversionOutcome.PARTIALLY_INVERTED,
         frozenset({PartialLoss.COLUMNS_LOST}),
     ),
@@ -128,19 +144,11 @@ EXPECTATIONS: dict[TestKey, CaseOutcome] = {
         InversionOutcome.PARTIALLY_INVERTED,
         frozenset({PartialLoss.COLUMNS_LOST}),
     ),
-    ("r2rml", "INVTC0005"): CaseOutcome(
+    ("r2rml", "INVTC0005a"): CaseOutcome(
         InversionOutcome.PARTIALLY_INVERTED,
         frozenset({PartialLoss.COLUMNS_LOST}),
     ),
-    ("r2rml", "INVTC0006"): CaseOutcome(
-        InversionOutcome.PARTIALLY_INVERTED,
-        frozenset({PartialLoss.COLUMNS_LOST}),
-    ),
-    ("r2rml", "INVTC0007"): CaseOutcome(
-        InversionOutcome.PARTIALLY_INVERTED,
-        frozenset({PartialLoss.COLUMNS_LOST}),
-    ),
-    ("r2rml", "INVTC0008"): CaseOutcome(InversionOutcome.NON_INVERTIBLE),
+    ("r2rml", "INVTC0005b"): CaseOutcome(InversionOutcome.NON_INVERTIBLE),
     ("rml", "RMLTC0000-RDB"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
     ("rml", "RMLTC0001a-RDB"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
     ("rml", "RMLTC0001b-RDB"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
@@ -270,13 +278,14 @@ EXPECTATIONS: dict[TestKey, CaseOutcome] = {
 
 SOUFFLE_PROVENANCE_EXPECTATIONS: dict[TestKey, CaseOutcome] = {
     ("r2rml", "R2RMLTC0020a"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
-    ("r2rml", "INVTC0001"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
-    ("r2rml", "INVTC0002"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
+    ("r2rml", "INVTC0001a"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
+    ("r2rml", "INVTC0002a"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
+    ("r2rml", "INVTC0002b"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
+    ("r2rml", "INVTC0002c"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
+    ("r2rml", "INVTC0002d"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
     ("r2rml", "INVTC0003"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
     ("r2rml", "INVTC0004"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
-    ("r2rml", "INVTC0005"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
-    ("r2rml", "INVTC0006"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
-    ("r2rml", "INVTC0007"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
+    ("r2rml", "INVTC0005a"): CaseOutcome(InversionOutcome.FULLY_INVERTED),
 }
 
 

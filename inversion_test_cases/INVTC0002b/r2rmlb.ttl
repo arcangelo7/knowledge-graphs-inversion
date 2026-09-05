@@ -1,0 +1,15 @@
+@prefix rr: <http://www.w3.org/ns/r2rml#> .
+@base <http://example.com/> .
+
+<#TriplesMap> a rr:TriplesMap;
+    rr:logicalTable [ rr:tableName "\"PredicateMaps\"" ];
+    rr:subjectMap [ rr:template "person/{\"ID\"}" ];
+    rr:predicateObjectMap [
+        rr:predicateMap [ rr:template "property/{\"FirstProperty\"}" ];
+        rr:objectMap [ rr:column "\"Name\"" ]
+    ];
+    rr:predicateObjectMap [
+        rr:predicateMap [ rr:template "property/{\"SecondProperty\"}" ];
+        rr:objectMap [ rr:column "\"Name\"" ]
+    ];
+.

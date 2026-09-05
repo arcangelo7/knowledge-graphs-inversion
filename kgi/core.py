@@ -65,13 +65,16 @@ from kgi.exceptions import (
     UnsupportedMappingError,
 )
 from kgi.query import (
+    _position_references,
     non_graph_exposed_references,
     non_object_exposed_references,
+    non_predicate_exposed_references,
     non_subject_term_references,
     retrieve_data,
     subject_term_signature,
     term_map_is_opaque,
 )
+from kgi.triples import has_multiple_template_decompositions
 from kgi.schema import (
     DatabaseSchemaRetriever,
     apply_schema_ordering,
@@ -532,6 +535,43 @@ def _ambiguous_object_references(source_rules: pd.DataFrame) -> set[str]:
     return ambiguous - observable_refs - identified_refs
 
 
+def _ambiguous_predicate_references(source_rules: pd.DataFrame) -> set[str]:
+    context_columns = (
+        "object_map_type",
+        "object_map_value",
+        "object_termtype",
+        "object_references_template",
+        "lang_datatype",
+        "graph_map_type",
+        "graph_map_value",
+    )
+    observable_refs: set[str] = set()
+    buckets: dict[tuple[str, ...], dict[str, set[str]]] = {}
+    for _, rule in source_rules.iterrows():
+        observable_refs.update(non_predicate_exposed_references(rule))
+        if rule["predicate_map_type"] not in (RML_TEMPLATE, RML_REFERENCE):
+            continue
+        predicate_refs = _reference_set(rule["predicate_references"])
+        if not predicate_refs:
+            continue
+        key = (
+            subject_term_signature(rule)
+            + tuple(_signature_value(rule[column]) for column in context_columns)
+            + (_signature_value(rule["predicate_references_template"]),)
+        )
+        predicate_maps = buckets.setdefault(key, {})
+        predicate_maps.setdefault(
+            _signature_value(rule["predicate_map_value"]), set()
+        ).update(predicate_refs)
+
+    ambiguous: set[str] = set()
+    identified_refs: set[str] = set()
+    for predicate_maps in buckets.values():
+        target = ambiguous if len(predicate_maps) > 1 else identified_refs
+        target.update(*predicate_maps.values())
+    return ambiguous - observable_refs - identified_refs
+
+
 def _ambiguous_graph_references(source_rules: pd.DataFrame) -> set[str]:
     """Columns reachable only through graph maps that cannot be told apart.
 
@@ -558,6 +598,66 @@ def _ambiguous_graph_references(source_rules: pd.DataFrame) -> set[str]:
         if len(graph_maps) > 1:
             ambiguous.update(set().union(*graph_maps.values()) - observable_refs)
     return ambiguous
+
+
+def _observed_template_terms(
+    endpoint: Endpoint, position: str, references_template: str
+) -> set[str]:
+    triple = {
+        "subject": "?term ?predicate ?object",
+        "predicate": "?subject ?term ?object",
+        "object": "?subject ?predicate ?term",
+    }
+    if position == "graph":
+        body = "GRAPH ?term { ?subject ?predicate ?object }"
+    else:
+        pattern = triple[position]
+        body = f"{{ {pattern} }} UNION {{ GRAPH ?graph {{ {pattern} }} }}"
+    escaped_template = references_template.replace("\\", "\\\\").replace("'", "\\'")
+    query = (
+        "SELECT DISTINCT ?term WHERE { "
+        f"{body} FILTER(REGEX(STR(?term), '^{escaped_template}$')) }}"
+    )
+    solutions = endpoint.query(query)
+    variable = list(solutions.variables)[0]
+    return {
+        str(term.value)
+        for solution in solutions
+        if (term := solution[variable]) is not None
+    }
+
+
+def _ambiguous_observed_template_references(
+    source_rules: pd.DataFrame, endpoint: Endpoint
+) -> set[str]:
+    ambiguous: set[str] = set()
+    other_exposed: set[str] = set()
+    observations: dict[tuple[str, str], set[str]] = {}
+
+    for _, rule in source_rules.iterrows():
+        for position in ("subject", "predicate", "object", "graph"):
+            if rule[f"{position}_map_type"] != RML_TEMPLATE:
+                other_exposed.update(_position_references(rule, position)[1])
+                continue
+            references = _reference_set(rule[f"{position}_references"])
+            if len(references) < 2:
+                other_exposed.update(references)
+                continue
+            template = str(rule[f"{position}_references_template"])
+            key = (position, template)
+            if key not in observations:
+                observations[key] = _observed_template_terms(
+                    endpoint, position, template
+                )
+            terms = observations[key]
+            if any(
+                has_multiple_template_decompositions(term, template) for term in terms
+            ):
+                ambiguous.update(references)
+            else:
+                other_exposed.update(references)
+
+    return ambiguous - other_exposed
 
 
 def _unrecoverable_references(mappings: pd.DataFrame) -> dict[str, frozenset[str]]:
@@ -591,6 +691,7 @@ def _unrecoverable_references(mappings: pd.DataFrame) -> dict[str, frozenset[str
     unrecoverable: dict[str, frozenset[str]] = {}
     for table_name, source_rules in mappings.groupby("logical_source_value"):
         ambiguous = _ambiguous_subject_references(source_rules)
+        ambiguous.update(_ambiguous_predicate_references(source_rules))
         ambiguous.update(_ambiguous_object_references(source_rules))
         ambiguous.update(_ambiguous_graph_references(source_rules))
 
@@ -638,7 +739,9 @@ class TableAnalysis:
 MappingAnalysis = dict[str, TableAnalysis]
 
 
-def _analyze_rules(mappings: pd.DataFrame) -> MappingAnalysis:
+def _analyze_rules(
+    mappings: pd.DataFrame, endpoint: Endpoint | None = None
+) -> MappingAnalysis:
     unrecoverable = _unrecoverable_references(mappings)
     analysis: MappingAnalysis = {}
     for table_name, source_rules in mappings.groupby("logical_source_value"):
@@ -649,9 +752,14 @@ def _analyze_rules(mappings: pd.DataFrame) -> MappingAnalysis:
             subject_reference_sets.append(
                 frozenset(_reference_set(rule["subject_references"]))
             )
+        table_unrecoverable = set(unrecoverable[str(table_name)])
+        if endpoint is not None:
+            table_unrecoverable.update(
+                _ambiguous_observed_template_references(source_rules, endpoint)
+            )
         analysis[str(table_name)] = TableAnalysis(
             frozenset(references),
-            unrecoverable[str(table_name)],
+            frozenset(table_unrecoverable),
             tuple(dict.fromkeys(subject_reference_sets)),
         )
     return analysis
@@ -758,9 +866,13 @@ def analyze_mapping(
     can be recovered, so both read this single description of the mapping.
     """
     mappings, _ = _load_mapping_rules(mapping, str(rdf_graph), source_db_url)
-    analysis = _analyze_rules(mappings)
-    _check_for_unrecoverable_tables(analysis)
-    return analysis
+    endpoint = EndpointFactory.create_from_url(str(rdf_graph))
+    try:
+        analysis = _analyze_rules(mappings, endpoint)
+        _check_for_unrecoverable_tables(analysis)
+        return analysis
+    finally:
+        endpoint.close()
 
 
 def reconstruct(
@@ -774,16 +886,14 @@ def reconstruct(
     rdf_graph_str = str(rdf_graph)
 
     mappings, source_db_url = _load_mapping_rules(mapping, rdf_graph_str, source_db_url)
-    analysis = _analyze_rules(mappings)
-    _check_for_unrecoverable_tables(analysis)
-
     endpoint: Endpoint | None = None
     schema_retrievers: dict[str, DatabaseSchemaRetriever] = {}
     try:
+        endpoint = EndpointFactory.create_from_url(rdf_graph_str)
+        analysis = _analyze_rules(mappings, endpoint)
+        _check_for_unrecoverable_tables(analysis)
         if source_db_url is not None:
             schema_retrievers["DataSource1"] = DatabaseSchemaRetriever(source_db_url)
-
-        endpoint = EndpointFactory.create_from_url(rdf_graph_str)
 
         reconstructed_table_count = 0
         for table_name_value, source_rules in mappings.groupby("logical_source_value"):

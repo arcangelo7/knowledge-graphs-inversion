@@ -33,9 +33,11 @@ When a subject template maps multiple source rows to the same IRI, those rows co
 
 Some mappings put a column's values in the graph without recording which column they came from. The values are there, but nothing says where they belong, so the algorithm leaves those columns out of the reconstruction instead of filling them with values that could be wrong. The other columns are reconstructed as usual. When a table has no column left, inversion stops with `NonInvertibleError`.
 
-Four mapping patterns produce such columns.
+Five mapping patterns produce such columns.
 
 *Indistinguishable subject templates.* When several triples maps for the same source table use compatible subject templates and emit the same predicate-object patterns, a subject-only column is unassignable. For example, if one triples map uses `http://example.com/{p4}` as its subject and no triple elsewhere exposes `p4`, the graph contains several subjects with the same observable literals and no RDF-level discriminator that identifies which one represents `p4`.
+
+*Indistinguishable predicate maps.* Two predicate maps that connect the same subject and object forms in the same graph, and that build IRIs of the same shape, are interchangeable. Columns exposed only by those predicate maps are unassignable. A different IRI pattern, object, or graph provides enough evidence to distinguish them.
 
 *Indistinguishable object maps.* Two object maps that hang off the same subject and the same predicate, and that build terms of the same shape, are interchangeable too. For example, `http://example.org/friend/{p2}` and `http://example.org/friend/{p3}` under one predicate produce two IRIs, and the triples they belong to differ in nothing else, so neither IRI can be traced back to `p2` or `p3`. Two column-valued object maps behave the same way, because their literals carry no sign of the column that produced them. Columns that only such object maps expose are unassignable. Object maps that a language tag, a datatype, a graph map or a different template pattern tells apart are inverted normally.
 
@@ -49,7 +51,7 @@ R2RML specifies that if any column referenced by the subject template contains N
 
 ## Concatenated template placeholders
 
-When a value must be extracted only from a template, the extraction logic relies on literal separators between placeholders to determine where one value ends and the next begins. Templates like `{FirstName}{LastName}` with no separator between them are ambiguous: given the string `JohnSmith`, there is no way to determine the boundary. If those columns are also available through object maps, KGI uses the object values instead of relying on the ambiguous subject template.
+When a value must be extracted only from a template, the extraction logic relies on literal separators between placeholders to determine where one value ends and the next begins. Templates like `{FirstName}{LastName}` with no separator between them are ambiguous: given the string `JohnSmith`, there is no way to determine the boundary. A separated template can also be ambiguous for a particular term. For example, `{FirstName} {LastName}` maps both `(Maria, De Luca)` and `(Maria De, Luca)` to `Maria De Luca`. KGI checks the observed terms before reconstruction and omits columns exposed only by a template that admits several decompositions. Evidence from another term map still makes a column recoverable.
 
 ## Unemitted join keys
 

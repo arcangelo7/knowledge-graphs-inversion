@@ -430,6 +430,10 @@ def non_object_exposed_references(rule: pd.Series) -> set[str]:
     return _exposed_references(rule, ("subject", "predicate", "graph"))
 
 
+def non_predicate_exposed_references(rule: pd.Series) -> set[str]:
+    return _exposed_references(rule, ("subject", "object", "graph"))
+
+
 def _subject_group_references(subject_rules: pd.DataFrame) -> tuple[set[str], set[str]]:
     subject_references: set[str] = set()
     non_subject_references: set[str] = set()

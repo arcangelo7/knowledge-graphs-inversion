@@ -37,7 +37,11 @@ from kgi.query import (
     query_triples,
 )
 from kgi.schema import ColumnInfo, infer_type_from_value_with_schema
-from kgi.triples import QueryTriple, SubjectTriple
+from kgi.triples import (
+    QueryTriple,
+    SubjectTriple,
+    has_multiple_template_decompositions,
+)
 from kgi.utils import Codex, IdGenerator, insert_columns, sparql_to_python_type
 
 
@@ -208,6 +212,75 @@ def test_indistinguishable_object_maps_lose_their_exclusive_columns() -> None:
     assert _unrecoverable_references(distinguished_by_predicate) == {
         "data": frozenset()
     }
+
+
+def test_indistinguishable_predicate_templates_lose_their_exclusive_columns() -> None:
+    first_rule = _rule("p1", "p1")
+    first_rule["predicate_map_type"] = RML_TEMPLATE
+    first_rule["predicate_map_value"] = "http://example.com/property/{p2}"
+    second_rule = _rule("p1", "p1")
+    second_rule["predicate_map_type"] = RML_TEMPLATE
+    second_rule["predicate_map_value"] = "http://example.com/property/{p3}"
+    mappings = pd.DataFrame([first_rule, second_rule])
+    insert_columns(mappings)
+
+    assert _unrecoverable_references(mappings) == {"data": frozenset({"p2", "p3"})}
+
+    second_rule["predicate_map_value"] = "http://example.com/relation/{p3}"
+    distinguished = pd.DataFrame([first_rule, second_rule])
+    insert_columns(distinguished)
+
+    assert _unrecoverable_references(distinguished) == {"data": frozenset()}
+
+
+def test_template_decomposition_depends_on_the_observed_value(tmp_path: Path) -> None:
+    assert has_multiple_template_decompositions("Maria De Luca", "([^/]*)\\ ([^/]*)")
+    assert not has_multiple_template_decompositions("Alice Rossi", "([^/]*)\\ ([^/]*)")
+
+    rule = _rule("p1", "p1")
+    rule["object_map_type"] = RML_TEMPLATE
+    rule["object_map_value"] = "{p2} {p3}"
+    rule["object_termtype"] = RML_LITERAL
+    mappings = pd.DataFrame([rule])
+    insert_columns(mappings)
+    rdf_file = tmp_path / "data.nq"
+    rdf_file.write_text(
+        '<http://example.com/table/1> <http://example.com/p1> "Maria De Luca" .\n',
+        encoding="utf-8",
+    )
+    endpoint = LocalSparqlGraphStore(str(rdf_file))
+    try:
+        analysis = _analyze_rules(mappings, endpoint)
+    finally:
+        endpoint.close()
+
+    assert analysis["data"].unrecoverable == frozenset({"p2", "p3"})
+
+
+def test_ambiguous_template_keeps_a_column_exposed_by_another_map(
+    tmp_path: Path,
+) -> None:
+    ambiguous_rule = _rule("p1", "p1")
+    ambiguous_rule["object_map_type"] = RML_TEMPLATE
+    ambiguous_rule["object_map_value"] = "{p2} {p3}"
+    ambiguous_rule["object_termtype"] = RML_LITERAL
+    evidence_rule = _rule("p1", "p2")
+    evidence_rule["predicate_map_value"] = "http://example.com/given"
+    mappings = pd.DataFrame([ambiguous_rule, evidence_rule])
+    insert_columns(mappings)
+    rdf_file = tmp_path / "data.nq"
+    rdf_file.write_text(
+        '<http://example.com/table/1> <http://example.com/p1> "Maria De Luca" .\n'
+        '<http://example.com/table/1> <http://example.com/given> "Maria" .\n',
+        encoding="utf-8",
+    )
+    endpoint = LocalSparqlGraphStore(str(rdf_file))
+    try:
+        analysis = _analyze_rules(mappings, endpoint)
+    finally:
+        endpoint.close()
+
+    assert analysis["data"].unrecoverable == frozenset({"p3"})
 
 
 def test_indistinguishable_graph_templates_lose_their_exclusive_columns() -> None:

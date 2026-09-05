@@ -5,6 +5,7 @@
 """Triple classes for SPARQL query generation."""
 
 import json
+import re
 from typing import cast
 
 import pandas as pd
@@ -35,6 +36,38 @@ def _same_value_filter(left_var: str, right_var: str) -> str:
 def has_adjacent_template_captures(references_template: str) -> bool:
     parts = references_template.split("([^/]*)")
     return any(part == "" for part in parts[1:-1])
+
+
+def has_multiple_template_decompositions(value: str, references_template: str) -> bool:
+    parts = references_template.split("([^/]*)")
+    if len(parts) < 3:
+        return False
+
+    matches = 0
+
+    def count_matches(part_index: int, position: int) -> None:
+        nonlocal matches
+        if matches > 1:
+            return
+        literal = parts[part_index]
+        literal_match = re.match(literal, value[position:])
+        if literal_match is None:
+            return
+        capture_start = position + literal_match.end()
+        if part_index == len(parts) - 1:
+            if capture_start == len(value):
+                matches += 1
+            return
+
+        next_literal = parts[part_index + 1]
+        for capture_end in range(capture_start, len(value) + 1):
+            if "/" in value[capture_start:capture_end]:
+                break
+            if re.match(next_literal, value[capture_end:]) is not None:
+                count_matches(part_index + 1, capture_end)
+
+    count_matches(0, 0)
+    return matches > 1
 
 
 def extract_from_iri_template(
@@ -200,6 +233,27 @@ class QueryTriple(Triple):
         pattern = self._generate_pattern(id_generator, codex, all_mapping_rules)
         if pattern is None:
             return None
+        if (
+            self.rule["predicate_map_type"] == RML_TEMPLATE
+            and not self.predicate_references & self.excluded_references
+        ):
+            pattern = "\n".join(
+                (
+                    pattern,
+                    extract_from_iri_template(
+                        template_value=str(self.rule["predicate_map_value"]),
+                        references_template=str(
+                            self.rule["predicate_references_template"]
+                        ),
+                        references=[
+                            str(value) for value in self.rule["predicate_references"]
+                        ],
+                        codex=codex,
+                        id_generator=id_generator,
+                        slice_label="predicate",
+                    ),
+                )
+            )
         if str(self.rule["object_map_type"]) == RML_PARENT_TRIPLES_MAP:
             return pattern
         return self._wrap_in_graph(pattern)
@@ -214,7 +268,11 @@ class QueryTriple(Triple):
                 "subject",
             )
         )
-        predicate = f"<{self.rule['predicate_map_value']}>"
+        predicate = (
+            f"<{self.rule['predicate_map_value']}>"
+            if self.rule["predicate_map_type"] == RML_CONSTANT
+            else f"?{codex.get_id(str(self.rule['predicate_map_value']))}"
+        )
         object_map_value = str(self.rule["object_map_value"])
         object_map_type = str(self.rule["object_map_type"])
         object_references_template = str(self.rule["object_references_template"])

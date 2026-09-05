@@ -1,0 +1,2 @@
+<http://example.com/person/1> <http://example.com/property/label> "Alice" .
+<http://example.com/person/1> <http://example.com/property/name> "Alice" .
