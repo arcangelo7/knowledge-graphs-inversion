@@ -168,7 +168,7 @@ def compare_databases(
             populated_extra = [
                 column
                 for column in extra_columns
-                if not dest_frame[column].map(_is_empty_cell).all()
+                if not all(_is_empty_cell(value) for value in dest_frame[column])
             ]
             if populated_extra:
                 problems.append(

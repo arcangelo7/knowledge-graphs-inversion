@@ -22,6 +22,7 @@ from kgi import (
     MappingAnalysis,
     NoDataError,
     NonInvertibleError,
+    TableAnalysis,
     UnsupportedMappingError,
     analyze_mapping,
 )
@@ -155,6 +156,18 @@ def forward_conformance_failed(
 
 
 _db_connection = DatabaseConnection()
+
+
+def _provenance_analysis(analysis: MappingAnalysis) -> MappingAnalysis:
+    # Recorded provenance names the source tuple behind each triple, so every column
+    # a term map reads comes back with its own value, including those the graph alone
+    # leaves unattributed. Columns no term map reads stay outside the references.
+    return {
+        table_name: TableAnalysis(
+            table.references, frozenset(), table.subject_reference_sets
+        )
+        for table_name, table in analysis.items()
+    }
 
 
 def _compare_reconstruction(
@@ -367,6 +380,8 @@ def evaluate_souffle_case(
         dest_db_url,
         inversion_mode,
     )
+    if inversion_mode != "rdf":
+        analysis = _provenance_analysis(analysis)
     return _compare_reconstruction(
         analysis, source_db_url, dest_db_url, allow_empty_destination=False
     )

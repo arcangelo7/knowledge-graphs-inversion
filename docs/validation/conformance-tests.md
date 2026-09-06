@@ -104,7 +104,7 @@ R2RMLTC0020a maps a single-column table through a subject map with an IRI term t
 | Duplicate rows collapsed in RDF | `R2RMLTC0005a`, `R2RMLTC0005b`, `R2RMLTC0012a`, `R2RMLTC0012b`, `R2RMLTC0012e` | Partially inverted: multiplicity lost |
 | Constant-only mapping | `R2RMLTC0006a` | Non-invertible |
 | Single-placeholder IRI template | `R2RMLTC0020a` | Non-invertible |
-| Adjacent template placeholders without other evidence | `INVTC0001a` | Partially inverted: columns lost |
+| Adjacent template placeholders, with no term map of the same table naming those columns | `INVTC0001a`, `R2RMLTC0012b` | Partially inverted: columns lost |
 | Template separator present in an observed value | `INVTC0001b` | Partially inverted: columns lost |
 | Indistinguishable subject maps | `INVTC0002a` | Partially inverted: columns lost |
 | Indistinguishable predicate maps | `INVTC0002b` | Partially inverted: columns lost |
