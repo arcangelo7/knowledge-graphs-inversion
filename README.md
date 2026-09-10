@@ -57,13 +57,7 @@ make test-conformance
 
 ## Benchmarking
 
-Benchmark targets initialize submodules, run the needed Docker Compose services, validate completed inversions, and clean up Compose services on exit:
-
-```bash
-make benchmark-krown
-```
-
-The KROWN collector runs on the Linux host and reports system-wide CPU, memory, disk, and network activity. Avoid unrelated workloads while collecting results. The benchmark guides cover [KROWN](https://arcangelo7.github.io/knowledge-graphs-inversion/benchmarking/krown/), its [saved results](https://arcangelo7.github.io/knowledge-graphs-inversion/benchmarking/krown-results/), and [GTFS Bench](https://arcangelo7.github.io/knowledge-graphs-inversion/benchmarking/gtfs/).
+Benchmark targets initialize submodules, run the needed Docker Compose services, validate completed inversions, and clean up Compose services on exit. Because the KROWN collector reports system-wide CPU, memory, disk, and network activity, avoid unrelated workloads while collecting results. The benchmark guides cover [KROWN](https://arcangelo7.github.io/knowledge-graphs-inversion/benchmarking/krown/) and [GTFS Bench](https://arcangelo7.github.io/knowledge-graphs-inversion/benchmarking/gtfs/).
 
 ## License
 

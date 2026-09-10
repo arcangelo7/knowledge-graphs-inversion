@@ -55,7 +55,7 @@ from benchmarks.krown_metrics import (
     read_step_duration,
     resource_config_directory,
 )
-from benchmarks.krown_plots import plot_timing_charts
+from benchmarks.krown_plots import failure_label, plot_timing_charts
 from benchmarks.krown_stats import (
     aggregate_scenario_statistics,
     calculate_timing_statistics,
@@ -106,6 +106,19 @@ InversionEngine = Literal["kgi", "souffle"]
 EXIT_TIMEOUT = 20
 EXIT_OUT_OF_MEMORY = 21
 EXIT_NON_INVERTIBLE = 23
+
+RMLMAPPER_8_1_0_FORWARD_FAILURES = {
+    "raw_10000000_20_0": "out_of_memory",
+    "raw_100000_20_5000": "out_of_memory",
+    "raw_100000_20_10000": "out_of_memory",
+    "namedgraph_15SM-NG_0POM-NG_1TM_20POM_True": "out_of_memory",
+    "namedgraph_15SM-NG_0POM-NG_1TM_20POM_False": "out_of_memory",
+    "namedgraph_15SM-NG_15POM-NG_1TM_10POM_True": "out_of_memory",
+    "namedgraph_15SM-NG_15POM-NG_1TM_10POM_False": "out_of_memory",
+    "joins_mutiple_1-1_5jc_50.0": "timeout",
+    "joins_mutiple_1-1_10jc_50.0": "timeout",
+    "joins_mutiple_1-1_15jc_50.0": "timeout",
+}
 
 
 def _quoted(identifier: str) -> str:
@@ -684,9 +697,9 @@ class KrownBenchmarkRunner:
         sample_interval: float,
         suites: tuple[str, ...],
         scenario_name: str | None,
-        forward_engine: ForwardEngine = "rmlmapper",
-        inversion_engine: InversionEngine = "kgi",
-        souffle_mode: SouffleMode = "rdf",
+        forward_engine: ForwardEngine,
+        inversion_engine: InversionEngine,
+        souffle_mode: SouffleMode,
         cleanup_tables: bool = True,
         resume_session: Path | None = None,
     ):
@@ -1069,9 +1082,11 @@ class KrownBenchmarkRunner:
         self,
         scenario: KrownScenario,
         error: ScenarioExecutionFailure,
+        *,
+        executed: bool = True,
     ) -> dict[str, object]:
         return {
-            "status": "failed",
+            "status": "failed" if executed else "skipped",
             "scenario_name": scenario.generated_name,
             "display_name": scenario.display_name,
             "suite": scenario.suite,
@@ -1083,7 +1098,7 @@ class KrownBenchmarkRunner:
                 "file": scenario.source_config,
                 "overrides": scenario.configuration_overrides,
             },
-            "execution_time": error.elapsed_seconds,
+            "execution_time": error.elapsed_seconds if executed else None,
             "failure": {
                 "stage": error.stage,
                 "kind": error.kind,
@@ -1092,6 +1107,22 @@ class KrownBenchmarkRunner:
                 "diagnostic": error.diagnostic,
             },
         }
+
+    def _known_forward_failure(
+        self,
+        scenario: KrownScenario,
+    ) -> ScenarioExecutionFailure | None:
+        if (
+            self.forward_engine != "rmlmapper"
+            or self.forward_definition.version != "8.1.0"
+            or scenario.generated_name not in RMLMAPPER_8_1_0_FORWARD_FAILURES
+        ):
+            return None
+        return ScenarioExecutionFailure(
+            "forward_mapping",
+            RMLMAPPER_8_1_0_FORWARD_FAILURES[scenario.generated_name],
+            "Skipped expected RMLMapper 8.1.0 forward failure; no execution measured",
+        )
 
     def _validate_inversion(
         self,
@@ -1479,6 +1510,10 @@ class KrownBenchmarkRunner:
             any(run["status"] == "failed" for run in runs)
             for runs in scenario_runs.values()
         )
+        skipped_scenarios = sum(
+            any(run["status"] == "skipped" for run in runs)
+            for runs in scenario_runs.values()
+        )
         common = {
             "timestamp": self.timestamp,
             "benchmark_type": "KROWN",
@@ -1493,6 +1528,7 @@ class KrownBenchmarkRunner:
             "sparql_engine": SPARQL_ENGINE,
             "iterations": self.iterations,
             "failed_scenarios": failed_scenarios,
+            "skipped_scenarios": skipped_scenarios,
             "suites": list(self.suites),
             "series": self._series_data(),
             "provenance": {
@@ -1548,7 +1584,7 @@ class KrownBenchmarkRunner:
             name: runs
             for name, runs in scenario_runs.items()
             if len(runs) == self.iterations
-            or any(run["status"] == "failed" for run in runs)
+            or any(run["status"] != "completed" for run in runs)
         }
         self._write_raw_results(measured, partial_file)
         return partial_file
@@ -1568,7 +1604,9 @@ class KrownBenchmarkRunner:
         aggregated_scenarios = {}
         for scenario in self.scenarios:
             runs = scenario_runs[scenario.generated_name]
-            failed_run = next((run for run in runs if run["status"] == "failed"), None)
+            unsuccessful_run = next(
+                (run for run in runs if run["status"] != "completed"), None
+            )
             scenario_data: dict[str, object] = {
                 "display_name": scenario.display_name,
                 "suite": scenario.suite,
@@ -1582,9 +1620,9 @@ class KrownBenchmarkRunner:
                 },
                 "raw_runs": runs,
             }
-            if failed_run is not None:
-                scenario_data["status"] = "failed"
-                scenario_data["failure"] = failed_run["failure"]
+            if unsuccessful_run is not None:
+                scenario_data["status"] = unsuccessful_run["status"]
+                scenario_data["failure"] = unsuccessful_run["failure"]
                 scenario_data["statistics"] = None
                 scenario_data["resource_summary"] = None
             else:
@@ -1645,13 +1683,12 @@ class KrownBenchmarkRunner:
                     if isinstance(parameter_value, (int, float))
                     else str(parameter_value)
                 )
-                if scenario_data["status"] == "failed":
-                    failure = cast(dict[str, object], scenario_data["failure"])
+                if scenario_data["status"] != "completed":
                     empty_columns = len(table.columns) - 2
                     table.add_row(
                         parameter_label,
                         *(["-"] * empty_columns),
-                        str(failure["outcome"]),
+                        failure_label(scenario_data),
                     )
                     continue
 
@@ -1753,8 +1790,24 @@ class KrownBenchmarkRunner:
                 for scenario in self.scenarios:
                     measured = scenario_runs[scenario.generated_name]
                     if measured:
-                        if scenario.generated_name not in failed_scenarios:
+                        if all(run["status"] == "completed" for run in measured):
                             self._restore_resource_summaries(scenario, measured)
+                        progress.advance(
+                            task,
+                            advance=self.iterations * stages_per_iteration,
+                        )
+                        continue
+                    known_failure = self._known_forward_failure(scenario)
+                    if known_failure is not None:
+                        result = self._build_failure_result(
+                            scenario, known_failure, executed=False
+                        )
+                        result["iteration"] = None
+                        scenario_runs[scenario.generated_name].append(result)
+                        console.print(
+                            f"{scenario.generated_name}: {known_failure.outcome} "
+                            "expected during forward_mapping; skipped without execution"
+                        )
                         progress.advance(
                             task,
                             advance=self.iterations * stages_per_iteration,
@@ -1867,7 +1920,10 @@ class KrownBenchmarkRunner:
                     f"Benchmark completed with {len(failed_scenarios)} failed scenarios"
                 )
                 return 1
-            console.print("Benchmark completed with the expected outcomes")
+            console.print(
+                "Benchmark completed with the expected outcomes; "
+                f"{stats_data['skipped_scenarios']} known forward failures skipped"
+            )
             return 0
         finally:
             if not results_saved and any(scenario_runs.values()):
@@ -1907,29 +1963,30 @@ def parse_suites(value: str) -> tuple[str, ...]:
 
 def _benchmark_main(arguments: list[str]) -> int:
     parser = argparse.ArgumentParser(
-        description="Run the KROWN scenarios relevant to KG inversion"
+        description="Run the KROWN scenarios relevant to KG inversion",
+        allow_abbrev=False,
     )
     parser.add_argument(
         "--mode",
         choices=("forward", "backward", "roundtrip"),
-        default="roundtrip",
+        required=True,
     )
     parser.add_argument(
         "--iterations",
         type=parse_iterations,
-        default=5,
+        required=True,
         help="Odd number of runs per scenario, at least 3",
     )
     parser.add_argument(
         "--interval",
         type=parse_sample_interval,
-        default=0.1,
+        required=True,
         help="System metric sample interval in seconds",
     )
     parser.add_argument(
         "--suites",
         type=parse_suites,
-        default=SUITES,
+        required=True,
         help=(
             "Comma-separated suites: raw,duplicates-empty,mappings,named-graphs,joins"
         ),
@@ -1943,19 +2000,19 @@ def _benchmark_main(arguments: list[str]) -> int:
     parser.add_argument(
         "--forward-engine",
         choices=tuple(FORWARD_ENGINES),
-        default="rmlmapper",
+        required=True,
         help="Materialization engine, also used by the round trip validation",
     )
     parser.add_argument(
         "--inversion-engine",
         choices=("kgi", "souffle"),
-        default="kgi",
+        required=True,
         help="Inversion engine: kgi (SPARQL) or souffle (Datalog)",
     )
     parser.add_argument(
         "--souffle-mode",
         choices=("rdf", "provenance", "hybrid"),
-        default="rdf",
+        required=True,
         help="Soufflé inversion input: rdf, provenance, or hybrid",
     )
     args = parser.parse_args(arguments)

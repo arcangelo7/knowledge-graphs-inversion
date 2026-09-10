@@ -10,8 +10,6 @@ path = [
     "pyproject.toml",
     "uv.lock",
     "docs/.gitignore",
-    "docs/benchmarking/images/*.png",
-    "docs/benchmarking/results/*.json",
     "benchmarks/krown/config/**",
     "CHANGELOG.md",
     "README.md",

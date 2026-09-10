@@ -46,7 +46,6 @@ console = Console()
 
 RR = Namespace("http://www.w3.org/ns/r2rml#")
 SPARQL_ENGINE = "pyoxigraph"
-DEFAULT_SCALES = [1, 5, 10]
 DEFAULT_GTFS_MYSQL_TIMEOUT_SECONDS = 120
 TABLE_HEADERS = {
     "AGENCY": [
@@ -495,16 +494,16 @@ def _metric(value: object) -> float:
 class GtfsBenchmarkRunner:
     def __init__(
         self,
-        scales: list[int] | None = None,
+        scales: list[int],
+        iterations: int,
         cleanup_tables: bool = True,
-        iterations: int = 1,
     ):
         self.project_root = Path(__file__).parent.parent
         self.gtfs_bench_dir = self.project_root / "gtfs-bench"
         self.mapping_source = self.gtfs_bench_dir / "mappings" / "gtfs-rdb.r2rml.ttl"
         self.scenarios_root = Path(__file__).parent / "gtfs" / "scenarios"
         self.results_dir = Path(__file__).parent / "gtfs" / "results"
-        self.scales = scales if scales is not None else DEFAULT_SCALES
+        self.scales = scales
         self.cleanup_tables = cleanup_tables
         self.iterations = iterations
 
@@ -1080,6 +1079,7 @@ class GtfsBenchmarkRunner:
 def main():  # pragma: no cover
     parser = argparse.ArgumentParser(
         description="GTFS Benchmark Runner for Knowledge Graph Inversion (Docker)",
+        allow_abbrev=False,
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Usage:
@@ -1089,13 +1089,13 @@ Usage:
     parser.add_argument(
         "--iterations",
         type=int,
-        default=1,
+        required=True,
         help="Number of times to run each scenario",
     )
     parser.add_argument(
         "--scales",
         type=parse_scales,
-        default=DEFAULT_SCALES,
+        required=True,
         help="Comma-separated GTFS scales",
     )
 

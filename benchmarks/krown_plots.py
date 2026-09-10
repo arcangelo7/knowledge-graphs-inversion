@@ -16,6 +16,14 @@ import numpy as np
 from benchmarks.forward_engines import FORWARD_ENGINES, ForwardEngine
 
 
+def failure_label(result: dict[str, object]) -> str:
+    failure = cast(dict[str, object], result["failure"])
+    label = str(failure["outcome"])
+    if result["status"] == "skipped":
+        label += " (expected; skipped)"
+    return label
+
+
 def _timing_points(
     stats_data: dict[str, object],
     series: dict[str, object],
@@ -43,12 +51,11 @@ def _timing_points(
         else:
             parameter_values.append(str(parameter_value))
 
-        if scenario["status"] == "failed":
-            failure = cast(dict[str, object], scenario["failure"])
+        if scenario["status"] != "completed":
             means.append(float("nan"))
             lower_errors.append(float("nan"))
             upper_errors.append(float("nan"))
-            failure_labels.append(str(failure["outcome"]))
+            failure_labels.append(failure_label(scenario))
             continue
 
         statistics = cast(dict[str, object], scenario["statistics"])
@@ -107,12 +114,12 @@ def plot_timing_charts(
                 capsize=5,
             )
 
-        for x_value, failure_label in zip(x_values, failure_labels, strict=True):
-            if failure_label is not None:
+        for x_value, label in zip(x_values, failure_labels, strict=True):
+            if label is not None:
                 axis.text(
                     x_value,
                     0.02,
-                    failure_label,
+                    label,
                     color="#b22222",
                     ha="center",
                     va="bottom",
@@ -123,6 +130,7 @@ def plot_timing_charts(
         axis.set_title(f"KROWN {cast(str, series['title'])}")
         axis.set_xlabel(cast(str, series["parameter_label"]))
         axis.set_ylabel("Time (s), mean with 95% CI")
+        axis.set_xlim(-0.5, len(x_values) - 0.5)
         axis.set_xticks(
             x_values,
             [
