@@ -5,6 +5,7 @@
 import csv
 import importlib
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from functools import lru_cache
@@ -136,6 +137,22 @@ def _add_framework_path(project_root: Path, souffle: bool = False) -> None:
     framework_path = str(directory)
     if framework_path not in sys.path:
         sys.path.insert(0, framework_path)
+
+
+def _wait_for_container_exit(_docker: object, container_id: str) -> int:
+    process = subprocess.run(
+        ["docker", "wait", container_id],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return int(process.stdout.strip())
+
+
+def _use_container_exit_status() -> None:
+    docker_module = importlib.import_module("bench_executor.docker")
+    docker_class = getattr(docker_module, "Docker")
+    setattr(docker_class, "wait", _wait_for_container_exit)
 
 
 def resource_config_directory(project_root: Path) -> Path:
@@ -271,6 +288,7 @@ class OfficialKrownExecutor:
         definition: ForwardEngineDefinition,
     ):
         _add_framework_path(project_root, souffle=definition.souffle_resources)
+        _use_container_exit_status()
         load_resource_module(project_root, definition)
         executor_module = importlib.import_module("bench_executor.executor")
         executor_class = cast(ExecutorFactory, getattr(executor_module, "Executor"))
