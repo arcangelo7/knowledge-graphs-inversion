@@ -13,10 +13,11 @@ an explicit reverse pipeline:
 3) run Souffle on the reverse Datalog using RDF inputs from /data/shared.
 """
 
+import json
 import os
 import shutil
 import psutil
-import threading
+import subprocess
 import tempfile
 from typing import Optional
 from bench_executor.container import Container
@@ -48,6 +49,8 @@ class ReverseSouffle(Container):
         self._config_path = os.path.abspath(config_path)
         self._logger = Logger(__name__, directory, verbose)
         self._verbose = verbose
+        self.failure_kind: str | None = None
+        self.diagnostic = ''
         self._reverse_script_host_path = self._resolve_reverse_script(self._config_path)
         self._reverse_script_container_path = '/souffle/reverseR2RML.py'
 
@@ -79,24 +82,44 @@ class ReverseSouffle(Container):
 
     def _execute_with_timeout(self, command: str) -> bool:
         self._logger.info(f'Executing ReverseSouffle command: {command}')
-        result = [False]
-        exc_box = [None]
-
-        def _run():
-            try:
-                result[0] = self.run_and_wait_for_exit(command)
-            except Exception as exc:
-                exc_box[0] = exc
-
-        t = threading.Thread(target=_run, daemon=True)
-        t.start()
-        t.join(TIMEOUT)
-        if t.is_alive():
-            self._logger.warning(f'Timeout ({TIMEOUT}s) reached for ReverseSouffle')
+        self.failure_kind = None
+        self.diagnostic = ''
+        if not self.run(command):
             return False
-        if exc_box[0] is not None:
-            raise exc_box[0]
-        return result[0]
+
+        try:
+            try:
+                completed = subprocess.run(
+                    ['docker', 'wait', self._container_id],
+                    capture_output=True, text=True, check=True, timeout=TIMEOUT,
+                )
+                status_code = int(completed.stdout.strip())
+            except subprocess.TimeoutExpired:
+                self.failure_kind = 'timeout'
+                subprocess.run(
+                    ['docker', 'stop', self._container_id],
+                    capture_output=True, text=True, check=True, timeout=30,
+                )
+                status_code = self._docker.wait(self._container_id)
+
+            inspection = subprocess.run(
+                ['docker', 'inspect', '--format', '{{json .State}}', self._container_id],
+                capture_output=True, text=True, check=True, timeout=30,
+            )
+            state = json.loads(inspection.stdout)
+            logs = '\n'.join(self._docker.logs(self._container_id))
+            self.diagnostic = f'Docker state: {inspection.stdout.strip()}\n{logs}'
+            if self.failure_kind is None and (
+                state['OOMKilled'] or 'OutOfMemoryError' in logs
+            ):
+                self.failure_kind = 'out_of_memory'
+            if self.failure_kind is not None or status_code != 0:
+                self._logger.error(self.diagnostic)
+                return False
+            self._logger.debug(logs)
+            return True
+        finally:
+            self.stop()
 
     def execute(self, arguments: list) -> bool:
         command = ' '.join(arguments)

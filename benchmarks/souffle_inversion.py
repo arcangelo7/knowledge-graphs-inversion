@@ -144,6 +144,9 @@ def attach_database_to_krown_network(container_name: str) -> None:
 
 
 class ReverseSouffleResource(Protocol):
+    failure_kind: str | None
+    diagnostic: str
+
     def execute_reverse_only(
         self,
         mapping_file: str,

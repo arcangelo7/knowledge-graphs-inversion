@@ -7,6 +7,7 @@
 import argparse
 import csv
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -587,9 +588,12 @@ class ScenarioOperations:
             rdb_name=f"{self.database.database}?currentSchema={SOURCE_SCHEMA}",
             rdb_type="PostgreSQL",
         ):
-            raise SouffleInversionError(
-                f"ReverseSouffle failed for {self.scenario.generated_name}"
-            )
+            message = f"ReverseSouffle failed for {self.scenario.generated_name}"
+            if resource.failure_kind in ("out_of_memory", "timeout"):
+                raise ScenarioExecutionFailure(
+                    "backward", resource.failure_kind, message, resource.diagnostic
+                )
+            raise SouffleInversionError(message)
 
         engine = create_engine(self.database.sqlalchemy_url())
         try:
@@ -609,12 +613,20 @@ class ScenarioOperations:
         souffle_directory: Path,
         destination: Path,
         souffle_mode: SouffleMode,
+        interrupted: bool,
     ) -> None:
         copy_souffle_files(
             souffle_directory,
             destination,
             inversion_input_files(souffle_directory, souffle_mode),
         )
+        if interrupted:
+            with os.scandir(self.shared_dir) as entries:
+                available_files = tuple(
+                    entry.name for entry in entries if entry.is_file()
+                )
+            copy_souffle_files(self.shared_dir, destination, available_files)
+            return
         recovered_files = tuple(
             relation.recovered_file
             for relation in parse_source_relations(self.shared_dir)
@@ -1412,6 +1424,7 @@ class KrownBenchmarkRunner:
                 cast(Path, forward.souffle_directory),
                 run_path,
                 self.souffle_mode,
+                interrupted=scenario_failure is not None,
             )
 
         inversion_time = read_step_duration(run_path / "metrics.csv", 1)
