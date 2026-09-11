@@ -16,7 +16,8 @@ FROM alloka/souffle:v1.0.0@sha256:0e9288ca6f7a63faf93f4358f210de0ffcab6e3e2405d8
 COPY R2RML2Datalog-Translator/functors.cpp /tmp/functors.cpp
 COPY --from=translator-build /source/target/rulegen.jar /opt/kgi/souffle/rulegen.jar
 
-RUN g++ -std=c++17 -shared -fPIC /tmp/functors.cpp \
+RUN g++ -std=c++17 -I/souffle/include -DRAM_DOMAIN_SIZE=32 \
+        -shared -fPIC /tmp/functors.cpp \
         -o /opt/kgi/souffle/libfunctors.so
 
 FROM souffle-assets AS krown-souffle

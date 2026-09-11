@@ -76,7 +76,8 @@ translator-assets:
 		docker run --rm --user "$$(id -u):$$(id -g)" \
 			-v "$(abspath $(R2RML_TRANSLATOR_BUILD)):/work" \
 			--entrypoint g++ $(CONFORMANCE_SOUFFLE_IMAGE) \
-			-std=c++17 -shared -fPIC /work/functors.cpp -o /work/lib/libfunctors.so; \
+			-std=c++17 -I/souffle/include -DRAM_DOMAIN_SIZE=32 \
+			-shared -fPIC /work/functors.cpp -o /work/lib/libfunctors.so; \
 	fi; \
 	unzip -p "$(R2RML_TRANSLATOR_JAR)" META-INF/MANIFEST.MF | grep -q '^Main-Class: translator.r2rml.datalog.Main'; \
 	jar tf "$(R2RML_TRANSLATOR_JAR)" | grep -q '^translator/r2rml/datalog/Main.class$$'; \
