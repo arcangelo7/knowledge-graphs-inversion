@@ -6,8 +6,7 @@
 
 import os
 import tempfile
-from collections.abc import Iterable, Iterator
-from itertools import islice
+from collections.abc import Iterator
 from typing import TypeAlias, cast
 
 from pyoxigraph import (
@@ -27,7 +26,6 @@ from kgi.base import Endpoint
 
 
 _BNODE_IRI_PREFIX = "urn:bnode:"
-_RDF_LOAD_BATCH_SIZE = 100_000
 
 RdfSubject: TypeAlias = NamedNode | BlankNode | Triple
 RdfObject: TypeAlias = NamedNode | BlankNode | Literal | Triple
@@ -92,12 +90,6 @@ def _quads_with_default_graph_union(
             )
 
 
-def _bulk_extend_in_batches(store: Store, quads: Iterable[Quad]) -> None:
-    iterator = iter(quads)
-    while batch := list(islice(iterator, _RDF_LOAD_BATCH_SIZE)):
-        store.bulk_extend(batch)
-
-
 def _has_explicit_blank_nodes(path: str) -> bool:
     previous_tail = b""
     with open(path, "rb") as f:
@@ -130,8 +122,7 @@ class LocalSparqlGraphStore(Endpoint):
         loaded = False
         try:
             normalize_blank_nodes = _has_explicit_blank_nodes(url)
-            _bulk_extend_in_batches(
-                self._store,
+            self._store.bulk_extend(
                 _quads_with_default_graph_union(url, rdf_format, normalize_blank_nodes),
             )
             loaded = True

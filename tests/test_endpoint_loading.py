@@ -49,7 +49,7 @@ def test_local_endpoint_loads_without_blank_nodes(tmp_path, endpoint_factory) ->
     assert result == [{"o": Literal("o")}]
 
 
-def test_local_endpoint_loads_rdf_in_exact_batches(monkeypatch, tmp_path) -> None:
+def test_local_endpoint_streams_rdf_in_one_bulk_import(monkeypatch, tmp_path) -> None:
     rdf_file = tmp_path / "data.nq"
     rdf_file.write_text(
         '<http://example.com/s1> <http://example.com/p> "o1" <http://example.com/g1> .\n'
@@ -62,10 +62,10 @@ def test_local_endpoint_loads_rdf_in_exact_batches(monkeypatch, tmp_path) -> Non
             self.batches: list[list[Quad]] = []
 
         def bulk_extend(self, quads) -> None:
+            assert iter(quads) is quads
             self.batches.append(list(quads))
 
     store = RecordingStore()
-    monkeypatch.setattr(endpoints, "_RDF_LOAD_BATCH_SIZE", 2)
     monkeypatch.setattr(endpoints, "Store", lambda path: store)
 
     endpoint = endpoints.LocalSparqlGraphStore(str(rdf_file))
@@ -84,8 +84,6 @@ def test_local_endpoint_loads_rdf_in_exact_batches(monkeypatch, tmp_path) -> Non
                 Literal("o1"),
                 DefaultGraph(),
             ),
-        ],
-        [
             Quad(
                 NamedNode("http://example.com/s2"),
                 NamedNode("http://example.com/p"),
@@ -98,14 +96,12 @@ def test_local_endpoint_loads_rdf_in_exact_batches(monkeypatch, tmp_path) -> Non
                 Literal("o2"),
                 DefaultGraph(),
             ),
-        ],
-        [
             Quad(
                 NamedNode("http://example.com/s3"),
                 NamedNode("http://example.com/p"),
                 Literal("o3"),
                 DefaultGraph(),
-            )
+            ),
         ],
     ]
 
