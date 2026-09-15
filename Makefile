@@ -15,6 +15,12 @@ endif
 ifneq ($(filter benchmark-gtfs benchmark-all,$(MAKECMDGOALS)),)
 $(foreach option,I S,$(if $(strip $($(option))),,$(error Missing required benchmark parameter: $(option))))
 endif
+SHEET ?= $(KROWN_SHEET_ID)
+CREDENTIALS ?=
+ifneq ($(filter export-krown-sheets,$(MAKECMDGOALS)),)
+$(foreach option,STATS SHEET,$(if $(strip $($(option))),,$(error Missing required export parameter: $(option))))
+endif
+KROWN_CREDENTIALS_ARG = $(if $(CREDENTIALS),--credentials=$(CREDENTIALS))
 SOUFFLE_MODES ?= rdf,provenance,hybrid
 DATABASE ?= postgresql
 KROWN_RMLMAPPER_IMAGE = kgconstruct/rmlmapper:v8.1.0
@@ -33,7 +39,7 @@ KROWN_SCENARIO_ARG = $(if $(SCENARIO),--scenario=$(SCENARIO))
 KROWN_RESUME_ARG = $(if $(RESUME),--resume=$(RESUME))
 KROWN_RUN = uv run python -m benchmarks.run_krown_benchmark --mode $(MODE) --iterations $(I) --interval $(INTERVAL) --suites $(SUITES) --forward-engine $(FORWARD_ENGINE) --inversion-engine $(INVERSION_ENGINE) --souffle-mode $(SOUFFLE_MODE) $(KROWN_SCENARIO_ARG) $(KROWN_RESUME_ARG)
 
-.PHONY: validate-krown-options validate-conformance-options submodules reverse-submodule translator-assets krown-images benchmark-krown benchmark-gtfs benchmark-all test-conformance
+.PHONY: validate-krown-options validate-conformance-options validate-sheets-options submodules reverse-submodule translator-assets krown-images benchmark-krown benchmark-gtfs benchmark-all test-conformance export-krown-sheets
 
 validate-krown-options:
 	@case "$(SOUFFLE_MODE)" in \
@@ -50,6 +56,14 @@ validate-conformance-options:
 		postgresql|mysql) ;; \
 		*) echo "DATABASE must be postgresql or mysql" >&2; exit 2 ;; \
 	esac
+
+validate-sheets-options:
+	@for stats in $(STATS); do \
+		test -r "$${stats%%=*}" || { echo "STATS entry is not readable: $${stats%%=*}" >&2; exit 2; }; \
+	done
+
+export-krown-sheets: validate-sheets-options
+	uv run python -m benchmarks.krown_sheets $(STATS) --spreadsheet-id $(SHEET) $(KROWN_CREDENTIALS_ARG)
 
 submodules:
 	git submodule update --init --recursive $(PUBLIC_SUBMODULES)

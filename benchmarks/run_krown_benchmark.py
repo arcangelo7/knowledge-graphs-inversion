@@ -37,6 +37,7 @@ from benchmarks.forward_engines import (
     FORWARD_ENGINES,
     ForwardEngine,
     ForwardEngineDefinition,
+    translator_rml_version,
 )
 from benchmarks.krown_catalog import (
     KROWN_REPOSITORY,
@@ -736,6 +737,11 @@ class KrownBenchmarkRunner:
             _git_commit(self.project_root / "ReverseR2RML")
             if "souffle" in (forward_engine, inversion_engine)
             else None
+        )
+        self.forward_rml_reader_version = (
+            translator_rml_version()
+            if forward_engine == "souffle"
+            else self.forward_definition.version
         )
         self.iterations = iterations
         self.sample_interval = sample_interval
@@ -1550,6 +1556,7 @@ class KrownBenchmarkRunner:
                 "reverse_r2rml_repository": REVERSE_R2RML_REPOSITORY,
                 "reverse_r2rml_commit": self.reverse_r2rml_commit,
                 "forward_engine_version": self.forward_definition.version,
+                "forward_rml_reader_version": self.forward_rml_reader_version,
                 "forward_executor": "KROWN Executor",
                 "backward_executor": (
                     "ReverseSouffle"

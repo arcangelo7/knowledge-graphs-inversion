@@ -3,9 +3,28 @@
 # SPDX-License-Identifier: ISC
 
 from dataclasses import dataclass
-from typing import Literal
+from pathlib import Path
+from typing import Literal, cast
+from xml.etree import ElementTree
 
 ForwardEngine = Literal["rmlmapper", "souffle", "morphkgc"]
+
+MAVEN_NAMESPACE = "{http://maven.apache.org/POM/4.0.0}"
+TRANSLATOR_POM = (
+    Path(__file__).resolve().parent.parent
+    / "R2RML2Datalog-Translator"
+    / "translator"
+    / "pom.xml"
+)
+
+
+def translator_rml_version() -> str:
+    """Version of the RMLMapper that rulegen.jar links to read relational sources."""
+    root = ElementTree.parse(TRANSLATOR_POM).getroot()
+    for dependency in root.iter(f"{MAVEN_NAMESPACE}dependency"):
+        if dependency.findtext(f"{MAVEN_NAMESPACE}artifactId") == "rmlmapper":
+            return cast(str, dependency.findtext(f"{MAVEN_NAMESPACE}version"))
+    raise LookupError(f"No rmlmapper dependency declared in {TRANSLATOR_POM}")
 
 
 @dataclass(frozen=True)
