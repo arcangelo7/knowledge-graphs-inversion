@@ -109,17 +109,24 @@ EXIT_TIMEOUT = 20
 EXIT_OUT_OF_MEMORY = 21
 EXIT_NON_INVERTIBLE = 23
 
-RMLMAPPER_8_1_0_FORWARD_FAILURES = {
-    "raw_10000000_20_0": "out_of_memory",
-    "raw_100000_20_5000": "out_of_memory",
-    "raw_100000_20_10000": "out_of_memory",
-    "namedgraph_15SM-NG_0POM-NG_1TM_20POM_True": "out_of_memory",
-    "namedgraph_15SM-NG_0POM-NG_1TM_20POM_False": "out_of_memory",
-    "namedgraph_15SM-NG_15POM-NG_1TM_10POM_True": "out_of_memory",
-    "namedgraph_15SM-NG_15POM-NG_1TM_10POM_False": "out_of_memory",
-    "joins_mutiple_1-1_5jc_50.0": "timeout",
-    "joins_mutiple_1-1_10jc_50.0": "timeout",
-    "joins_mutiple_1-1_15jc_50.0": "timeout",
+KNOWN_FORWARD_FAILURES: dict[tuple[ForwardEngine, str], dict[str, str]] = {
+    ("rmlmapper", "8.1.0"): {
+        "raw_10000000_20_0": "out_of_memory",
+        "raw_100000_20_5000": "out_of_memory",
+        "raw_100000_20_10000": "out_of_memory",
+        "namedgraph_15SM-NG_0POM-NG_1TM_20POM_True": "out_of_memory",
+        "namedgraph_15SM-NG_0POM-NG_1TM_20POM_False": "out_of_memory",
+        "namedgraph_15SM-NG_15POM-NG_1TM_10POM_True": "out_of_memory",
+        "namedgraph_15SM-NG_15POM-NG_1TM_10POM_False": "out_of_memory",
+        "joins_mutiple_1-1_5jc_50.0": "timeout",
+        "joins_mutiple_1-1_10jc_50.0": "timeout",
+        "joins_mutiple_1-1_15jc_50.0": "timeout",
+    },
+    ("souffle", "1.0.0"): {
+        "raw_10000000_20_0": "out_of_memory",
+        "raw_100000_20_5000": "out_of_memory",
+        "raw_100000_20_10000": "out_of_memory",
+    },
 }
 
 
@@ -728,7 +735,7 @@ class KrownBenchmarkRunner:
         self.scenarios_root = benchmark_dir / "scenarios"
         self.results_dir = benchmark_dir / "results"
         self.mode = mode
-        self.forward_engine = forward_engine
+        self.forward_engine: ForwardEngine = forward_engine
         self.forward_definition = FORWARD_ENGINES[forward_engine]
         self.inversion_engine = inversion_engine
         self.souffle_mode: SouffleMode = souffle_mode
@@ -1130,16 +1137,18 @@ class KrownBenchmarkRunner:
         self,
         scenario: KrownScenario,
     ) -> ScenarioExecutionFailure | None:
-        if (
-            self.forward_engine != "rmlmapper"
-            or self.forward_definition.version != "8.1.0"
-            or scenario.generated_name not in RMLMAPPER_8_1_0_FORWARD_FAILURES
-        ):
+        version = self.forward_definition.version
+        engine = (self.forward_engine, version)
+        if engine not in KNOWN_FORWARD_FAILURES:
+            return None
+        failures = KNOWN_FORWARD_FAILURES[engine]
+        if scenario.generated_name not in failures:
             return None
         return ScenarioExecutionFailure(
             "forward_mapping",
-            RMLMAPPER_8_1_0_FORWARD_FAILURES[scenario.generated_name],
-            "Skipped expected RMLMapper 8.1.0 forward failure; no execution measured",
+            failures[scenario.generated_name],
+            f"Skipped expected {self.forward_definition.label} {version} forward "
+            "failure; no execution measured",
         )
 
     def _validate_inversion(
