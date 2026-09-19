@@ -37,7 +37,7 @@ KROWN_SCENARIO_ARG = $(if $(SCENARIO),--scenario=$(SCENARIO))
 KROWN_RESUME_ARG = $(if $(RESUME),--resume=$(RESUME))
 KROWN_RUN = uv run python -m benchmarks.run_krown_benchmark --iterations $(I) --interval $(INTERVAL) --suites $(SUITES) $(KROWN_SCENARIO_ARG) $(KROWN_RESUME_ARG)
 
-.PHONY: validate-conformance-options validate-sheets-options submodules reverse-submodule translator-assets krown-images benchmark-krown benchmark-gtfs benchmark-all test-conformance export-krown-sheets
+.PHONY: validate-conformance-options validate-sheets-options submodules reverse-submodule translator-assets krown-images krown-network benchmark-krown benchmark-gtfs benchmark-all test-conformance export-krown-sheets
 
 validate-conformance-options:
 	@case "$(FORWARD_ENGINE)/$(INVERSION_ENGINE)" in \
@@ -90,20 +90,23 @@ translator-assets:
 krown-images: reverse-submodule
 	docker build --target krown-souffle -t $(KROWN_SOUFFLE_IMAGE) .
 
-benchmark-krown: submodules krown-images
+krown-network:
+	@docker network inspect bench_executor >/dev/null 2>&1 || docker network create bench_executor >/dev/null
+
+benchmark-krown: submodules krown-images krown-network
 	@set -e; \
 	trap '$(COMPOSE_KROWN) down --remove-orphans' EXIT; \
 	$(COMPOSE_KROWN) build benchmark; \
 	$(KROWN_RUN)
 
-benchmark-gtfs: submodules
+benchmark-gtfs: submodules krown-network
 	@set -e; \
 	trap '$(COMPOSE_GTFS) down --remove-orphans' EXIT; \
 	$(COMPOSE_GTFS) build benchmark; \
 	$(COMPOSE_GTFS) up -d gtfs_mysql; \
 	$(COMPOSE_GTFS) run --rm benchmark gtfs-benchmark --iterations $(I) --scales $(S)
 
-benchmark-all: submodules krown-images
+benchmark-all: submodules krown-images krown-network
 	@set -e; \
 	trap '$(COMPOSE_GTFS) down --remove-orphans' EXIT; \
 	$(COMPOSE_GTFS) build benchmark; \

@@ -14,6 +14,9 @@ services:
       - "5434:5432"
     volumes:
       - ./benchmark_postgresql_data:/var/lib/postgresql/data
+    networks:
+      - default
+      - bench_executor
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U r2rml -d r2rml"]
       interval: 10s
@@ -52,3 +55,6 @@ services:
     command: ["krown-benchmark"]
 volumes:
   benchmark-venv:
+networks:
+  bench_executor:
+    external: true

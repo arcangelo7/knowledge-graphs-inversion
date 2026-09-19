@@ -3,7 +3,6 @@
 # SPDX-License-Identifier: ISC
 
 import shutil
-import subprocess
 from pathlib import Path
 from typing import Literal, Protocol, cast
 
@@ -17,7 +16,6 @@ from conformance.souffle_artifacts import (
     SourceRelation,
 )
 
-KROWN_NETWORK = "bench_executor"
 PROVENANCE_GLOB = "ProvCol_*.csv"
 HYBRID_PROVENANCE_GLOB = "HybridProv_*.csv"
 SouffleMode = Literal["rdf", "provenance", "hybrid"]
@@ -113,34 +111,6 @@ def load_relation(
         raw_connection.commit()
     finally:
         raw_connection.close()
-
-
-def attach_database_to_krown_network(container_name: str) -> None:
-    """Make the source database reachable from the Soufflé container.
-
-    KROWN resources run on their own Docker network, which the benchmark database
-    does not join on its own.
-    """
-    inspection = subprocess.run(
-        [
-            "docker",
-            "inspect",
-            "--format",
-            "{{json .NetworkSettings.Networks}}",
-            container_name,
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    if f'"{KROWN_NETWORK}"' in inspection.stdout:
-        return
-    subprocess.run(
-        ["docker", "network", "connect", KROWN_NETWORK, container_name],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
 
 
 class ReverseSouffleResource(Protocol):

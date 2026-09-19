@@ -69,7 +69,6 @@ from benchmarks.krown_validator import KrownValidator
 from benchmarks.souffle_inversion import (
     SouffleInversionError,
     SouffleMode,
-    attach_database_to_krown_network,
     copy_souffle_files,
     inversion_input_files,
     load_relation,
@@ -504,7 +503,6 @@ class ScenarioOperations:
             str(self.scenario_path),
             False,
         )
-        attach_database_to_krown_network(BENCHMARK_DATABASE_CONTAINER)
         if not resource.execute_reverse_only(
             self.mapping_file.name,
             "out.nt",
