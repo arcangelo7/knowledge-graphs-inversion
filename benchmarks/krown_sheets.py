@@ -17,10 +17,8 @@ from typing import cast
 import gspread
 from gspread.utils import ValueInputOption
 
-from benchmarks.forward_engines import (
-    SOUFFLE_RELEASE,
-    translator_rml_version,
-)
+from benchmarks.forward_engines import SOUFFLE_RELEASE
+from benchmarks.krown_campaigns import CAMPAIGNS, campaign_payloads
 from benchmarks.krown_catalog import EXCLUDED_SERIES
 
 CellValue = str | int | float | bool
@@ -38,12 +36,6 @@ CAMPAIGN_COLUMN = "Campaign"
 FORWARD_STAGE = "forward_mapping"
 
 SOUFFLE_SOFTWARE = f"Soufflé {SOUFFLE_RELEASE}"
-SOUFFLE_MODE_LABELS = {
-    "rdf": "RDF-only",
-    "provenance": "provenance-aware",
-    "hybrid": "hybrid",
-}
-
 CREDENTIALS_VARIABLE = "KROWN_SHEETS_CREDENTIALS"
 DEFAULT_CREDENTIALS = Path.home() / ".config" / "krown-sheets" / "sa.json"
 SHEETS_SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -242,10 +234,6 @@ RAW_RUN_COLUMNS: tuple[tuple[str, str], ...] = (
     ("Validation results: expected outcome", "validation_results.expected_outcome"),
     ("Validation results: checks: tables", "validation_results.checks.tables"),
     (
-        "Validation results: checks: RDF round trip",
-        "validation_results.checks.rdf_round_trip",
-    ),
-    (
         "Validation results: missing mapped columns",
         "validation_results.missing_mapped_columns",
     ),
@@ -367,33 +355,14 @@ class Campaign:
         return cast(dict[str, dict[str, object]], self.data["scenarios"])
 
 
-def campaign_label(stats_data: dict[str, object]) -> str:
-    if stats_data["inversion_engine"] == "souffle":
-        mode = SOUFFLE_MODE_LABELS[cast(str, stats_data["souffle_mode"])]
-        return f"Datalog-based ({mode})"
-    return "SPARQL-based"
-
-
-def parse_campaign(value: str) -> tuple[Path, str | None]:
-    path, separator, label = value.partition("=")
-    return Path(path), label if separator else None
-
-
-def load_campaigns(
-    specifications: Sequence[tuple[Path, str | None]],
-) -> tuple[Campaign, ...]:
-    campaigns: list[Campaign] = []
-    for source, override in specifications:
-        data = cast(dict[str, object], json.loads(source.read_text(encoding="utf-8")))
-        label = override if override is not None else campaign_label(data)
-        for existing in campaigns:
-            if existing.label == label:
-                raise ValueError(
-                    f"Campaign label {label!r} is used by both {existing.source} and "
-                    f"{source}; disambiguate with PATH=LABEL"
-                )
-        campaigns.append(Campaign(label=label, source=source, data=data))
-    return tuple(campaigns)
+def load_campaigns(stats_file: Path) -> tuple[Campaign, ...]:
+    payloads = campaign_payloads(
+        cast(dict[str, object], json.loads(stats_file.read_text(encoding="utf-8")))
+    )
+    return tuple(
+        Campaign(label=campaign.label, source=stats_file, data=payloads[campaign.name])
+        for campaign in CAMPAIGNS
+    )
 
 
 def _flatten(record: dict[str, object]) -> dict[str, object]:
@@ -549,7 +518,6 @@ STAGE_HEADER = (
 )
 CONFIGURATION_ROWS: tuple[tuple[str, str], ...] = (
     ("Campaign timestamp (UTC)", "timestamp"),
-    ("Mode", "mode"),
     ("Forward software", "forward_engine_version"),
     ("Reverse software", "reverse_software"),
     ("Forward RML reader", "forward_rml_reader"),
@@ -620,23 +588,14 @@ def _configuration_value(campaign: Campaign, key: str) -> CellValue:
             return ""
         return cast(str, data["souffle_mode"])
     if key == "forward_engine_version":
-        if data["forward_engine"] == "souffle":
-            return SOUFFLE_SOFTWARE
-        provenance = cast(dict[str, object], data["provenance"])
-        return f"RMLMapper {cast(str, provenance['forward_engine_version'])}"
+        return SOUFFLE_SOFTWARE
     if key == "reverse_software":
         if data["inversion_engine"] == "souffle":
             return SOUFFLE_SOFTWARE
         return "SPARQL-based"
     if key == "forward_rml_reader":
         provenance = cast(dict[str, object], data["provenance"])
-        if "forward_rml_reader_version" in provenance:
-            recorded = cast(str, provenance["forward_rml_reader_version"])
-        elif data["forward_engine"] == "souffle":
-            recorded = translator_rml_version()
-        else:
-            recorded = cast(str, provenance["forward_engine_version"])
-        return f"RMLMapper {recorded}"
+        return f"RMLMapper {cast(str, provenance['forward_rml_reader_version'])}"
     return _cell(data[key])
 
 
@@ -1172,13 +1131,13 @@ def main() -> int:  # pragma: no cover
     parser = argparse.ArgumentParser(
         description="Export KROWN campaigns to a Google spreadsheet"
     )
-    parser.add_argument("campaigns", nargs="+", type=parse_campaign)
+    parser.add_argument("stats_file", type=Path)
     parser.add_argument("--spreadsheet-id")
     parser.add_argument("--credentials", type=Path)
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
-    campaigns = load_campaigns(args.campaigns)
+    campaigns = load_campaigns(args.stats_file)
     tables = build_tables(campaigns)
     for title, table in tables.items():
         print(f"{title}: {len(table)} rows x {len(table[0])} cols")

@@ -60,31 +60,6 @@ class StatsFactory(Protocol):
     ) -> StatsProtocol: ...
 
 
-class MappingResource(Protocol):
-    def execute_mapping(
-        self,
-        mapping_file: str,
-        output_file: str,
-        serialization: str,
-        rdb_username: str,
-        rdb_password: str,
-        rdb_host: str,
-        rdb_port: int,
-        rdb_name: str,
-        rdb_type: str,
-    ) -> bool: ...
-
-
-class MappingResourceFactory(Protocol):
-    def __call__(
-        self,
-        data_path: str,
-        config_path: str,
-        directory: str,
-        verbose: bool,
-    ) -> MappingResource: ...
-
-
 class ExecutorProtocol(Protocol):
     def list(self) -> list[KrownCase]: ...
 
@@ -174,14 +149,6 @@ def load_resource_module(
     )
     setattr(module, "VERSION", definition.version)
     return module
-
-
-def load_mapping_resource(
-    project_root: Path,
-    definition: ForwardEngineDefinition,
-) -> MappingResourceFactory:
-    module = load_resource_module(project_root, definition)
-    return cast(MappingResourceFactory, getattr(module, definition.resource))
 
 
 class SynchronousCollector:
@@ -344,12 +311,6 @@ class OfficialKrownExecutor:
         if len(matching) != 1:
             raise RuntimeError("KROWN case must have one mapping step")
         return matching[0]
-
-    @property
-    def output_file(self) -> str:
-        step = self.steps[self.mapping_step - 1]
-        parameters = cast(dict[str, str], step["parameters"])
-        return parameters["output_file"]
 
     @property
     def results_path(self) -> Path:

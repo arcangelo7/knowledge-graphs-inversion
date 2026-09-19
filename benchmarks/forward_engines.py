@@ -4,10 +4,8 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast
+from typing import cast
 from xml.etree import ElementTree
-
-ForwardEngine = Literal["rmlmapper", "souffle", "morphkgc"]
 
 MAVEN_NAMESPACE = "{http://maven.apache.org/POM/4.0.0}"
 TRANSLATOR_POM = (
@@ -32,39 +30,18 @@ class ForwardEngineDefinition:
     resource: str
     label: str
     version: str
-    schema_query: str
     souffle_resources: bool = False
-    writes_facts: bool = False
 
     @property
     def module_name(self) -> str:
         return self.resource.lower()
 
-    def database_name(self, database: str, schema: str) -> str:
-        return f"{database}?{self.schema_query.format(schema=schema)}"
-
 
 SOUFFLE_RELEASE = "2.5"
 
-FORWARD_ENGINES: dict[ForwardEngine, ForwardEngineDefinition] = {
-    "rmlmapper": ForwardEngineDefinition(
-        resource="RMLMapper",
-        label="RMLMapper",
-        version="8.1.0",
-        schema_query="currentSchema={schema}",
-    ),
-    "souffle": ForwardEngineDefinition(
-        resource="Souffle",
-        label="Soufflé",
-        version="1.0.0",
-        schema_query="currentSchema={schema}",
-        souffle_resources=True,
-        writes_facts=True,
-    ),
-    "morphkgc": ForwardEngineDefinition(
-        resource="MorphKGC",
-        label="Morph-KGC",
-        version="2.2.0",
-        schema_query="options=-csearch_path={schema}",
-    ),
-}
+SOUFFLE_ENGINE = ForwardEngineDefinition(
+    resource="Souffle",
+    label="Soufflé",
+    version="1.0.0",
+    souffle_resources=True,
+)

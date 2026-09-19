@@ -15,7 +15,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast
+from typing import cast
 
 from rdflib import Graph, Namespace
 from rdflib.namespace import RDF
@@ -33,11 +33,13 @@ from rich.table import Table
 from sqlalchemy import URL, create_engine, text
 from sqlalchemy.engine import Engine
 
-from benchmarks.forward_engines import (
-    FORWARD_ENGINES,
-    ForwardEngine,
-    ForwardEngineDefinition,
-    translator_rml_version,
+from benchmarks.forward_engines import SOUFFLE_ENGINE, translator_rml_version
+from benchmarks.krown_campaigns import (
+    CAMPAIGNS,
+    PHASES,
+    Campaign,
+    Phase,
+    campaign_payloads,
 )
 from benchmarks.krown_catalog import (
     EXCLUDED_SERIES,
@@ -54,7 +56,6 @@ from benchmarks.krown_metrics import (
     OfficialRunResult,
     SynchronousCollector,
     generate_official_statistics,
-    load_mapping_resource,
     read_official_step_summary,
     read_step_duration,
     resource_config_directory,
@@ -75,7 +76,6 @@ from benchmarks.souffle_inversion import (
     preserve_souffle_files,
     reverse_souffle_resource,
 )
-from conformance import rmlmapper
 from conformance.souffle_artifacts import (
     FACT_FILES,
     FORWARD_PROGRAM,
@@ -93,38 +93,25 @@ console = Console(width=max(shutil.get_terminal_size().columns, 100))
 R2RML = Namespace("http://www.w3.org/ns/r2rml#")
 SPARQL_ENGINE = "pyoxigraph"
 DATALOG_RDF_FILE = "out.nq"
-RMLMAPPER_JAVA_OPTIONS = (
-    "-XX:InitialRAMPercentage=50.0",
-    "-XX:MaxRAMPercentage=50.0",
-)
-RMLMAPPER_TIMEOUT_SECONDS = 3 * 60 * 60
 KROWN_COOLDOWN_SECONDS = 15
 REVERSE_R2RML_REPOSITORY = "https://github.com/dtai-kg/ReverseR2RML.git"
 SOURCE_SCHEMA = "source"
 DESTINATION_SCHEMA = "destination"
 BENCHMARK_DATABASE_CONTAINER = "kgi-benchmark-postgresql"
 BENCHMARK_DATABASE_INTERNAL_PORT = 5432
-BenchmarkMode = Literal["forward", "backward", "roundtrip"]
-InversionEngine = Literal["kgi", "souffle"]
+MEASURED_STAGES = ("forward", "backward")
+MAPPING_COMMANDS = (
+    "execute_mapping",
+    "execute_forward_provenance",
+    "execute_forward_hybrid",
+)
+ScenarioRuns = dict[str, dict[str, list[dict[str, object]]]]
 
-EXIT_TIMEOUT = 20
 EXIT_OUT_OF_MEMORY = 21
 EXIT_NON_INVERTIBLE = 23
 
-KNOWN_FORWARD_FAILURES: dict[tuple[ForwardEngine, str], dict[str, str]] = {
-    ("rmlmapper", "8.1.0"): {
-        "raw_10000000_20_0": "out_of_memory",
-        "namedgraph_15SM-NG_0POM-NG_1TM_20POM_True": "out_of_memory",
-        "namedgraph_15SM-NG_0POM-NG_1TM_20POM_False": "out_of_memory",
-        "namedgraph_15SM-NG_15POM-NG_1TM_10POM_True": "out_of_memory",
-        "namedgraph_15SM-NG_15POM-NG_1TM_10POM_False": "out_of_memory",
-        "joins_mutiple_1-1_5jc_50.0": "timeout",
-        "joins_mutiple_1-1_10jc_50.0": "timeout",
-        "joins_mutiple_1-1_15jc_50.0": "timeout",
-    },
-    ("souffle", "1.0.0"): {
-        "raw_10000000_20_0": "out_of_memory",
-    },
+KNOWN_FORWARD_FAILURES: dict[str, str] = {
+    "raw_10000000_20_0": "out_of_memory",
 }
 
 
@@ -169,7 +156,7 @@ class SourceTable:
 class ForwardMeasurement:
     iteration: int
     rdf_file: Path
-    souffle_directory: Path | None
+    souffle_directory: Path
     duration: float
     rdf_statements: int
     run_path: Path
@@ -246,18 +233,10 @@ class ScenarioExecutionFailure(RuntimeError):
         }[self.kind]
 
 
-def _rename_nquads_output(rdf_file: Path) -> Path:
-    nquads_file = rdf_file.with_suffix(".nq")
-    rdf_file.rename(nquads_file)
-    return nquads_file
-
-
 def generate_scenario(
     scenario: KrownScenario,
     scenarios_root: Path,
     data_generator_dir: Path,
-    resource: str,
-    souffle_mode: SouffleMode,
 ) -> Path:
     if scenarios_root.exists():
         shutil.rmtree(scenarios_root)
@@ -267,7 +246,7 @@ def generate_scenario(
         "@id": "http://example.com/kg-inversion-benchmark/generated",
         "name": scenario.display_name,
         "description": "Single KROWN benchmark scenario",
-        "instances": [scenario.config_instance(resource)],
+        "instances": [scenario.config_instance(SOUFFLE_ENGINE.resource)],
     }
     with tempfile.NamedTemporaryFile(
         mode="w", suffix=".json", encoding="utf-8"
@@ -301,23 +280,38 @@ def generate_scenario(
             f"Unexpected generated scenario: expected={scenario.generated_name}, "
             f"actual={scenario_path.name}"
         )
-    if souffle_mode != "rdf":
-        metadata_file = metadata_files[0]
-        metadata = cast(
-            dict[str, object],
-            json.loads(metadata_file.read_text(encoding="utf-8")),
-        )
-        steps = cast(list[dict[str, object]], metadata["steps"])
-        mapping_steps = [step for step in steps if step["command"] == "execute_mapping"]
-        if len(mapping_steps) != 1:
-            raise ValueError("Expected one KROWN mapping step")
+    return scenario_path
+
+
+def select_forward_mode(scenario_path: Path, souffle_mode: SouffleMode) -> None:
+    """Point the KROWN mapping step at the Soufflé forward program of the phase."""
+    metadata_file = scenario_path / "metadata.json"
+    metadata = cast(
+        dict[str, object],
+        json.loads(metadata_file.read_text(encoding="utf-8")),
+    )
+    steps = cast(list[dict[str, object]], metadata["steps"])
+    mapping_steps = [step for step in steps if step["command"] in MAPPING_COMMANDS]
+    if len(mapping_steps) != 1:
+        raise ValueError("Expected one KROWN mapping step")
+    if souffle_mode == "rdf":
+        mapping_steps[0]["resource"] = SOUFFLE_ENGINE.resource
+        mapping_steps[0]["command"] = "execute_mapping"
+    else:
         mapping_steps[0]["resource"] = "ReverseSouffle"
         mapping_steps[0]["command"] = f"execute_forward_{souffle_mode}"
-        metadata_file.write_text(
-            json.dumps(metadata, indent=2) + "\n",
-            encoding="utf-8",
-        )
-    return scenario_path
+    metadata_file.write_text(
+        json.dumps(metadata, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def expected_outcome(scenario: KrownScenario, campaign: Campaign) -> str:
+    if campaign.souffle_mode in ("provenance", "hybrid") and (
+        scenario.generator == "Mappings" or scenario.suite == "joins"
+    ):
+        return "PARTIAL"
+    return scenario.expected_outcome
 
 
 class ScenarioOperations:
@@ -367,12 +361,7 @@ class ScenarioOperations:
         matching_steps = [
             step
             for step in self._metadata_steps()
-            if step["command"]
-            in (
-                "execute_mapping",
-                "execute_forward_provenance",
-                "execute_forward_hybrid",
-            )
+            if step["command"] in MAPPING_COMMANDS
         ]
         if len(matching_steps) != 1:
             raise ValueError("Expected one mapping step in KROWN metadata")
@@ -483,71 +472,6 @@ class ScenarioOperations:
                 f"Unexpected row count for {self.scenario.generated_name}/"
                 f"{source_table.name}: expected={expected_rows}, actual={row_count}"
             )
-
-    def forward(self, schema: str, rdf_file: Path) -> None:
-        rdf_file.unlink(missing_ok=True)
-        try:
-            process = rmlmapper.execute(
-                str(self.mapping_file),
-                str(rdf_file),
-                serialization="nquads",
-                dsn=self.database.jdbc_url(schema),
-                username=self.database.username,
-                password=self.database.password,
-                timeout=RMLMAPPER_TIMEOUT_SECONDS,
-                java_options=RMLMAPPER_JAVA_OPTIONS,
-            )
-        except subprocess.TimeoutExpired as error:
-            diagnostic = f"{error.stdout or ''}{error.stderr or ''}"
-            raise ScenarioExecutionFailure(
-                "rmlmapper",
-                "timeout",
-                f"RMLMapper timed out after {RMLMAPPER_TIMEOUT_SECONDS} seconds",
-                diagnostic,
-            ) from error
-        if process.returncode != 0:
-            diagnostic = process.stdout + process.stderr
-            if "OutOfMemoryError" in diagnostic:
-                raise ScenarioExecutionFailure(
-                    "rmlmapper",
-                    "out_of_memory",
-                    f"RMLMapper failed with exit code {process.returncode}",
-                    diagnostic,
-                )
-            process.check_returncode()
-
-    def forward_resource(
-        self,
-        definition: ForwardEngineDefinition,
-        schema: str,
-        rdf_file: Path,
-    ) -> None:
-        project_root = Path(__file__).resolve().parent.parent
-        resource = load_mapping_resource(project_root, definition)(
-            str(self.scenario_path / "data"),
-            str(resource_config_directory(project_root)),
-            str(self.scenario_path),
-            False,
-        )
-        attach_database_to_krown_network(BENCHMARK_DATABASE_CONTAINER)
-        rdf_file.unlink(missing_ok=True)
-        if not resource.execute_mapping(
-            self.mapping_file.name,
-            rdf_file.name,
-            "nquads",
-            rdb_username=self.database.username,
-            rdb_password=self.database.password,
-            rdb_host=BENCHMARK_DATABASE_CONTAINER,
-            rdb_port=BENCHMARK_DATABASE_INTERNAL_PORT,
-            rdb_name=definition.database_name(self.database.database, schema),
-            rdb_type="PostgreSQL",
-        ):
-            raise RuntimeError(
-                f"{definition.label} failed to map the {schema} schema of "
-                f"{self.scenario.generated_name}"
-            )
-        if definition.writes_facts:
-            write_rdf_dataset(self.shared_dir, rdf_file)
 
     def backward(self, rdf_file: Path) -> None:
         reconstruct(
@@ -660,12 +584,7 @@ def _internal_stage_main(arguments: list[str]) -> int:
     parser.add_argument(
         "--stage",
         required=True,
-        choices=(
-            "prepare",
-            "reset-destination",
-            "forward-destination",
-            "backward",
-        ),
+        choices=("prepare", "reset-destination", "backward"),
     )
     parser.add_argument("--scenario", required=True)
     parser.add_argument("--scenario-path", type=Path, required=True)
@@ -683,20 +602,8 @@ def _internal_stage_main(arguments: list[str]) -> int:
             operations.reset_schema(DESTINATION_SCHEMA)
         else:
             if args.rdf_file is None:
-                parser.error(f"--rdf-file is required for {args.stage}")
-            rdf_file = project_root / args.rdf_file
-            if args.stage == "forward-destination":
-                operations.forward(DESTINATION_SCHEMA, rdf_file)
-            else:
-                operations.backward(rdf_file)
-    except ScenarioExecutionFailure as error:
-        if error.diagnostic:
-            sys.stderr.write(error.diagnostic)
-        if error.kind == "timeout":
-            return EXIT_TIMEOUT
-        if error.kind == "out_of_memory":
-            return EXIT_OUT_OF_MEMORY
-        raise
+                parser.error("--rdf-file is required for backward")
+            operations.backward(project_root / args.rdf_file)
     except NonInvertibleError as error:
         if scenario.expected_outcome != "NON_INVERTIBLE":
             raise
@@ -710,44 +617,20 @@ def _internal_stage_main(arguments: list[str]) -> int:
 class KrownBenchmarkRunner:
     def __init__(
         self,
-        mode: BenchmarkMode,
         iterations: int,
         sample_interval: float,
         suites: tuple[str, ...],
         scenario_name: str | None,
-        forward_engine: ForwardEngine,
-        inversion_engine: InversionEngine,
-        souffle_mode: SouffleMode,
         cleanup_tables: bool = True,
         resume_session: Path | None = None,
     ):
-        if inversion_engine == "souffle" and forward_engine != "souffle":
-            raise ValueError("Soufflé inversion requires Soufflé as the forward engine")
-        if souffle_mode != "rdf" and inversion_engine != "souffle":
-            raise ValueError(
-                "Soufflé provenance modes require Soufflé as the inversion engine"
-            )
         self.project_root = Path(__file__).resolve().parent.parent
         self.data_generator_dir = self.project_root / "KROWN" / "data-generator"
         benchmark_dir = Path(__file__).resolve().parent / "krown"
         self.scenarios_root = benchmark_dir / "scenarios"
         self.results_dir = benchmark_dir / "results"
-        self.mode = mode
-        self.forward_engine: ForwardEngine = forward_engine
-        self.forward_definition = FORWARD_ENGINES[forward_engine]
-        self.inversion_engine = inversion_engine
-        self.souffle_mode: SouffleMode = souffle_mode
         self.krown_commit = _git_commit(self.project_root / "KROWN")
-        self.reverse_r2rml_commit = (
-            _git_commit(self.project_root / "ReverseR2RML")
-            if "souffle" in (forward_engine, inversion_engine)
-            else None
-        )
-        self.forward_rml_reader_version = (
-            translator_rml_version()
-            if forward_engine == "souffle"
-            else self.forward_definition.version
-        )
+        self.reverse_r2rml_commit = _git_commit(self.project_root / "ReverseR2RML")
         self.iterations = iterations
         self.sample_interval = sample_interval
         self.cleanup_tables = cleanup_tables
@@ -762,17 +645,18 @@ class KrownBenchmarkRunner:
         self.compose_file = self.project_root / "docker-compose.benchmark.yml"
         if resume_session is None:
             self.timestamp = int(time.time())
-            self.session_dir = self.results_dir / (
-                f"krown_{self.timestamp}_{self.mode}_"
-                f"{self.forward_engine}_{self.inversion_engine}_{self.souffle_mode}"
-            )
-            self.measured_runs: dict[str, list[dict[str, object]]] = {}
+            self.session_dir = self.results_dir / f"krown_{self.timestamp}"
+            self.measured_runs: ScenarioRuns = {
+                campaign.name: {} for campaign in CAMPAIGNS
+            }
         else:
             self.session_dir = resume_session.resolve()
             self.timestamp, self.measured_runs = self._read_partial_results(
                 resume_session
             )
-        self.resource_summaries: dict[str, list[dict[str, int | float | str]]] = {}
+        self.resource_summaries: dict[
+            str, dict[str, list[dict[str, int | float | str]]]
+        ] = {campaign.name: {} for campaign in CAMPAIGNS}
 
         catalog = load_scenarios(self.project_root)
         scenario_names = {scenario.generated_name for scenario in catalog}
@@ -824,24 +708,18 @@ class KrownBenchmarkRunner:
             for series in REPORTED_SERIES
             if any(point[0] in selected_names for point in series.points)
         )
-        unselected = sorted(set(self.measured_runs) - selected_names)
+        measured_names = {name for runs in self.measured_runs.values() for name in runs}
+        unselected = sorted(measured_names - selected_names)
         if unselected:
             raise ValueError(
                 "The session to continue holds scenarios outside the selected "
                 f"suites, which the results would drop: {', '.join(unselected)}"
             )
 
-    def _expected_outcome(self, scenario: KrownScenario) -> str:
-        if self.souffle_mode in ("provenance", "hybrid") and (
-            scenario.generator == "Mappings" or scenario.suite == "joins"
-        ):
-            return "PARTIAL"
-        return scenario.expected_outcome
-
     def _read_partial_results(
         self,
         session_dir: Path,
-    ) -> tuple[int, dict[str, list[dict[str, object]]]]:
+    ) -> tuple[int, ScenarioRuns]:
         """Read the runs an interrupted session measured before it stopped."""
         partial_files = sorted(
             session_dir.glob("krown_benchmark_results_partial_*.json")
@@ -857,22 +735,14 @@ class KrownBenchmarkRunner:
         )
         provenance = cast(dict[str, object], payload["provenance"])
         requested: dict[str, object] = {
-            "mode": self.mode,
             "iterations": self.iterations,
             "sample_interval_seconds": self.sample_interval,
-            "forward_engine": self.forward_engine,
-            "inversion_engine": self.inversion_engine,
-            "souffle_mode": self.souffle_mode,
             "krown_commit": self.krown_commit,
             "reverse_r2rml_commit": self.reverse_r2rml_commit,
         }
         recorded: dict[str, object] = {
-            "mode": payload["mode"],
             "iterations": payload["iterations"],
             "sample_interval_seconds": payload["sample_interval_seconds"],
-            "forward_engine": payload["forward_engine"],
-            "inversion_engine": payload["inversion_engine"],
-            "souffle_mode": payload["souffle_mode"],
             "krown_commit": provenance["krown_commit"],
             "reverse_r2rml_commit": provenance["reverse_r2rml_commit"],
         }
@@ -886,14 +756,22 @@ class KrownBenchmarkRunner:
                 f"{partial_files[0].name} was measured with a different "
                 f"configuration: {mismatched}"
             )
+        campaigns = cast(dict[str, dict[str, object]], payload["campaigns"])
         return (
             cast(int, payload["timestamp"]),
-            cast(dict[str, list[dict[str, object]]], payload["scenarios"]),
+            {
+                campaign.name: cast(
+                    dict[str, list[dict[str, object]]],
+                    campaigns[campaign.name]["scenarios"],
+                )
+                for campaign in CAMPAIGNS
+            },
         )
 
     def _restore_resource_summaries(
         self,
         scenario: KrownScenario,
+        campaign: Campaign,
         runs: list[dict[str, object]],
     ) -> None:
         """Reuse the resource summaries the interrupted session left on disk."""
@@ -901,25 +779,22 @@ class KrownBenchmarkRunner:
             dict[str, dict[str, object]],
             cast(dict[str, object], runs[0]["metrics"])["stages"],
         )
-        for stage_name in self.measured_stages:
+        for stage_name in MEASURED_STAGES:
+            stage_directory = (
+                self._forward_directory(scenario, campaign.souffle_mode)
+                if stage_name == "forward"
+                else self._backward_directory(scenario, campaign)
+            )
             summary = dict(
                 read_official_step_summary(
-                    self._case_directory(scenario) / stage_name / "results",
+                    stage_directory / "results",
                     cast(int, stages[stage_name]["step"]),
                 )
             )
             summary["stage_name"] = stage_name
-            self.resource_summaries.setdefault(scenario.generated_name, []).append(
-                summary
-            )
-
-    @property
-    def measured_stages(self) -> tuple[str, ...]:
-        if self.mode == "forward":
-            return ("forward",)
-        if self.mode == "backward":
-            return ("backward",)
-        return ("forward", "backward")
+            self.resource_summaries[campaign.name].setdefault(
+                scenario.generated_name, []
+            ).append(summary)
 
     def prepare_output_directories(self) -> None:
         self.results_dir.mkdir(parents=True, exist_ok=True)
@@ -930,13 +805,27 @@ class KrownBenchmarkRunner:
             shutil.rmtree(self.scenarios_root)
         self.scenarios_root.mkdir(parents=True)
 
+    def _phase_measured(self, scenario: KrownScenario, phase: Phase) -> bool:
+        return all(
+            scenario.generated_name in self.measured_runs[campaign.name]
+            for campaign in phase.campaigns
+        )
+
     def _remove_uncheckpointed_scenario_artifacts(self) -> None:
         for scenario in self.scenarios:
-            if scenario.generated_name in self.measured_runs:
-                continue
-            case_directory = self._case_directory(scenario)
-            if case_directory.exists():
-                shutil.rmtree(case_directory)
+            for phase in PHASES:
+                if self._phase_measured(scenario, phase):
+                    continue
+                directories = [
+                    self._forward_directory(scenario, phase.souffle_mode),
+                    *(
+                        self._backward_directory(scenario, campaign)
+                        for campaign in phase.campaigns
+                    ),
+                ]
+                for directory in directories:
+                    if directory.exists():
+                        shutil.rmtree(directory)
 
     def _stage_command(
         self,
@@ -990,25 +879,21 @@ class KrownBenchmarkRunner:
             return
 
         diagnostic = process.stdout + process.stderr
-        if process.returncode == EXIT_TIMEOUT:
-            kind = "timeout"
-        elif process.returncode in (EXIT_OUT_OF_MEMORY, 137):
-            kind = "out_of_memory"
-        elif process.returncode == EXIT_NON_INVERTIBLE:
+        if process.returncode == EXIT_NON_INVERTIBLE:
             if scenario.expected_outcome == "NON_INVERTIBLE":
                 raise NonInvertibleError(diagnostic)
             raise RuntimeError(
                 f"KROWN stage {stage} reported an unexpected non-invertible "
                 f"mapping:\n{diagnostic}"
             )
-        else:
+        if process.returncode not in (EXIT_OUT_OF_MEMORY, 137):
             raise RuntimeError(
                 f"KROWN stage {stage} failed with exit code "
                 f"{process.returncode}:\n{diagnostic}"
             )
         raise ScenarioExecutionFailure(
             result_stage,
-            kind,
+            "out_of_memory",
             f"KROWN stage {result_stage} failed",
             diagnostic,
             elapsed,
@@ -1035,9 +920,18 @@ class KrownBenchmarkRunner:
     def _case_directory(self, scenario: KrownScenario) -> Path:
         return self.session_dir / scenario.generated_name
 
+    def _forward_directory(
+        self, scenario: KrownScenario, souffle_mode: SouffleMode
+    ) -> Path:
+        return self._case_directory(scenario) / f"forward_{souffle_mode}"
+
+    def _backward_directory(self, scenario: KrownScenario, campaign: Campaign) -> Path:
+        return self._case_directory(scenario) / f"backward_{campaign.name}"
+
     def _build_result(
         self,
         scenario: KrownScenario,
+        campaign: Campaign,
         operations: ScenarioOperations,
         timings: dict[str, float],
         rdf_statements: int,
@@ -1055,16 +949,9 @@ class KrownBenchmarkRunner:
             source_table.csv_file.stat().st_size
             for source_table in operations.source_tables
         )
-        execution_time = sum(
-            timings[name]
-            for name in ("forward_time", "inversion_time")
-            if name in timings
-        )
+        execution_time = timings["forward_time"] + timings["inversion_time"]
         throughput = None
-        if (
-            "inversion_time" in timings
-            and validation_results["outcome"] != "NON_INVERTIBLE"
-        ):
+        if validation_results["outcome"] != "NON_INVERTIBLE":
             throughput = {
                 "rows_per_second": (scenario.source_rows / timings["inversion_time"]),
                 "cells_per_second": (scenario.source_cells / timings["inversion_time"]),
@@ -1073,11 +960,10 @@ class KrownBenchmarkRunner:
         timing_breakdown: dict[str, float] = {
             **timings,
             "total_time": execution_time,
-        }
-        if self.mode == "roundtrip":
-            timing_breakdown["inversion_overhead_percentage"] = (
+            "inversion_overhead_percentage": (
                 timings["inversion_time"] / timings["forward_time"] * 100
-            )
+            ),
+        }
 
         return {
             "status": "completed",
@@ -1085,7 +971,7 @@ class KrownBenchmarkRunner:
             "display_name": scenario.display_name,
             "suite": scenario.suite,
             "generator": scenario.generator,
-            "expected_outcome": self._expected_outcome(scenario),
+            "expected_outcome": expected_outcome(scenario, campaign),
             "parameters": scenario.parameters,
             "source_configuration": {
                 "identifier": scenario.identifier,
@@ -1117,6 +1003,7 @@ class KrownBenchmarkRunner:
     def _build_failure_result(
         self,
         scenario: KrownScenario,
+        campaign: Campaign,
         error: ScenarioExecutionFailure,
         *,
         executed: bool = True,
@@ -1127,7 +1014,7 @@ class KrownBenchmarkRunner:
             "display_name": scenario.display_name,
             "suite": scenario.suite,
             "generator": scenario.generator,
-            "expected_outcome": self._expected_outcome(scenario),
+            "expected_outcome": expected_outcome(scenario, campaign),
             "parameters": scenario.parameters,
             "source_configuration": {
                 "identifier": scenario.identifier,
@@ -1148,55 +1035,31 @@ class KrownBenchmarkRunner:
         self,
         scenario: KrownScenario,
     ) -> ScenarioExecutionFailure | None:
-        version = self.forward_definition.version
-        engine = (self.forward_engine, version)
-        if engine not in KNOWN_FORWARD_FAILURES:
-            return None
-        failures = KNOWN_FORWARD_FAILURES[engine]
-        if scenario.generated_name not in failures:
+        if scenario.generated_name not in KNOWN_FORWARD_FAILURES:
             return None
         return ScenarioExecutionFailure(
             "forward_mapping",
-            failures[scenario.generated_name],
-            f"Skipped expected {self.forward_definition.label} {version} forward "
-            "failure; no execution measured",
+            KNOWN_FORWARD_FAILURES[scenario.generated_name],
+            f"Skipped expected {SOUFFLE_ENGINE.label} {SOUFFLE_ENGINE.version} "
+            "forward failure; no execution measured",
         )
 
     def _validate_inversion(
         self,
         scenario: KrownScenario,
+        campaign: Campaign,
         operations: ScenarioOperations,
         original_rdf: Path,
-        iteration: int,
     ) -> dict[str, object]:
         expected_tables = [table.name for table in operations.source_tables]
-        missing_mapped_columns = self.validator.missing_mapped_columns(
-            expected_tables, operations.mapping_file
-        )
-        roundtrip_rdf = None
-        if not missing_mapped_columns or self.validator.rdf_dataset_empty(original_rdf):
-            roundtrip_rdf = operations.shared_dir / f"roundtrip_{iteration}.nq"
-            if self.forward_engine == "rmlmapper":
-                self.run_stage(
-                    "forward-destination",
-                    "roundtrip_mapping",
-                    scenario,
-                    operations.scenario_path,
-                    roundtrip_rdf,
-                )
-            else:
-                operations.forward_resource(
-                    self.forward_definition,
-                    DESTINATION_SCHEMA,
-                    roundtrip_rdf,
-                )
         validation = self.validator.validate_inversion(
             expected_tables=expected_tables,
             scenario_name=scenario.generated_name,
-            expected_outcome=self._expected_outcome(scenario),
+            expected_outcome=expected_outcome(scenario, campaign),
             original_rdf=original_rdf,
-            roundtrip_rdf=roundtrip_rdf,
-            missing_mapped_columns=missing_mapped_columns,
+            missing_mapped_columns=self.validator.missing_mapped_columns(
+                expected_tables, operations.mapping_file
+            ),
         )
         if validation["validation_passed"] is not True:
             raise ValueError(f"Unexpected inversion result: {validation}")
@@ -1206,9 +1069,9 @@ class KrownBenchmarkRunner:
         self,
         scenario: KrownScenario,
         executor: OfficialKrownExecutor,
-        phase: str,
+        souffle_mode: SouffleMode,
     ) -> Path:
-        destination = self._case_directory(scenario) / phase / "results"
+        destination = self._forward_directory(scenario, souffle_mode) / "results"
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(str(executor.results_path), destination)
         return destination
@@ -1249,22 +1112,25 @@ class KrownBenchmarkRunner:
         self,
         scenario: KrownScenario,
         operations: ScenarioOperations,
-        runs: int,
-        phase: str,
-        report_statistics: bool,
+        phase: Phase,
         progress: Progress,
         task: TaskID,
     ) -> list[ForwardMeasurement]:
+        select_forward_mode(operations.scenario_path, phase.souffle_mode)
         executor = OfficialKrownExecutor(
             self.project_root,
             operations.scenario_path,
-            self.forward_definition,
+            SOUFFLE_ENGINE,
         )
+        runs = self.iterations
         engine_directory = executor.resource_directory
         for iteration in range(1, runs + 1):
             progress.update(
                 task,
-                description=(f"{scenario.generated_name} forward ({iteration}/{runs})"),
+                description=(
+                    f"{scenario.generated_name} forward {phase.souffle_mode} "
+                    f"({iteration}/{runs})"
+                ),
             )
             result = executor.run(
                 self.sample_interval,
@@ -1273,51 +1139,41 @@ class KrownBenchmarkRunner:
             )
             if not result.success:
                 error = self._forward_failure(result, executor, iteration)
-                self._preserve_forward_results(scenario, executor, phase)
+                self._preserve_forward_results(scenario, executor, phase.souffle_mode)
                 raise error
-            if self.forward_definition.writes_facts:
-                souffle_files = FACT_FILES
-                if self.souffle_mode != "rdf":
-                    souffle_files = (
-                        FORWARD_PROGRAM,
-                        FORWARD_PROVENANCE_PROGRAM,
-                        REVERSE_PROGRAM,
-                        *inversion_input_files(
-                            operations.shared_dir, self.souffle_mode
-                        ),
-                    )
-                preserve_souffle_files(
-                    operations.shared_dir,
-                    executor.results_path / f"run_{iteration}" / engine_directory,
-                    souffle_files,
+            souffle_files = FACT_FILES
+            if phase.souffle_mode != "rdf":
+                souffle_files = (
+                    FORWARD_PROGRAM,
+                    FORWARD_PROVENANCE_PROGRAM,
+                    REVERSE_PROGRAM,
+                    *inversion_input_files(operations.shared_dir, phase.souffle_mode),
                 )
-
-        if report_statistics:
-            summary = executor.statistics()
-            forward_summary = dict(summary[executor.mapping_step - 1])
-            forward_summary["stage_name"] = "forward"
-            self.resource_summaries.setdefault(scenario.generated_name, []).append(
-                forward_summary
+            preserve_souffle_files(
+                operations.shared_dir,
+                executor.results_path / f"run_{iteration}" / engine_directory,
+                souffle_files,
             )
+
+        summary = executor.statistics()
+        forward_summary = dict(summary[executor.mapping_step - 1])
+        forward_summary["stage_name"] = "forward"
+        for campaign in phase.campaigns:
+            self.resource_summaries[campaign.name].setdefault(
+                scenario.generated_name, []
+            ).append(dict(forward_summary))
 
         results_path = self._preserve_forward_results(
             scenario,
             executor,
-            phase,
+            phase.souffle_mode,
         )
         measurements = []
         for iteration in range(1, runs + 1):
             run_path = results_path / f"run_{iteration}"
-            engine_path = run_path / engine_directory
-            souffle_directory = None
-            if self.forward_definition.writes_facts:
-                souffle_directory = engine_path
-                rdf_file = engine_path / DATALOG_RDF_FILE
-                write_rdf_dataset(souffle_directory, rdf_file)
-            else:
-                rdf_file = engine_path / executor.output_file
-                if scenario.generator == "NamedGraph":
-                    rdf_file = _rename_nquads_output(rdf_file)
+            souffle_directory = run_path / engine_directory
+            rdf_file = souffle_directory / DATALOG_RDF_FILE
+            write_rdf_dataset(souffle_directory, rdf_file)
             rdf_statements = self.validate_forward_output(
                 scenario,
                 operations,
@@ -1359,28 +1215,6 @@ class KrownBenchmarkRunner:
             "step": 1,
         }
 
-    def _build_forward_result(
-        self,
-        scenario: KrownScenario,
-        operations: ScenarioOperations,
-        measurement: ForwardMeasurement,
-    ) -> dict[str, object]:
-        return self._build_result(
-            scenario,
-            operations,
-            {"forward_time": measurement.duration},
-            measurement.rdf_statements,
-            0,
-            {
-                "scenario": scenario.generated_name,
-                "validation_passed": True,
-                "expected_outcome": None,
-                "outcome": "FORWARD",
-                "checks": {"rdf_statements": True},
-            },
-            {"forward": self._forward_metrics(measurement)},
-        )
-
     def _prepare_local_source(
         self,
         scenario: KrownScenario,
@@ -1397,6 +1231,7 @@ class KrownBenchmarkRunner:
     def _execute_backward_iteration(
         self,
         scenario: KrownScenario,
+        campaign: Campaign,
         operations: ScenarioOperations,
         iteration: int,
         forward: ForwardMeasurement,
@@ -1407,11 +1242,11 @@ class KrownBenchmarkRunner:
             scenario,
             operations.scenario_path,
         )
-        case_directory = self._case_directory(scenario) / "backward"
+        case_directory = self._backward_directory(scenario, campaign)
         run_path = case_directory / "results" / f"run_{iteration}"
         run_path.mkdir(parents=True)
         collector = SynchronousCollector(
-            case_name=f"{scenario.generated_name}:backward",
+            case_name=f"{scenario.generated_name}:backward_{campaign.name}",
             run_path=run_path,
             sample_interval=self.sample_interval,
             number_of_steps=1,
@@ -1421,10 +1256,10 @@ class KrownBenchmarkRunner:
         scenario_failure: ScenarioExecutionFailure | None = None
         non_invertible_error: NonInvertibleError | None = None
         try:
-            if self.inversion_engine == "souffle":
+            if campaign.inversion_engine == "souffle":
                 operations.backward_souffle(
-                    cast(Path, forward.souffle_directory),
-                    self.souffle_mode,
+                    forward.souffle_directory,
+                    campaign.souffle_mode,
                 )
             else:
                 self.run_stage(
@@ -1439,17 +1274,17 @@ class KrownBenchmarkRunner:
                 raise
             scenario_failure = error
         except NonInvertibleError as error:
-            if self._expected_outcome(scenario) != "NON_INVERTIBLE":
+            if expected_outcome(scenario, campaign) != "NON_INVERTIBLE":
                 raise
             non_invertible_error = error
         finally:
             collector.stop()
 
-        if self.inversion_engine == "souffle":
+        if campaign.inversion_engine == "souffle":
             operations.preserve_souffle_artifacts(
-                cast(Path, forward.souffle_directory),
+                forward.souffle_directory,
                 run_path,
-                self.souffle_mode,
+                campaign.souffle_mode,
                 interrupted=scenario_failure is not None,
             )
 
@@ -1465,22 +1300,19 @@ class KrownBenchmarkRunner:
                 iteration,
             ) from scenario_failure
 
-        if self.mode == "roundtrip":
-            timings = {
-                "forward_time": forward.duration,
-                "inversion_time": inversion_time,
-            }
-            metrics = {
-                "forward": self._forward_metrics(forward),
-                "backward": self._backward_metrics(run_path),
-            }
-        else:
-            timings = {"inversion_time": inversion_time}
-            metrics = {"backward": self._backward_metrics(run_path)}
+        timings = {
+            "forward_time": forward.duration,
+            "inversion_time": inversion_time,
+        }
+        metrics = {
+            "forward": self._forward_metrics(forward),
+            "backward": self._backward_metrics(run_path),
+        }
 
         if non_invertible_error is not None:
             result = self._build_result(
                 scenario,
+                campaign,
                 operations,
                 timings,
                 forward.rdf_statements,
@@ -1488,7 +1320,7 @@ class KrownBenchmarkRunner:
                 {
                     "scenario": scenario.generated_name,
                     "validation_passed": True,
-                    "expected_outcome": self._expected_outcome(scenario),
+                    "expected_outcome": expected_outcome(scenario, campaign),
                     "outcome": "NON_INVERTIBLE",
                     "error": str(non_invertible_error),
                 },
@@ -1497,12 +1329,13 @@ class KrownBenchmarkRunner:
         else:
             validation = self._validate_inversion(
                 scenario,
+                campaign,
                 operations,
                 forward.rdf_file,
-                iteration,
             )
             result = self._build_result(
                 scenario,
+                campaign,
                 operations,
                 timings,
                 forward.rdf_statements,
@@ -1512,8 +1345,10 @@ class KrownBenchmarkRunner:
             )
         return result
 
-    def _generate_backward_statistics(self, scenario: KrownScenario) -> None:
-        case_directory = self._case_directory(scenario) / "backward"
+    def _generate_backward_statistics(
+        self, scenario: KrownScenario, campaign: Campaign
+    ) -> None:
+        case_directory = self._backward_directory(scenario, campaign)
         summary = generate_official_statistics(
             project_root=self.project_root,
             results_path=case_directory / "results",
@@ -1522,37 +1357,31 @@ class KrownBenchmarkRunner:
         )
         backward_summary = dict(summary[0])
         backward_summary["stage_name"] = "backward"
-        self.resource_summaries.setdefault(scenario.generated_name, []).append(
-            backward_summary
-        )
+        self.resource_summaries[campaign.name].setdefault(
+            scenario.generated_name, []
+        ).append(backward_summary)
 
     def _remove_forward_data(
         self,
         scenario: KrownScenario,
+        phase: Phase,
         measurements: list[ForwardMeasurement],
     ) -> None:
         copied_inputs: set[str] = set()
         for measurement in measurements:
-            if measurement.souffle_directory is not None:
-                copied_inputs.update(
-                    inversion_input_files(
-                        measurement.souffle_directory,
-                        self.souffle_mode,
-                    )
+            copied_inputs.update(
+                inversion_input_files(
+                    measurement.souffle_directory,
+                    phase.souffle_mode,
                 )
-                shutil.rmtree(measurement.souffle_directory)
-            else:
-                measurement.rdf_file.unlink()
-
-        for iteration in range(1, self.iterations + 1):
-            backward_run = (
-                self._case_directory(scenario)
-                / "backward"
-                / "results"
-                / f"run_{iteration}"
             )
-            for filename in copied_inputs:
-                (backward_run / filename).unlink(missing_ok=True)
+            shutil.rmtree(measurement.souffle_directory)
+
+        for campaign in phase.campaigns:
+            results = self._backward_directory(scenario, campaign) / "results"
+            for iteration in range(1, self.iterations + 1):
+                for filename in copied_inputs:
+                    (results / f"run_{iteration}" / filename).unlink(missing_ok=True)
 
     def _series_data(self) -> list[dict[str, object]]:
         return [
@@ -1569,33 +1398,17 @@ class KrownBenchmarkRunner:
             for series in self.series
         ]
 
-    def _common_payload(
-        self,
-        scenario_runs: dict[str, list[dict[str, object]]],
-    ) -> dict[str, object]:
-        failed_scenarios = sum(
-            any(run["status"] == "failed" for run in runs)
-            for runs in scenario_runs.values()
-        )
-        skipped_scenarios = sum(
-            any(run["status"] == "skipped" for run in runs)
-            for runs in scenario_runs.values()
-        )
-        common = {
+    def _common_payload(self) -> dict[str, object]:
+        return {
             "timestamp": self.timestamp,
             "benchmark_type": "KROWN",
             "framework": "KROWN Executor with local inversion",
             "environment": "KROWN Executor and Docker Compose",
-            "mode": self.mode,
-            "forward_engine": self.forward_engine,
-            "inversion_engine": self.inversion_engine,
-            "souffle_mode": self.souffle_mode,
+            "forward_engine": "souffle",
             "measurement_scope": "system",
             "sample_interval_seconds": self.sample_interval,
             "sparql_engine": SPARQL_ENGINE,
             "iterations": self.iterations,
-            "failed_scenarios": failed_scenarios,
-            "skipped_scenarios": skipped_scenarios,
             "suites": list(self.suites),
             "series": self._series_data(),
             "provenance": {
@@ -1603,19 +1416,14 @@ class KrownBenchmarkRunner:
                 "krown_commit": self.krown_commit,
                 "reverse_r2rml_repository": REVERSE_R2RML_REPOSITORY,
                 "reverse_r2rml_commit": self.reverse_r2rml_commit,
-                "forward_engine_version": self.forward_definition.version,
-                "forward_rml_reader_version": self.forward_rml_reader_version,
+                "forward_engine_version": SOUFFLE_ENGINE.version,
+                "forward_rml_reader_version": translator_rml_version(),
                 "forward_executor": "KROWN Executor",
-                "backward_executor": (
-                    "ReverseSouffle"
-                    if self.inversion_engine == "souffle"
-                    else "local inversion adapter"
-                ),
                 "metrics_implementation": "KROWN Collector and Stats",
                 "forward_postgresql_version": "14.5",
                 "backward_postgresql_version": "13",
                 "rdf_serialization": "KROWN scenario metadata",
-                "measured_stages": list(self.measured_stages),
+                "measured_stages": list(MEASURED_STAGES),
                 "excluded_from_measurement": [
                     "generation",
                     "database_setup",
@@ -1625,22 +1433,47 @@ class KrownBenchmarkRunner:
                 ],
             },
         }
-        return common
 
-    def _write_raw_results(
-        self,
-        scenario_runs: dict[str, list[dict[str, object]]],
-        raw_file: Path,
+    @staticmethod
+    def _campaign_payload(
+        campaign: Campaign,
+        runs: dict[str, list[dict[str, object]]],
+        scenarios: dict[str, object],
     ) -> dict[str, object]:
-        common = self._common_payload(scenario_runs)
-        raw_data = {**common, "scenarios": scenario_runs}
-        raw_file.write_text(json.dumps(raw_data, indent=2) + "\n", encoding="utf-8")
-        return common
+        return {
+            "inversion_engine": campaign.inversion_engine,
+            "souffle_mode": campaign.souffle_mode,
+            "backward_executor": (
+                "ReverseSouffle"
+                if campaign.inversion_engine == "souffle"
+                else "local inversion adapter"
+            ),
+            "failed_scenarios": sum(
+                any(run["status"] == "failed" for run in scenario_runs)
+                for scenario_runs in runs.values()
+            ),
+            "skipped_scenarios": sum(
+                any(run["status"] == "skipped" for run in scenario_runs)
+                for scenario_runs in runs.values()
+            ),
+            "scenarios": scenarios,
+        }
 
-    def save_partial_results(
-        self,
-        scenario_runs: dict[str, list[dict[str, object]]],
-    ) -> Path:
+    def _write_raw_results(self, scenario_runs: ScenarioRuns, raw_file: Path) -> None:
+        raw_data = {
+            **self._common_payload(),
+            "campaigns": {
+                campaign.name: self._campaign_payload(
+                    campaign,
+                    scenario_runs[campaign.name],
+                    cast(dict[str, object], scenario_runs[campaign.name]),
+                )
+                for campaign in CAMPAIGNS
+            },
+        }
+        raw_file.write_text(json.dumps(raw_data, indent=2) + "\n", encoding="utf-8")
+
+    def save_partial_results(self, scenario_runs: ScenarioRuns) -> Path:
         """Record the runs measured before an aborted benchmark stopped.
 
         Statistics are omitted: aggregation assumes every iteration completed.
@@ -1650,10 +1483,13 @@ class KrownBenchmarkRunner:
         )
         temporary_file = partial_file.with_suffix(".tmp")
         measured = {
-            name: runs
-            for name, runs in scenario_runs.items()
-            if len(runs) == self.iterations
-            or any(run["status"] != "completed" for run in runs)
+            campaign_name: {
+                name: runs
+                for name, runs in campaign_runs.items()
+                if len(runs) == self.iterations
+                or any(run["status"] != "completed" for run in runs)
+            }
+            for campaign_name, campaign_runs in scenario_runs.items()
         }
         try:
             self._write_raw_results(measured, temporary_file)
@@ -1662,21 +1498,14 @@ class KrownBenchmarkRunner:
             temporary_file.unlink(missing_ok=True)
         return partial_file
 
-    def save_results(
+    def _aggregate_campaign(
         self,
-        scenario_runs: dict[str, list[dict[str, object]]],
-    ) -> tuple[Path, Path, dict[str, object]]:
-        raw_file = (
-            self.session_dir / f"krown_benchmark_results_raw_{self.timestamp}.json"
-        )
-        stats_file = (
-            self.session_dir / f"krown_benchmark_results_stats_{self.timestamp}.json"
-        )
-        common = self._write_raw_results(scenario_runs, raw_file)
-
-        aggregated_scenarios = {}
+        campaign: Campaign,
+        campaign_runs: dict[str, list[dict[str, object]]],
+    ) -> dict[str, object]:
+        aggregated_scenarios: dict[str, object] = {}
         for scenario in self.scenarios:
-            runs = scenario_runs[scenario.generated_name]
+            runs = campaign_runs[scenario.generated_name]
             unsuccessful_run = next(
                 (run for run in runs if run["status"] != "completed"), None
             )
@@ -1684,7 +1513,7 @@ class KrownBenchmarkRunner:
                 "display_name": scenario.display_name,
                 "suite": scenario.suite,
                 "generator": scenario.generator,
-                "expected_outcome": self._expected_outcome(scenario),
+                "expected_outcome": expected_outcome(scenario, campaign),
                 "parameters": scenario.parameters,
                 "source_configuration": {
                     "identifier": scenario.identifier,
@@ -1715,18 +1544,44 @@ class KrownBenchmarkRunner:
                 scenario_data["status"] = "completed"
                 scenario_data["statistics"] = statistics
                 scenario_data["resource_summary"] = self.resource_summaries[
-                    scenario.generated_name
-                ]
+                    campaign.name
+                ][scenario.generated_name]
             aggregated_scenarios[scenario.generated_name] = scenario_data
+        return aggregated_scenarios
 
+    def save_results(
+        self,
+        scenario_runs: ScenarioRuns,
+    ) -> tuple[Path, Path, dict[str, object]]:
+        raw_file = (
+            self.session_dir / f"krown_benchmark_results_raw_{self.timestamp}.json"
+        )
+        stats_file = (
+            self.session_dir / f"krown_benchmark_results_stats_{self.timestamp}.json"
+        )
+        self._write_raw_results(scenario_runs, raw_file)
         stats_data: dict[str, object] = {
-            **common,
-            "scenarios": aggregated_scenarios,
+            **self._common_payload(),
+            "campaigns": {
+                campaign.name: self._campaign_payload(
+                    campaign,
+                    scenario_runs[campaign.name],
+                    self._aggregate_campaign(campaign, scenario_runs[campaign.name]),
+                )
+                for campaign in CAMPAIGNS
+            },
         }
         stats_file.write_text(json.dumps(stats_data, indent=2) + "\n", encoding="utf-8")
         return raw_file, stats_file, stats_data
 
     def print_aggregated_summary(self, stats_data: dict[str, object]) -> None:
+        payloads = campaign_payloads(stats_data)
+        for campaign in CAMPAIGNS:
+            self._print_campaign_summary(campaign, payloads[campaign.name])
+
+    def _print_campaign_summary(
+        self, campaign: Campaign, stats_data: dict[str, object]
+    ) -> None:
         scenarios_data = cast(
             dict[str, dict[str, object]],
             stats_data["scenarios"],
@@ -1734,19 +1589,17 @@ class KrownBenchmarkRunner:
         for series in self.series:
             table = Table(
                 title=(
-                    f"KROWN {series.title} ({self.mode}; {self.iterations} iterations)"
+                    f"KROWN {series.title} ({campaign.label}; "
+                    f"{self.iterations} iterations)"
                 )
             )
             table.add_column(series.parameter_label, justify="right")
             table.add_column("CSV MiB", justify="right")
             table.add_column("RDF statements", justify="right")
-            if self.mode in ("forward", "roundtrip"):
-                table.add_column(self.forward_definition.label, justify="right")
-            if self.mode in ("backward", "roundtrip"):
-                table.add_column("Inversion", justify="right")
-                table.add_column("Rows/s", justify="right")
-            if self.mode == "roundtrip":
-                table.add_column("Overhead", justify="right")
+            table.add_column(SOUFFLE_ENGINE.label, justify="right")
+            table.add_column("Inversion", justify="right")
+            table.add_column("Rows/s", justify="right")
+            table.add_column("Overhead", justify="right")
             table.add_column("Outcome")
 
             for scenario_name, parameter_value in series.points:
@@ -1777,35 +1630,32 @@ class KrownBenchmarkRunner:
                     f"{cast(int, metadata['data_size_bytes']) / (1024**2):.2f}",
                     f"{cast(int, metadata['rdf_statements']):,}",
                 ]
-                if self.mode in ("forward", "roundtrip"):
-                    row.append(
-                        _format_confidence_interval(
-                            cast(dict[str, object], statistics["forward_time"])
-                        )
+                row.append(
+                    _format_confidence_interval(
+                        cast(dict[str, object], statistics["forward_time"])
                     )
-                if self.mode in ("backward", "roundtrip"):
-                    row.append(
-                        _format_confidence_interval(
-                            cast(dict[str, object], statistics["inversion_time"])
-                        )
+                )
+                row.append(
+                    _format_confidence_interval(
+                        cast(dict[str, object], statistics["inversion_time"])
                     )
-                    if "rows_per_second" in statistics:
-                        rows_statistics = cast(
+                )
+                if "rows_per_second" in statistics:
+                    rows_statistics = cast(
+                        dict[str, object],
+                        statistics["rows_per_second"],
+                    )
+                    row.append(f"{cast(float, rows_statistics['mean']):,.0f}")
+                else:
+                    row.append("-")
+                row.append(
+                    _format_percentage_confidence_interval(
+                        cast(
                             dict[str, object],
-                            statistics["rows_per_second"],
-                        )
-                        row.append(f"{cast(float, rows_statistics['mean']):,.0f}")
-                    else:
-                        row.append("-")
-                if self.mode == "roundtrip":
-                    row.append(
-                        _format_percentage_confidence_interval(
-                            cast(
-                                dict[str, object],
-                                statistics["inversion_overhead_percentage"],
-                            )
+                            statistics["inversion_overhead_percentage"],
                         )
                     )
+                )
                 row.append(str(validation["outcome"]))
                 table.add_row(*row)
             console.print(table)
@@ -1828,20 +1678,128 @@ class KrownBenchmarkRunner:
         finally:
             engine.dispose()
 
+    def _record_failure(
+        self,
+        scenario_runs: ScenarioRuns,
+        scenario: KrownScenario,
+        campaign: Campaign,
+        error: ScenarioExecutionFailure,
+        iteration: int | None,
+    ) -> None:
+        result = self._build_failure_result(
+            scenario, campaign, error, executed=iteration is not None
+        )
+        result["iteration"] = iteration
+        scenario_runs[campaign.name][scenario.generated_name].append(result)
+
+    def _run_campaign(
+        self,
+        scenario: KrownScenario,
+        campaign: Campaign,
+        operations: ScenarioOperations,
+        forward_measurements: list[ForwardMeasurement],
+        scenario_runs: ScenarioRuns,
+        progress: Progress,
+        task: TaskID,
+    ) -> bool:
+        for iteration in range(1, self.iterations + 1):
+            progress.update(
+                task,
+                description=(
+                    f"{scenario.generated_name} backward {campaign.name} "
+                    f"({iteration}/{self.iterations})"
+                ),
+            )
+            try:
+                result = self._execute_backward_iteration(
+                    scenario,
+                    campaign,
+                    operations,
+                    iteration,
+                    forward_measurements[iteration - 1],
+                )
+            except ScenarioExecutionFailure as error:
+                self._record_failure(
+                    scenario_runs, scenario, campaign, error, iteration
+                )
+                skipped = self.iterations - iteration
+                console.print(
+                    f"{scenario.generated_name}: {error.outcome} during "
+                    f"{error.stage} of {campaign.name}; skipped {skipped} "
+                    "remaining iterations"
+                )
+                progress.advance(task, advance=skipped + 1)
+                return False
+            result["iteration"] = iteration
+            scenario_runs[campaign.name][scenario.generated_name].append(result)
+            progress.advance(task)
+        self._generate_backward_statistics(scenario, campaign)
+        return True
+
+    def _run_phase(
+        self,
+        scenario: KrownScenario,
+        phase: Phase,
+        operations: ScenarioOperations,
+        scenario_runs: ScenarioRuns,
+        progress: Progress,
+        task: TaskID,
+    ) -> bool:
+        try:
+            forward_measurements = self._run_forward_phase(
+                scenario,
+                operations,
+                phase,
+                progress,
+                task,
+            )
+        except ScenarioExecutionFailure as error:
+            iteration = error.iteration or 1
+            for campaign in phase.campaigns:
+                self._record_failure(
+                    scenario_runs, scenario, campaign, error, iteration
+                )
+            console.print(
+                f"{scenario.generated_name}: {error.outcome} during {error.stage} "
+                f"of the {phase.souffle_mode} forward; skipped "
+                f"{self.iterations - iteration} remaining iterations"
+            )
+            progress.advance(task, advance=self.iterations * (1 + len(phase.campaigns)))
+            return False
+
+        progress.advance(task, advance=self.iterations)
+        succeeded = True
+        for campaign in phase.campaigns:
+            if not self._run_campaign(
+                scenario,
+                campaign,
+                operations,
+                forward_measurements,
+                scenario_runs,
+                progress,
+                task,
+            ):
+                succeeded = False
+        self._remove_forward_data(scenario, phase, forward_measurements)
+        return succeeded
+
     def run_benchmark(self) -> int:
         console.print(
-            f"Starting KROWN benchmark "
-            f"({', '.join(self.suites)}; {self.mode}; system metrics)"
+            f"Starting KROWN benchmark ({', '.join(self.suites)}; system metrics)"
         )
-        scenario_runs: dict[str, list[dict[str, object]]] = {
-            scenario.generated_name: [] for scenario in self.scenarios
+        scenario_runs: ScenarioRuns = {
+            campaign.name: {scenario.generated_name: [] for scenario in self.scenarios}
+            for campaign in CAMPAIGNS
         }
-        scenario_runs.update(self.measured_runs)
-        failed_scenarios: list[str] = [
+        for campaign_name, measured in self.measured_runs.items():
+            scenario_runs[campaign_name].update(measured)
+        failed_scenarios = {
             name
-            for name, runs in self.measured_runs.items()
+            for measured in self.measured_runs.values()
+            for name, runs in measured.items()
             if any(run["status"] == "failed" for run in runs)
-        ]
+        }
+        skipped_scenarios = 0
         results_saved = False
         try:
             self.prepare_output_directories()
@@ -1853,37 +1811,52 @@ class KrownBenchmarkRunner:
                 TimeElapsedColumn(),
                 console=console,
             ) as progress:
-                stages_per_iteration = 2 if self.mode == "roundtrip" else 1
                 task = progress.add_task(
                     "Scenarios",
-                    total=(
-                        len(self.scenarios) * self.iterations * stages_per_iteration
-                    ),
+                    total=len(self.scenarios)
+                    * self.iterations
+                    * (len(PHASES) + len(CAMPAIGNS)),
                 )
                 for scenario in self.scenarios:
-                    measured = scenario_runs[scenario.generated_name]
-                    if measured:
-                        if all(run["status"] == "completed" for run in measured):
-                            self._restore_resource_summaries(scenario, measured)
+                    pending_phases = []
+                    for phase in PHASES:
+                        if not self._phase_measured(scenario, phase):
+                            pending_phases.append(phase)
+                            continue
+                        for campaign in phase.campaigns:
+                            measured = scenario_runs[campaign.name][
+                                scenario.generated_name
+                            ]
+                            if all(run["status"] == "completed" for run in measured):
+                                self._restore_resource_summaries(
+                                    scenario, campaign, measured
+                                )
                         progress.advance(
                             task,
-                            advance=self.iterations * stages_per_iteration,
+                            advance=self.iterations * (1 + len(phase.campaigns)),
                         )
-                        continue
                     known_failure = self._known_forward_failure(scenario)
                     if known_failure is not None:
-                        result = self._build_failure_result(
-                            scenario, known_failure, executed=False
-                        )
-                        result["iteration"] = None
-                        scenario_runs[scenario.generated_name].append(result)
+                        skipped_scenarios += 1
+                    if not pending_phases:
+                        continue
+                    if known_failure is not None:
+                        for phase in pending_phases:
+                            for campaign in phase.campaigns:
+                                self._record_failure(
+                                    scenario_runs,
+                                    scenario,
+                                    campaign,
+                                    known_failure,
+                                    None,
+                                )
+                            progress.advance(
+                                task,
+                                advance=self.iterations * (1 + len(phase.campaigns)),
+                            )
                         console.print(
                             f"{scenario.generated_name}: {known_failure.outcome} "
                             "expected during forward_mapping; skipped without execution"
-                        )
-                        progress.advance(
-                            task,
-                            advance=self.iterations * stages_per_iteration,
                         )
                         self.save_partial_results(scenario_runs)
                         continue
@@ -1891,101 +1864,22 @@ class KrownBenchmarkRunner:
                         scenario,
                         self.scenarios_root,
                         self.data_generator_dir,
-                        self.forward_definition.resource,
-                        self.souffle_mode,
                     )
                     operations = ScenarioOperations(
                         scenario, scenario_path, self.database
                     )
-                    report_forward = self.mode in ("forward", "roundtrip")
-                    forward_runs = self.iterations if report_forward else 1
-                    forward_phase = "forward" if report_forward else "preparation"
-                    try:
-                        forward_measurements = self._run_forward_phase(
+                    self._prepare_local_source(scenario, operations)
+                    for phase in pending_phases:
+                        if not self._run_phase(
                             scenario,
+                            phase,
                             operations,
-                            forward_runs,
-                            forward_phase,
-                            report_forward,
+                            scenario_runs,
                             progress,
                             task,
-                        )
-                    except ScenarioExecutionFailure as error:
-                        result = self._build_failure_result(scenario, error)
-                        result["iteration"] = error.iteration or 1
-                        scenario_runs[scenario.generated_name].append(result)
-                        failed_scenarios.append(scenario.generated_name)
-                        skipped = self.iterations - int(result["iteration"])
-                        console.print(
-                            f"{scenario.generated_name}: {error.outcome} "
-                            f"during {error.stage}; skipped {skipped} "
-                            "remaining iterations"
-                        )
-                        progress.advance(
-                            task,
-                            advance=self.iterations * stages_per_iteration,
-                        )
+                        ):
+                            failed_scenarios.add(scenario.generated_name)
                         self.save_partial_results(scenario_runs)
-                        continue
-
-                    if report_forward:
-                        progress.advance(task, advance=self.iterations)
-                    if self.mode == "forward":
-                        for measurement in forward_measurements:
-                            result = self._build_forward_result(
-                                scenario,
-                                operations,
-                                measurement,
-                            )
-                            result["iteration"] = measurement.iteration
-                            scenario_runs[scenario.generated_name].append(result)
-                        self._remove_forward_data(scenario, forward_measurements)
-                        self.save_partial_results(scenario_runs)
-                        continue
-
-                    self._prepare_local_source(scenario, operations)
-                    scenario_failed = False
-                    for iteration in range(1, self.iterations + 1):
-                        progress.update(
-                            task,
-                            description=(
-                                f"{scenario.generated_name} "
-                                f"backward ({iteration}/{self.iterations})"
-                            ),
-                        )
-                        forward = (
-                            forward_measurements[iteration - 1]
-                            if self.mode == "roundtrip"
-                            else forward_measurements[0]
-                        )
-                        try:
-                            result = self._execute_backward_iteration(
-                                scenario,
-                                operations,
-                                iteration,
-                                forward,
-                            )
-                        except ScenarioExecutionFailure as error:
-                            result = self._build_failure_result(scenario, error)
-                            result["iteration"] = iteration
-                            scenario_runs[scenario.generated_name].append(result)
-                            failed_scenarios.append(scenario.generated_name)
-                            skipped = self.iterations - iteration
-                            console.print(
-                                f"{scenario.generated_name}: {error.outcome} "
-                                f"during {error.stage}; skipped {skipped} "
-                                "remaining iterations"
-                            )
-                            progress.advance(task, advance=skipped + 1)
-                            scenario_failed = True
-                            break
-                        result["iteration"] = iteration
-                        scenario_runs[scenario.generated_name].append(result)
-                        progress.advance(task)
-                    if not scenario_failed:
-                        self._generate_backward_statistics(scenario)
-                    self._remove_forward_data(scenario, forward_measurements)
-                    self.save_partial_results(scenario_runs)
 
             raw_file, stats_file, stats_data = self.save_results(scenario_runs)
             results_saved = True
@@ -2001,11 +1895,15 @@ class KrownBenchmarkRunner:
                 return 1
             console.print(
                 "Benchmark completed with the expected outcomes; "
-                f"{stats_data['skipped_scenarios']} known forward failures skipped"
+                f"{skipped_scenarios} known forward failures skipped"
             )
             return 0
         finally:
-            if not results_saved and any(scenario_runs.values()):
+            if not results_saved and any(
+                runs
+                for campaign_runs in scenario_runs.values()
+                for runs in campaign_runs.values()
+            ):
                 partial_file = self.save_partial_results(scenario_runs)
                 console.print(f"Partial results saved to {partial_file}")
             self.cleanup()
@@ -2046,11 +1944,6 @@ def _benchmark_main(arguments: list[str]) -> int:
         allow_abbrev=False,
     )
     parser.add_argument(
-        "--mode",
-        choices=("forward", "backward", "roundtrip"),
-        required=True,
-    )
-    parser.add_argument(
         "--iterations",
         type=parse_iterations,
         required=True,
@@ -2076,35 +1969,13 @@ def _benchmark_main(arguments: list[str]) -> int:
         type=Path,
         help="Session directory of an interrupted run to continue",
     )
-    parser.add_argument(
-        "--forward-engine",
-        choices=tuple(FORWARD_ENGINES),
-        required=True,
-        help="Materialization engine, also used by the round trip validation",
-    )
-    parser.add_argument(
-        "--inversion-engine",
-        choices=("kgi", "souffle"),
-        required=True,
-        help="Inversion engine: kgi (SPARQL) or souffle (Datalog)",
-    )
-    parser.add_argument(
-        "--souffle-mode",
-        choices=("rdf", "provenance", "hybrid"),
-        required=True,
-        help="Soufflé inversion input: rdf, provenance, or hybrid",
-    )
     args = parser.parse_args(arguments)
     try:
         runner = KrownBenchmarkRunner(
-            mode=args.mode,
             iterations=args.iterations,
             sample_interval=args.interval,
             suites=args.suites,
             scenario_name=args.scenario,
-            forward_engine=args.forward_engine,
-            inversion_engine=args.inversion_engine,
-            souffle_mode=cast(SouffleMode, args.souffle_mode),
             resume_session=args.resume,
         )
     except ValueError as error:

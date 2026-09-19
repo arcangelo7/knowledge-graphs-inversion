@@ -7,11 +7,10 @@ COMPOSE_GTFS = docker compose -f docker-compose.benchmark.yml --profile gtfs
 SCENARIO ?=
 RESUME ?=
 ifneq ($(filter benchmark-krown benchmark-all,$(MAKECMDGOALS)),)
-$(foreach option,I MODE SUITES FORWARD_ENGINE INVERSION_ENGINE SOUFFLE_MODE INTERVAL,$(if $(strip $($(option))),,$(error Missing required benchmark parameter: $(option))))
-else
+$(foreach option,I SUITES INTERVAL,$(if $(strip $($(option))),,$(error Missing required benchmark parameter: $(option))))
+endif
 FORWARD_ENGINE ?= rmlmapper
 INVERSION_ENGINE ?= kgi
-endif
 ifneq ($(filter benchmark-gtfs benchmark-all,$(MAKECMDGOALS)),)
 $(foreach option,I S,$(if $(strip $($(option))),,$(error Missing required benchmark parameter: $(option))))
 endif
@@ -23,7 +22,6 @@ endif
 KROWN_CREDENTIALS_ARG = $(if $(CREDENTIALS),--credentials=$(CREDENTIALS))
 SOUFFLE_MODES ?= rdf,provenance,hybrid
 DATABASE ?= postgresql
-KROWN_RMLMAPPER_IMAGE = kgconstruct/rmlmapper:v8.1.0
 KROWN_SOUFFLE_IMAGE = alloka/souffle:v1.0.0
 CONFORMANCE_SOUFFLE_IMAGE = alloka/souffle:v1.0.0@sha256:0e9288ca6f7a63faf93f4358f210de0ffcab6e3e2405d88c365391da6d54fe89
 MAVEN_IMAGE = maven:3.9.11-eclipse-temurin-17
@@ -37,15 +35,9 @@ R2RML_TRANSLATOR_JAR = $(R2RML_TRANSLATOR_BUILD)/translator/target/rulegen.jar
 R2RML_FUNCTOR_LIBRARY = $(R2RML_TRANSLATOR_BUILD)/lib/libfunctors.so
 KROWN_SCENARIO_ARG = $(if $(SCENARIO),--scenario=$(SCENARIO))
 KROWN_RESUME_ARG = $(if $(RESUME),--resume=$(RESUME))
-KROWN_RUN = uv run python -m benchmarks.run_krown_benchmark --mode $(MODE) --iterations $(I) --interval $(INTERVAL) --suites $(SUITES) --forward-engine $(FORWARD_ENGINE) --inversion-engine $(INVERSION_ENGINE) --souffle-mode $(SOUFFLE_MODE) $(KROWN_SCENARIO_ARG) $(KROWN_RESUME_ARG)
+KROWN_RUN = uv run python -m benchmarks.run_krown_benchmark --iterations $(I) --interval $(INTERVAL) --suites $(SUITES) $(KROWN_SCENARIO_ARG) $(KROWN_RESUME_ARG)
 
-.PHONY: validate-krown-options validate-conformance-options validate-sheets-options submodules reverse-submodule translator-assets krown-images benchmark-krown benchmark-gtfs benchmark-all test-conformance export-krown-sheets
-
-validate-krown-options:
-	@case "$(SOUFFLE_MODE)" in \
-		rdf|provenance|hybrid) ;; \
-		*) echo "SOUFFLE_MODE must be rdf, provenance, or hybrid" >&2; exit 2 ;; \
-	esac
+.PHONY: validate-conformance-options validate-sheets-options submodules reverse-submodule translator-assets krown-images benchmark-krown benchmark-gtfs benchmark-all test-conformance export-krown-sheets
 
 validate-conformance-options:
 	@case "$(FORWARD_ENGINE)/$(INVERSION_ENGINE)" in \
@@ -58,9 +50,7 @@ validate-conformance-options:
 	esac
 
 validate-sheets-options:
-	@for stats in $(STATS); do \
-		test -r "$${stats%%=*}" || { echo "STATS entry is not readable: $${stats%%=*}" >&2; exit 2; }; \
-	done
+	@test -r "$(STATS)" || { echo "STATS is not readable: $(STATS)" >&2; exit 2; }
 
 export-krown-sheets: validate-sheets-options
 	uv run python -m benchmarks.krown_sheets $(STATS) --spreadsheet-id $(SHEET) $(KROWN_CREDENTIALS_ARG)
@@ -97,22 +87,13 @@ translator-assets:
 	jar tf "$(R2RML_TRANSLATOR_JAR)" | grep -q '^translator/r2rml/datalog/Main.class$$'; \
 	test -s "$(R2RML_FUNCTOR_LIBRARY)"
 
-krown-images:
-	@set -e; \
-	if [ "$(FORWARD_ENGINE)" = "rmlmapper" ]; then \
-		docker build --target krown-rmlmapper -t $(KROWN_RMLMAPPER_IMAGE) .; \
-	fi; \
-	if [ "$(FORWARD_ENGINE)" = "souffle" ] || [ "$(INVERSION_ENGINE)" = "souffle" ]; then \
-		$(MAKE) reverse-submodule; \
-		docker build --target krown-souffle -t $(KROWN_SOUFFLE_IMAGE) .; \
-	fi
+krown-images: reverse-submodule
+	docker build --target krown-souffle -t $(KROWN_SOUFFLE_IMAGE) .
 
-benchmark-krown: validate-krown-options submodules krown-images
+benchmark-krown: submodules krown-images
 	@set -e; \
 	trap '$(COMPOSE_KROWN) down --remove-orphans' EXIT; \
-	if [ "$(MODE)" != "forward" ]; then \
-		$(COMPOSE_KROWN) build benchmark; \
-	fi; \
+	$(COMPOSE_KROWN) build benchmark; \
 	$(KROWN_RUN)
 
 benchmark-gtfs: submodules
@@ -122,7 +103,7 @@ benchmark-gtfs: submodules
 	$(COMPOSE_GTFS) up -d gtfs_mysql; \
 	$(COMPOSE_GTFS) run --rm benchmark gtfs-benchmark --iterations $(I) --scales $(S)
 
-benchmark-all: validate-krown-options submodules krown-images
+benchmark-all: submodules krown-images
 	@set -e; \
 	trap '$(COMPOSE_GTFS) down --remove-orphans' EXIT; \
 	$(COMPOSE_GTFS) build benchmark; \

@@ -2,9 +2,6 @@
 #
 # SPDX-License-Identifier: ISC
 
-import filecmp
-import os
-import subprocess
 from pathlib import Path
 
 from pyoxigraph import RdfFormat, Store
@@ -194,39 +191,17 @@ class KrownValidator:
         }
 
     @staticmethod
-    def _sort_rdf_dataset(rdf_file: Path, output: Path) -> None:
-        environment = {**os.environ, "LC_ALL": "C"}
-        subprocess.run(
-            ["sort", "-u", str(rdf_file), "-o", str(output)],
-            check=True,
-            env=environment,
-        )
-
-    @staticmethod
     def rdf_dataset_empty(rdf_file: Path) -> bool:
         with rdf_file.open(encoding="utf-8") as file:
             return not any(line.strip() for line in file)
-
-    @classmethod
-    def _rdf_datasets_equal(cls, original: Path, roundtrip: Path) -> bool:
-        directory = original.parent
-        original_sorted = directory / ".krown-original-sorted.nq"
-        roundtrip_sorted = directory / ".krown-roundtrip-sorted.nq"
-        try:
-            cls._sort_rdf_dataset(original, original_sorted)
-            cls._sort_rdf_dataset(roundtrip, roundtrip_sorted)
-            return filecmp.cmp(original_sorted, roundtrip_sorted, shallow=False)
-        finally:
-            original_sorted.unlink(missing_ok=True)
-            roundtrip_sorted.unlink(missing_ok=True)
 
     def missing_mapped_columns(
         self, expected_tables: list[str], mapping_file: Path
     ) -> dict[str, list[str]]:
         """Columns the mapping reads that the reconstruction does not provide.
 
-        The mapping cannot rebuild the graph from tables that lack them, so the round
-        trip is not attempted and the reconstruction is reported as `AMBIGUOUS`.
+        The mapping cannot rebuild the graph from tables that lack them, so the
+        reconstruction is reported as `AMBIGUOUS`.
         """
         columns = _mapped_columns(mapping_file)
         destination_tables = set(
@@ -252,7 +227,6 @@ class KrownValidator:
         scenario_name: str,
         expected_outcome: str,
         original_rdf: Path,
-        roundtrip_rdf: Path | None,
         missing_mapped_columns: dict[str, list[str]],
     ) -> dict[str, object]:
         inspector = inspect(self.engine)
@@ -270,33 +244,24 @@ class KrownValidator:
             for table_name in expected_tables:
                 table_results[table_name] = self._table_result(table_name)
 
-        if roundtrip_rdf is None:
-            rdf_round_trip = None
-        else:
-            rdf_round_trip = self._rdf_datasets_equal(original_rdf, roundtrip_rdf)
-
+        rebuilds_graph = not missing_mapped_columns or self.rdf_dataset_empty(
+            original_rdf
+        )
         sound = table_names_match and all(
             bool(result["partial_valid"]) for result in table_results.values()
         )
-        exact = (
-            sound
-            and rdf_round_trip is True
-            and all(bool(result["exact"]) for result in table_results.values())
-        )
-        if exact:
-            outcome = "FULL"
-        elif sound and rdf_round_trip is True:
-            outcome = "PARTIAL"
-        elif sound and rdf_round_trip is None:
-            outcome = "AMBIGUOUS"
-        else:
+        if not sound:
             outcome = "MISMATCH"
+        elif not rebuilds_graph:
+            outcome = "AMBIGUOUS"
+        elif all(bool(result["exact"]) for result in table_results.values()):
+            outcome = "FULL"
+        else:
+            outcome = "PARTIAL"
 
         errors = []
         if not table_names_match:
             errors.append("tables")
-        if rdf_round_trip is False:
-            errors.append("rdf_round_trip")
         for table_name, result in table_results.items():
             checks = result["checks"]
             if checks["column_subset"] is not True:
@@ -312,10 +277,7 @@ class KrownValidator:
             "validation_passed": outcome_matches_expectation,
             "expected_outcome": expected_outcome,
             "outcome": outcome,
-            "checks": {
-                "tables": table_names_match,
-                "rdf_round_trip": rdf_round_trip,
-            },
+            "checks": {"tables": table_names_match},
             "missing_mapped_columns": missing_mapped_columns,
             "source_tables": sorted(source_tables),
             "destination_tables": sorted(destination_tables),

@@ -13,7 +13,7 @@ from typing import cast
 import matplotlib.pyplot as plt
 import numpy as np
 
-from benchmarks.forward_engines import FORWARD_ENGINES, ForwardEngine
+from benchmarks.krown_campaigns import PHASES, SOUFFLE_MODE_LABELS, campaign_payloads
 from benchmarks.krown_catalog import EXCLUDED_SERIES
 
 
@@ -70,14 +70,15 @@ def plot_timing_charts(
 ) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     plot_files = []
-    mode = cast(str, stats_data["mode"])
-    metrics = []
-    if mode in ("forward", "roundtrip"):
-        forward_engine = cast(ForwardEngine, stats_data["forward_engine"])
-        label = FORWARD_ENGINES[forward_engine].label
-        metrics.append(("forward_time", label, "#1f77b4", "o"))
-    if mode in ("backward", "roundtrip"):
-        metrics.append(("inversion_time", "Reverse", "#d62728", "s"))
+    payloads = campaign_payloads(stats_data)
+    lines = []
+    for phase in PHASES:
+        label = f"Forward ({SOUFFLE_MODE_LABELS[phase.souffle_mode]})"
+        lines.append((payloads[phase.campaigns[0].name], "forward_time", label))
+        lines.extend(
+            (payloads[campaign.name], "inversion_time", campaign.label)
+            for campaign in phase.campaigns
+        )
 
     for series in cast(list[dict[str, object]], stats_data["series"]):
         if series["name"] in EXCLUDED_SERIES:
@@ -86,13 +87,13 @@ def plot_timing_charts(
         parameter_values: list[float | str] = []
         x_values: list[float] = []
 
-        for metric_name, label, color, marker in metrics:
+        for campaign_data, metric_name, label in lines:
             (
                 parameter_values,
                 means,
                 lower_errors,
                 upper_errors,
-            ) = _timing_points(stats_data, series, metric_name)
+            ) = _timing_points(campaign_data, series, metric_name)
             x_values = [float(index) for index in range(len(parameter_values))]
             if not means:
                 continue
@@ -101,8 +102,7 @@ def plot_timing_charts(
                 means,
                 yerr=np.array([lower_errors, upper_errors]),
                 label=label,
-                color=color,
-                marker=marker,
+                marker="o" if metric_name == "forward_time" else "s",
                 linewidth=2,
                 capsize=5,
             )
