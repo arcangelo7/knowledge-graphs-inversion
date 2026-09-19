@@ -820,9 +820,8 @@ class KrownBenchmarkRunner:
             )
 
     def _expected_outcome(self, scenario: KrownScenario) -> str:
-        if (
-            self.souffle_mode in ("provenance", "hybrid")
-            and scenario.generator == "Mappings"
+        if self.souffle_mode in ("provenance", "hybrid") and (
+            scenario.generator == "Mappings" or scenario.suite == "joins"
         ):
             return "PARTIAL"
         return scenario.expected_outcome
@@ -1515,6 +1514,34 @@ class KrownBenchmarkRunner:
             backward_summary
         )
 
+    def _remove_forward_data(
+        self,
+        scenario: KrownScenario,
+        measurements: list[ForwardMeasurement],
+    ) -> None:
+        copied_inputs: set[str] = set()
+        for measurement in measurements:
+            if measurement.souffle_directory is not None:
+                copied_inputs.update(
+                    inversion_input_files(
+                        measurement.souffle_directory,
+                        self.souffle_mode,
+                    )
+                )
+                shutil.rmtree(measurement.souffle_directory)
+            else:
+                measurement.rdf_file.unlink()
+
+        for iteration in range(1, self.iterations + 1):
+            backward_run = (
+                self._case_directory(scenario)
+                / "backward"
+                / "results"
+                / f"run_{iteration}"
+            )
+            for filename in copied_inputs:
+                (backward_run / filename).unlink(missing_ok=True)
+
     def _series_data(self) -> list[dict[str, object]]:
         return [
             {
@@ -1609,13 +1636,18 @@ class KrownBenchmarkRunner:
         partial_file = (
             self.session_dir / f"krown_benchmark_results_partial_{self.timestamp}.json"
         )
+        temporary_file = partial_file.with_suffix(".tmp")
         measured = {
             name: runs
             for name, runs in scenario_runs.items()
             if len(runs) == self.iterations
             or any(run["status"] != "completed" for run in runs)
         }
-        self._write_raw_results(measured, partial_file)
+        try:
+            self._write_raw_results(measured, temporary_file)
+            os.replace(temporary_file, partial_file)
+        finally:
+            temporary_file.unlink(missing_ok=True)
         return partial_file
 
     def save_results(
@@ -1841,6 +1873,7 @@ class KrownBenchmarkRunner:
                             task,
                             advance=self.iterations * stages_per_iteration,
                         )
+                        self.save_partial_results(scenario_runs)
                         continue
                     scenario_path = generate_scenario(
                         scenario,
@@ -1880,6 +1913,7 @@ class KrownBenchmarkRunner:
                             task,
                             advance=self.iterations * stages_per_iteration,
                         )
+                        self.save_partial_results(scenario_runs)
                         continue
 
                     if report_forward:
@@ -1893,6 +1927,8 @@ class KrownBenchmarkRunner:
                             )
                             result["iteration"] = measurement.iteration
                             scenario_runs[scenario.generated_name].append(result)
+                        self._remove_forward_data(scenario, forward_measurements)
+                        self.save_partial_results(scenario_runs)
                         continue
 
                     self._prepare_local_source(scenario, operations)
@@ -1936,6 +1972,8 @@ class KrownBenchmarkRunner:
                         progress.advance(task)
                     if not scenario_failed:
                         self._generate_backward_statistics(scenario)
+                    self._remove_forward_data(scenario, forward_measurements)
+                    self.save_partial_results(scenario_runs)
 
             raw_file, stats_file, stats_data = self.save_results(scenario_runs)
             results_saved = True
