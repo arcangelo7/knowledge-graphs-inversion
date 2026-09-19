@@ -44,6 +44,8 @@ class ForwardEngineDefinition:
         return f"{database}?{self.schema_query.format(schema=schema)}"
 
 
+SOUFFLE_RELEASE = "2.5"
+
 FORWARD_ENGINES: dict[ForwardEngine, ForwardEngineDefinition] = {
     "rmlmapper": ForwardEngineDefinition(
         resource="RMLMapper",

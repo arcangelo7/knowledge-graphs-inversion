@@ -18,10 +18,10 @@ import gspread
 from gspread.utils import ValueInputOption
 
 from benchmarks.forward_engines import (
-    FORWARD_ENGINES,
-    ForwardEngine,
+    SOUFFLE_RELEASE,
     translator_rml_version,
 )
+from benchmarks.krown_catalog import EXCLUDED_SERIES
 
 CellValue = str | int | float | bool
 Table = list[list[CellValue]]
@@ -37,7 +37,12 @@ FAILURES_TAB = "Failures"
 CAMPAIGN_COLUMN = "Campaign"
 FORWARD_STAGE = "forward_mapping"
 
-INVERSION_ENGINE_LABELS = {"kgi": "KGI", "souffle": "Soufflé"}
+SOUFFLE_SOFTWARE = f"Soufflé {SOUFFLE_RELEASE}"
+SOUFFLE_MODE_LABELS = {
+    "rdf": "RDF-only",
+    "provenance": "provenance-aware",
+    "hybrid": "hybrid",
+}
 
 CREDENTIALS_VARIABLE = "KROWN_SHEETS_CREDENTIALS"
 DEFAULT_CREDENTIALS = Path.home() / ".config" / "krown-sheets" / "sa.json"
@@ -53,9 +58,9 @@ SCENARIO_COLUMNS: tuple[tuple[str, str], ...] = (
     ("Forward mean (s)", "statistics.forward_time.mean"),
     ("Forward 95% CI lower (s)", "statistics.forward_time.ci_95_lower"),
     ("Forward 95% CI upper (s)", "statistics.forward_time.ci_95_upper"),
-    ("Inversion mean (s)", "statistics.inversion_time.mean"),
-    ("Inversion 95% CI lower (s)", "statistics.inversion_time.ci_95_lower"),
-    ("Inversion 95% CI upper (s)", "statistics.inversion_time.ci_95_upper"),
+    ("Reverse mean (s)", "statistics.inversion_time.mean"),
+    ("Reverse 95% CI lower (s)", "statistics.inversion_time.ci_95_lower"),
+    ("Reverse 95% CI upper (s)", "statistics.inversion_time.ci_95_upper"),
     ("Display name", "display_name"),
     ("Generator", "generator"),
     ("Members", "parameters.number_of_members"),
@@ -115,42 +120,42 @@ SCENARIO_COLUMNS: tuple[tuple[str, str], ...] = (
     ("Forward IQR (s)", "statistics.forward_time.iqr"),
     ("Forward outliers (s)", "statistics.forward_time.outliers"),
     ("Forward N", "statistics.forward_time.n"),
-    ("Inversion median (s)", "statistics.inversion_time.median"),
-    ("Inversion sample SD (s)", "statistics.inversion_time.std"),
-    ("Inversion minimum (s)", "statistics.inversion_time.min"),
-    ("Inversion maximum (s)", "statistics.inversion_time.max"),
-    ("Inversion Q1 (s)", "statistics.inversion_time.q1"),
-    ("Inversion Q3 (s)", "statistics.inversion_time.q3"),
-    ("Inversion IQR (s)", "statistics.inversion_time.iqr"),
-    ("Inversion outliers (s)", "statistics.inversion_time.outliers"),
-    ("Inversion N", "statistics.inversion_time.n"),
-    ("Inversion / forward mean (%)", "statistics.inversion_overhead_percentage.mean"),
+    ("Reverse median (s)", "statistics.inversion_time.median"),
+    ("Reverse sample SD (s)", "statistics.inversion_time.std"),
+    ("Reverse minimum (s)", "statistics.inversion_time.min"),
+    ("Reverse maximum (s)", "statistics.inversion_time.max"),
+    ("Reverse Q1 (s)", "statistics.inversion_time.q1"),
+    ("Reverse Q3 (s)", "statistics.inversion_time.q3"),
+    ("Reverse IQR (s)", "statistics.inversion_time.iqr"),
+    ("Reverse outliers (s)", "statistics.inversion_time.outliers"),
+    ("Reverse N", "statistics.inversion_time.n"),
+    ("Reverse / forward mean (%)", "statistics.inversion_overhead_percentage.mean"),
     (
-        "Inversion / forward median (%)",
+        "Reverse / forward median (%)",
         "statistics.inversion_overhead_percentage.median",
     ),
     (
-        "Inversion / forward sample SD (%)",
+        "Reverse / forward sample SD (%)",
         "statistics.inversion_overhead_percentage.std",
     ),
-    ("Inversion / forward minimum (%)", "statistics.inversion_overhead_percentage.min"),
-    ("Inversion / forward maximum (%)", "statistics.inversion_overhead_percentage.max"),
-    ("Inversion / forward Q1 (%)", "statistics.inversion_overhead_percentage.q1"),
-    ("Inversion / forward Q3 (%)", "statistics.inversion_overhead_percentage.q3"),
-    ("Inversion / forward IQR (%)", "statistics.inversion_overhead_percentage.iqr"),
+    ("Reverse / forward minimum (%)", "statistics.inversion_overhead_percentage.min"),
+    ("Reverse / forward maximum (%)", "statistics.inversion_overhead_percentage.max"),
+    ("Reverse / forward Q1 (%)", "statistics.inversion_overhead_percentage.q1"),
+    ("Reverse / forward Q3 (%)", "statistics.inversion_overhead_percentage.q3"),
+    ("Reverse / forward IQR (%)", "statistics.inversion_overhead_percentage.iqr"),
     (
-        "Inversion / forward 95% CI lower (%)",
+        "Reverse / forward 95% CI lower (%)",
         "statistics.inversion_overhead_percentage.ci_95_lower",
     ),
     (
-        "Inversion / forward 95% CI upper (%)",
+        "Reverse / forward 95% CI upper (%)",
         "statistics.inversion_overhead_percentage.ci_95_upper",
     ),
     (
-        "Inversion / forward outliers (%)",
+        "Reverse / forward outliers (%)",
         "statistics.inversion_overhead_percentage.outliers",
     ),
-    ("Inversion / forward N", "statistics.inversion_overhead_percentage.n"),
+    ("Reverse / forward N", "statistics.inversion_overhead_percentage.n"),
     ("Rows throughput mean (rows/s)", "statistics.rows_per_second.mean"),
     ("Rows throughput median (rows/s)", "statistics.rows_per_second.median"),
     ("Rows throughput sample SD (rows/s)", "statistics.rows_per_second.std"),
@@ -191,7 +196,7 @@ RAW_RUN_COLUMNS: tuple[tuple[str, str], ...] = (
     ("Status", "status"),
     ("Execution time (s)", "execution_time"),
     ("Forward time (s)", "timing_breakdown.forward_time"),
-    ("Inversion time (s)", "timing_breakdown.inversion_time"),
+    ("Reverse time (s)", "timing_breakdown.inversion_time"),
     ("Total measured time (s)", "timing_breakdown.total_time"),
     ("Validation results: outcome", "validation_results.outcome"),
     ("Expected outcome", "expected_outcome"),
@@ -214,9 +219,9 @@ RAW_RUN_COLUMNS: tuple[tuple[str, str], ...] = (
         "Source configuration: overrides: scenario",
         "source_configuration.overrides.scenario",
     ),
-    ("Inversion / forward (%)", "timing_breakdown.inversion_overhead_percentage"),
-    ("Inversion throughput (rows/s)", "throughput.rows_per_second"),
-    ("Inversion throughput (cells/s)", "throughput.cells_per_second"),
+    ("Reverse / forward (%)", "timing_breakdown.inversion_overhead_percentage"),
+    ("Reverse throughput (rows/s)", "throughput.rows_per_second"),
+    ("Reverse throughput (cells/s)", "throughput.cells_per_second"),
     ("Mapping size (bytes)", "mapping_size_bytes"),
     ("Data size (bytes)", "data_size_bytes"),
     ("RDF statements", "rdf_statements"),
@@ -226,7 +231,7 @@ RAW_RUN_COLUMNS: tuple[tuple[str, str], ...] = (
     ("Predicate object maps count", "predicate_object_maps_count"),
     ("Join conditions count", "join_conditions_count"),
     ("Graph maps count", "graph_maps_count"),
-    ("Inversion count", "inversion_count"),
+    ("Reverse count", "inversion_count"),
     ("Metrics: scope", "metrics.scope"),
     ("Metrics: stages: forward: executor", "metrics.stages.forward.executor"),
     ("Metrics: stages: forward: step", "metrics.stages.forward.step"),
@@ -363,13 +368,10 @@ class Campaign:
 
 
 def campaign_label(stats_data: dict[str, object]) -> str:
-    forward_engine = cast(ForwardEngine, stats_data["forward_engine"])
-    inversion_engine = cast(str, stats_data["inversion_engine"])
-    forward_label = FORWARD_ENGINES[forward_engine].label
-    label = f"{forward_label}+{INVERSION_ENGINE_LABELS[inversion_engine]}"
-    if inversion_engine == "souffle":
-        label = f"{label} ({cast(str, stats_data['souffle_mode'])})"
-    return label
+    if stats_data["inversion_engine"] == "souffle":
+        mode = SOUFFLE_MODE_LABELS[cast(str, stats_data["souffle_mode"])]
+        return f"Datalog-based ({mode})"
+    return "SPARQL-based"
 
 
 def parse_campaign(value: str) -> tuple[Path, str | None]:
@@ -537,7 +539,7 @@ def failure_records(campaigns: Sequence[Campaign]) -> list[Record]:
 
 OVERVIEW_TITLE = "KROWN benchmark campaign"
 STAGE_HEADER = (
-    "Stage / engine",
+    "Stage",
     "Scenarios started",
     "Completed scenarios",
     "Failed scenarios",
@@ -548,7 +550,8 @@ STAGE_HEADER = (
 CONFIGURATION_ROWS: tuple[tuple[str, str], ...] = (
     ("Campaign timestamp (UTC)", "timestamp"),
     ("Mode", "mode"),
-    ("Forward engine version", "forward_engine_version"),
+    ("Forward software", "forward_engine_version"),
+    ("Reverse software", "reverse_software"),
     ("Forward RML reader", "forward_rml_reader"),
     ("Soufflé mode", "souffle_mode"),
     ("Iterations per completed scenario", "iterations"),
@@ -568,7 +571,6 @@ def _failures(campaign: Campaign, forward: bool) -> list[dict[str, object]]:
 
 
 def _stage_rows(campaign: Campaign) -> list[list[CellValue]]:
-    data = campaign.data
     total = len(campaign.scenarios)
     completed = sum(
         1
@@ -577,13 +579,11 @@ def _stage_rows(campaign: Campaign) -> list[list[CellValue]]:
     )
     forward_failures = _failures(campaign, forward=True)
     inversion_failures = _failures(campaign, forward=False)
-    forward_label = FORWARD_ENGINES[cast(ForwardEngine, data["forward_engine"])].label
-    inversion_label = INVERSION_ENGINE_LABELS[cast(str, data["inversion_engine"])]
     started = total - len(forward_failures)
     return [
         [
             campaign.label,
-            f"{forward_label} (forward)",
+            "Forward realization",
             total,
             started,
             len(forward_failures),
@@ -595,7 +595,7 @@ def _stage_rows(campaign: Campaign) -> list[list[CellValue]]:
         ],
         [
             campaign.label,
-            f"{inversion_label} (inversion)",
+            "Reverse realization",
             started,
             completed,
             len(inversion_failures),
@@ -620,11 +620,14 @@ def _configuration_value(campaign: Campaign, key: str) -> CellValue:
             return ""
         return cast(str, data["souffle_mode"])
     if key == "forward_engine_version":
-        provenance = cast(dict[str, object], data["provenance"])
-        version = cast(str, provenance["forward_engine_version"])
         if data["forward_engine"] == "souffle":
-            return f"Soufflé image v{version}"
-        return f"RMLMapper {version}"
+            return SOUFFLE_SOFTWARE
+        provenance = cast(dict[str, object], data["provenance"])
+        return f"RMLMapper {cast(str, provenance['forward_engine_version'])}"
+    if key == "reverse_software":
+        if data["inversion_engine"] == "souffle":
+            return SOUFFLE_SOFTWARE
+        return "SPARQL-based"
     if key == "forward_rml_reader":
         provenance = cast(dict[str, object], data["provenance"])
         if "forward_rml_reader_version" in provenance:
@@ -845,7 +848,7 @@ CHART_TABS: tuple[ChartTab, ...] = (
         SCENARIO_STATISTICS_TAB,
         (
             ChartMeasure("Forward", "Forward mean (s)", None),
-            ChartMeasure("Inversion", "Inversion mean (s)", None),
+            ChartMeasure("Reverse", "Reverse mean (s)", None),
         ),
     ),
     ChartTab(
@@ -854,7 +857,7 @@ CHART_TABS: tuple[ChartTab, ...] = (
         RESOURCES_TAB,
         (
             ChartMeasure("Forward", "Memory RAM max (bytes)", "forward"),
-            ChartMeasure("Backward", "Memory RAM max (bytes)", "backward"),
+            ChartMeasure("Reverse", "Memory RAM max (bytes)", "backward"),
         ),
     ),
     ChartTab(
@@ -863,7 +866,7 @@ CHART_TABS: tuple[ChartTab, ...] = (
         RESOURCES_TAB,
         (
             ChartMeasure("Forward", "Disk write (bytes) diff", "forward"),
-            ChartMeasure("Backward", "Disk write (bytes) diff", "backward"),
+            ChartMeasure("Reverse", "Disk write (bytes) diff", "backward"),
         ),
     ),
 )
@@ -920,9 +923,28 @@ def _sweep_value(value: CellValue) -> CellValue:
     return f"'{value}" if isinstance(value, str) else value
 
 
+def _chart_sweeps(campaigns: Sequence[Campaign]) -> list[dict[str, object]]:
+    """Reported sweeps, limited to points that at least one campaign completed."""
+    sweeps = []
+    for sweep in cast(list[dict[str, object]], campaigns[0].data["series"]):
+        if sweep["name"] in EXCLUDED_SERIES:
+            continue
+        points = [
+            point
+            for point in cast(list[dict[str, object]], sweep["points"])
+            if any(
+                campaign.scenarios[cast(str, point["scenario"])]["status"]
+                == "completed"
+                for campaign in campaigns
+            )
+        ]
+        sweeps.append({**sweep, "points": points})
+    return sweeps
+
+
 def chart_tab_values(chart_tab: ChartTab, campaigns: Sequence[Campaign]) -> Table:
     """Lookup block feeding one chart per parameter sweep, stacked vertically."""
-    series = cast(list[dict[str, object]], campaigns[0].data["series"])
+    series = _chart_sweeps(campaigns)
     width = CHART_BLOCK_COLUMN + 2 + len(chart_tab.measures) * len(campaigns)
     table: Table = []
     for position, sweep in enumerate(series):
@@ -957,6 +979,9 @@ def chart_tab_values(chart_tab: ChartTab, campaigns: Sequence[Campaign]) -> Tabl
                 )
             row[width - 1] = cast(str, point["scenario"])
             table.append(row)
+    # The last chart needs a full slot of rows, or Sheets moves it over the previous one.
+    while len(table) < CHART_FIRST_ROW + len(series) * CHART_ROW_STEP:
+        table.append([""] * width)
     return table
 
 
@@ -973,9 +998,7 @@ def _chart_requests(
     series_count = len(chart_tab.measures) * len(campaigns)
     width = CHART_BLOCK_COLUMN + 2 + series_count
     requests: list[dict[str, object]] = []
-    for position, sweep in enumerate(
-        cast(list[dict[str, object]], campaigns[0].data["series"])
-    ):
+    for position, sweep in enumerate(_chart_sweeps(campaigns)):
         header_row = CHART_FIRST_ROW + position * CHART_ROW_STEP
         points = len(cast(list[dict[str, object]], sweep["points"]))
         source = {

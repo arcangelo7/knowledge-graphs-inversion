@@ -40,7 +40,9 @@ from benchmarks.forward_engines import (
     translator_rml_version,
 )
 from benchmarks.krown_catalog import (
+    EXCLUDED_SERIES,
     KROWN_REPOSITORY,
+    REPORTED_SERIES,
     SERIES,
     SUITES,
     KrownScenario,
@@ -112,8 +114,6 @@ EXIT_NON_INVERTIBLE = 23
 KNOWN_FORWARD_FAILURES: dict[tuple[ForwardEngine, str], dict[str, str]] = {
     ("rmlmapper", "8.1.0"): {
         "raw_10000000_20_0": "out_of_memory",
-        "raw_100000_20_5000": "out_of_memory",
-        "raw_100000_20_10000": "out_of_memory",
         "namedgraph_15SM-NG_0POM-NG_1TM_20POM_True": "out_of_memory",
         "namedgraph_15SM-NG_0POM-NG_1TM_20POM_False": "out_of_memory",
         "namedgraph_15SM-NG_15POM-NG_1TM_10POM_True": "out_of_memory",
@@ -124,8 +124,6 @@ KNOWN_FORWARD_FAILURES: dict[tuple[ForwardEngine, str], dict[str, str]] = {
     },
     ("souffle", "1.0.0"): {
         "raw_10000000_20_0": "out_of_memory",
-        "raw_100000_20_5000": "out_of_memory",
-        "raw_100000_20_10000": "out_of_memory",
     },
 }
 
@@ -780,7 +778,21 @@ class KrownBenchmarkRunner:
         scenario_names = {scenario.generated_name for scenario in catalog}
         if scenario_name is not None and scenario_name not in scenario_names:
             raise ValueError(f"Unknown KROWN scenario: {scenario_name}")
-        selected = tuple(scenario for scenario in catalog if scenario.suite in suites)
+        reported_names = {
+            point[0] for series in REPORTED_SERIES for point in series.points
+        }
+        excluded_names = {
+            point[0]
+            for series in SERIES
+            if series.name in EXCLUDED_SERIES
+            for point in series.points
+        } - reported_names
+        selected = tuple(
+            scenario
+            for scenario in catalog
+            if scenario.suite in suites
+            and scenario.generated_name not in excluded_names
+        )
         if scenario_name is not None:
             selected = tuple(
                 scenario
@@ -809,7 +821,7 @@ class KrownBenchmarkRunner:
                     point for point in series.points if point[0] in selected_names
                 ),
             )
-            for series in SERIES
+            for series in REPORTED_SERIES
             if any(point[0] in selected_names for point in series.points)
         )
         unselected = sorted(set(self.measured_runs) - selected_names)

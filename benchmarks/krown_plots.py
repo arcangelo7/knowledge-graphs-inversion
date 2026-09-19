@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from benchmarks.forward_engines import FORWARD_ENGINES, ForwardEngine
+from benchmarks.krown_catalog import EXCLUDED_SERIES
 
 
 def failure_label(result: dict[str, object]) -> str:
@@ -33,30 +34,23 @@ def _timing_points(
     list[float],
     list[float],
     list[float],
-    list[str | None],
 ]:
     scenarios = cast(dict[str, dict[str, object]], stats_data["scenarios"])
     parameter_values = []
     means = []
     lower_errors = []
     upper_errors = []
-    failure_labels = []
 
     for point in cast(list[dict[str, object]], series["points"]):
         scenario_name = cast(str, point["scenario"])
         scenario = scenarios[scenario_name]
+        if scenario["status"] != "completed":
+            continue
         parameter_value = point["value"]
         if isinstance(parameter_value, (int, float)):
             parameter_values.append(float(parameter_value))
         else:
             parameter_values.append(str(parameter_value))
-
-        if scenario["status"] != "completed":
-            means.append(float("nan"))
-            lower_errors.append(float("nan"))
-            upper_errors.append(float("nan"))
-            failure_labels.append(failure_label(scenario))
-            continue
 
         statistics = cast(dict[str, object], scenario["statistics"])
         timing = cast(dict[str, float], statistics[metric_name])
@@ -66,9 +60,8 @@ def _timing_points(
         means.append(mean)
         lower_errors.append(mean - lower)
         upper_errors.append(upper - mean)
-        failure_labels.append(None)
 
-    return parameter_values, means, lower_errors, upper_errors, failure_labels
+    return parameter_values, means, lower_errors, upper_errors
 
 
 def plot_timing_charts(
@@ -84,12 +77,13 @@ def plot_timing_charts(
         label = FORWARD_ENGINES[forward_engine].label
         metrics.append(("forward_time", label, "#1f77b4", "o"))
     if mode in ("backward", "roundtrip"):
-        metrics.append(("inversion_time", "Inversion", "#d62728", "s"))
+        metrics.append(("inversion_time", "Reverse", "#d62728", "s"))
 
     for series in cast(list[dict[str, object]], stats_data["series"]):
+        if series["name"] in EXCLUDED_SERIES:
+            continue
         figure, axis = plt.subplots(figsize=(8, 5))
         parameter_values: list[float | str] = []
-        failure_labels: list[str | None] = []
         x_values: list[float] = []
 
         for metric_name, label, color, marker in metrics:
@@ -98,10 +92,9 @@ def plot_timing_charts(
                 means,
                 lower_errors,
                 upper_errors,
-                failure_labels,
             ) = _timing_points(stats_data, series, metric_name)
             x_values = [float(index) for index in range(len(parameter_values))]
-            if all(np.isnan(value) for value in means):
+            if not means:
                 continue
             axis.errorbar(
                 x_values,
@@ -113,19 +106,6 @@ def plot_timing_charts(
                 linewidth=2,
                 capsize=5,
             )
-
-        for x_value, label in zip(x_values, failure_labels, strict=True):
-            if label is not None:
-                axis.text(
-                    x_value,
-                    0.02,
-                    label,
-                    color="#b22222",
-                    ha="center",
-                    va="bottom",
-                    rotation=90,
-                    transform=axis.get_xaxis_transform(),
-                )
 
         axis.set_title(f"KROWN {cast(str, series['title'])}")
         axis.set_xlabel(cast(str, series["parameter_label"]))

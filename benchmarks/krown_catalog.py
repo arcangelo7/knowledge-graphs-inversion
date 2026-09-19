@@ -410,6 +410,18 @@ SERIES = (
     ),
 )
 
+EXCLUDED_SERIES = (
+    "raw_value_size",
+    "duplicates_percentage",
+    "empty_values_percentage",
+    "joins_one_to_many",
+    "joins_many_to_one",
+    "joins_duplicates",
+)
+REPORTED_SERIES = tuple(
+    series for series in SERIES if series.name not in EXCLUDED_SERIES
+)
+
 
 def _load_config(config_file: Path) -> list[KrownScenario]:
     catalog = cast(
