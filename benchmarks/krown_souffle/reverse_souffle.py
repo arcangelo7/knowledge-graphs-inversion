@@ -109,6 +109,8 @@ class ReverseSouffle(Container):
             state = json.loads(inspection.stdout)
             logs = '\n'.join(self._docker.logs(self._container_id))
             self.diagnostic = f'Docker state: {inspection.stdout.strip()}\n{logs}'
+            if self.failure_kind == 'timeout':
+                self.diagnostic = f'Timeout after {TIMEOUT} seconds\n{self.diagnostic}'
             if self.failure_kind is None and (
                 state['OOMKilled'] or 'OutOfMemoryError' in logs
             ):
