@@ -97,6 +97,7 @@ benchmark-krown: submodules krown-images krown-network
 	@set -e; \
 	trap '$(COMPOSE_KROWN) down --remove-orphans' EXIT; \
 	$(COMPOSE_KROWN) build benchmark; \
+	$(COMPOSE_KROWN) up -d benchmark_postgresql; \
 	$(KROWN_RUN)
 
 benchmark-gtfs: submodules krown-network
@@ -110,6 +111,7 @@ benchmark-all: submodules krown-images krown-network
 	@set -e; \
 	trap '$(COMPOSE_GTFS) down --remove-orphans' EXIT; \
 	$(COMPOSE_GTFS) build benchmark; \
+	$(COMPOSE_KROWN) up -d benchmark_postgresql; \
 	$(KROWN_RUN); \
 	$(COMPOSE_GTFS) up -d gtfs_mysql; \
 	$(COMPOSE_GTFS) run --rm benchmark gtfs-benchmark --iterations $(I) --scales $(S)

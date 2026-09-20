@@ -60,7 +60,6 @@ Each scenario reports one of these outcomes:
 | `FULL` | Every source table, row, column, value, and multiplicity was reconstructed. |
 | `PARTIAL` | The inversion is partial but deterministic: the mapping and RDF graph identify one recoverable subset of the source data, and that subset holds every column the mapping reads. |
 | `AMBIGUOUS` | The inversion is partial and non-deterministic: the mapping and RDF graph allow recoverable values to be assigned to the source in more than one way, so no unique partial reconstruction can be selected. |
-| `NON_INVERTIBLE` | The mapping leaves no source column that can be reconstructed. |
 | `OUT_OF_MEMORY` | A memory limit was reached, or the scenario was skipped because this failure is expected. |
 | `TIMEOUT` | A time limit was reached, or the scenario was skipped because this failure is expected. |
 

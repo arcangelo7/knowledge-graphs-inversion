@@ -15,6 +15,7 @@ Global Development Group.
 
 import os
 import psycopg2
+import subprocess
 import tempfile
 from csv import reader
 from time import sleep
@@ -31,6 +32,8 @@ DB = 'db'
 PORT = '5432'
 WAIT_TIME = 3
 CLEAR_TABLES_TIMEOUT = 5 * 60  # 5 minutes
+POSTGRESQL_IMAGE = f'kgconstruct/postgresql:v{VERSION}'
+_STORAGE_RESET = False
 
 
 class PostgreSQL(Container):
@@ -60,7 +63,7 @@ class PostgreSQL(Container):
         os.makedirs(os.path.join(self._data_path, 'postgresql'), exist_ok=True)
         self._tables: List[str] = []
 
-        super().__init__(f'kgconstruct/postgresql:v{VERSION}', 'PostgreSQL',
+        super().__init__(POSTGRESQL_IMAGE, 'PostgreSQL',
                          self._logger,
                          ports={PORT: PORT},
                          environment={'POSTGRES_PASSWORD': PASSWORD,
@@ -82,6 +85,23 @@ class PostgreSQL(Container):
         # PostgreSQL should start with a initialized database, start PostgreSQL
         # if not initialized to avoid the pre-run start during benchmark
         # execution
+        global _STORAGE_RESET
+        if not _STORAGE_RESET:
+            subprocess.run(
+                ['docker', 'rm', '--force', 'PostgreSQL'],
+                check=False,
+                capture_output=True,
+            )
+            subprocess.run(
+                [
+                    'docker', 'run', '--rm', '--entrypoint', 'find',
+                    '-v', f'{tempfile.gettempdir()}/postgresql:/data',
+                    POSTGRESQL_IMAGE, '/data', '-mindepth', '1', '-delete',
+                ],
+                check=True,
+            )
+            _STORAGE_RESET = True
+
         success = self.wait_until_ready()
         if not success:
             self._logger.error(f'Failed to initialize {__name__}')
