@@ -699,6 +699,25 @@ def _block_extent(table: Table, start_row: int, start_column: int) -> tuple[int,
     return end_row, end_column
 
 
+def _clear_request(sheet_id: int) -> dict[str, object]:
+    return {
+        "updateCells": {
+            "range": {"sheetId": sheet_id},
+            "fields": "userEnteredValue,userEnteredFormat",
+        }
+    }
+
+
+def _alignment_request(sheet_id: int) -> dict[str, object]:
+    return {
+        "repeatCell": {
+            "range": {"sheetId": sheet_id},
+            "cell": {"userEnteredFormat": {"horizontalAlignment": "LEFT"}},
+            "fields": "userEnteredFormat.horizontalAlignment",
+        }
+    }
+
+
 def _resize_requests(sheet: dict[str, object], table: Table) -> list[dict[str, object]]:
     """Fit the grid, and every table object on it, to the values just written.
 
@@ -762,15 +781,9 @@ def write_tables(spreadsheet: gspread.Spreadsheet, tables: dict[str, Table]) -> 
 
     requests: list[dict[str, object]] = []
     for title, table in tables.items():
-        requests.append(
-            {
-                "updateCells": {
-                    "range": {"sheetId": worksheets[title].id},
-                    "fields": "userEnteredValue",
-                }
-            }
-        )
+        requests.append(_clear_request(worksheets[title].id))
         requests.extend(_resize_requests(sheets[title], table))
+        requests.append(_alignment_request(worksheets[title].id))
     spreadsheet.batch_update({"requests": requests})
 
     for title, table in tables.items():
@@ -1111,6 +1124,7 @@ def write_chart_tabs(
             {"updateCells": {"range": {"sheetId": sheet_id}, "fields": "*"}}
         )
         requests.append(_grid_request(sheet_id, len(values), len(values[0])))
+        requests.append(_alignment_request(sheet_id))
         updates.append({"range": f"'{chart_tab.title}'!A1", "values": values})
         written[chart_tab.title] = len(values)
     spreadsheet.batch_update({"requests": requests})
