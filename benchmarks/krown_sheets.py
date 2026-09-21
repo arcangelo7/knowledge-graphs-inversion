@@ -379,18 +379,29 @@ def _flatten(record: dict[str, object]) -> dict[str, object]:
     return flat
 
 
+CELL_CHARACTER_LIMIT = 50000
+TRUNCATION_NOTICE = "\n[truncated]"
+
+
+def _within_cell_limit(text: str) -> str:
+    if len(text) <= CELL_CHARACTER_LIMIT:
+        return text
+    keep = CELL_CHARACTER_LIMIT - len(TRUNCATION_NOTICE)
+    return text[:keep] + TRUNCATION_NOTICE
+
+
 def _cell(value: object) -> CellValue:
     if value is None:
         return ""
     if isinstance(value, (bool, int, float)):
         return value
     if isinstance(value, (list, dict)):
-        return json.dumps(value, separators=(",", ":"))
+        return _within_cell_limit(json.dumps(value, separators=(",", ":")))
     text = str(value)
     try:
         number = float(text)
     except ValueError:
-        return text
+        return _within_cell_limit(text)
     return int(number) if number.is_integer() else number
 
 
