@@ -5,7 +5,7 @@
 from dataclasses import dataclass
 from typing import Literal, cast
 
-EnginePair = Literal["rmlmapper_kgi", "souffle_souffle"]
+EnginePair = Literal["rmlmapper_kgi", "rmlmapper_morph_ldp", "souffle_souffle"]
 
 DEFAULT_ENGINE_PAIR: EnginePair = "rmlmapper_kgi"
 ENGINE_PAIRS: dict[EnginePair, dict[str, str | tuple[str, ...]]] = {
@@ -14,6 +14,12 @@ ENGINE_PAIRS: dict[EnginePair, dict[str, str | tuple[str, ...]]] = {
         "forward": "RMLMapper",
         "inversion": "KGI",
         "suite_ids": ("r2rml", "rml"),
+    },
+    "rmlmapper_morph_ldp": {
+        "label": "RMLMapper → Morph-LDP",
+        "forward": "RMLMapper",
+        "inversion": "Morph-LDP",
+        "suite_ids": ("r2rml",),
     },
     "souffle_souffle": {
         "label": "Soufflé → Soufflé",
@@ -27,7 +33,6 @@ RML_MYSQL_UNAVAILABLE = (
     "RML is unavailable for MySQL because the RML Core RDB test suite does not "
     "yet provide MySQL variants."
 )
-SOUFFLE_RML_UNAVAILABLE = "Soufflé/Soufflé is available only for R2RML."
 R2RML_POSTGRESQL_ONLY_CASES = frozenset({"R2RMLTC0002f", "R2RMLTC0018a"})
 
 SUITE_LABELS = {
@@ -128,7 +133,9 @@ def validate_engine_pair(engine_pair: str, suite_id: str) -> EnginePair:
     suite_ids = ENGINE_PAIRS[selected_pair]["suite_ids"]
     assert isinstance(suite_ids, tuple)
     if suite_id not in suite_ids:
-        raise ValueError(SOUFFLE_RML_UNAVAILABLE)
+        raise ValueError(
+            f"{ENGINE_PAIRS[selected_pair]['label']} is available only for R2RML."
+        )
     return selected_pair
 
 

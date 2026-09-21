@@ -580,7 +580,6 @@ SPDX-License-Identifier: ISC
         const databaseOptions = {{ database_options | tojson }};
         const engineOptions = {{ engine_options | tojson }};
         const rmlMysqlUnavailable = {{ rml_mysql_unavailable | tojson }};
-        const souffleRmlUnavailable = {{ souffle_rml_unavailable | tojson }};
         const testResults = {};
         let testStats = {
             total: 0,
@@ -636,24 +635,25 @@ SPDX-License-Identifier: ISC
 
         function updateSuiteAvailability() {
             const availableSuiteIds = getAvailableSuiteIds();
-            const souffleSelected = getSelectedEnginePair() === 'souffle_souffle';
+            const engine = engineOptions[getSelectedEnginePair()];
+            const r2rmlOnly = !engine.suite_ids.includes('rml');
             $('#suiteSelect option').each(function() {
                 const suiteId = $(this).val();
                 const unavailable = suiteId === 'all'
-                    ? souffleSelected
+                    ? r2rmlOnly
                     : !availableSuiteIds.includes(suiteId);
                 $(this).prop('disabled', unavailable);
             });
 
             if (
                 !availableSuiteIds.includes(getSelectedSuiteId()) &&
-                (getSelectedSuiteId() !== 'all' || souffleSelected)
+                (getSelectedSuiteId() !== 'all' || r2rmlOnly)
             ) {
                 $('#suiteSelect').val(availableSuiteIds[0]);
             }
 
-            const message = souffleSelected
-                ? souffleRmlUnavailable
+            const message = r2rmlOnly
+                ? `${engine.label} is available only for R2RML.`
                 : availableSuiteIds.includes('rml') ? '' : rmlMysqlUnavailable;
             $('#suiteAvailabilityMessage').text(message);
         }
@@ -1030,13 +1030,16 @@ SPDX-License-Identifier: ISC
         }
 
         function describeExpectation(row) {
-            if (row.matches_expectation !== false) return '';
+            const morph = row.morph_ldp;
+            const rdf = morph ? ` <span class="mode-badge">RDF: ${morph.rdf_equal === null ? 'not evaluated' : (morph.rdf_equal ? 'equal' : 'different')}</span>` : '';
+            const validation = row.validation_ok === false ? ' <span class="unexpected-badge">validation failed</span>' : '';
+            if (row.matches_expectation !== false) return rdf + validation;
             const losses = (row.expected_losses || []).join(', ');
             const expected = row.expected_inversion
                 ? (inversionOutcomes[row.expected_inversion] || { text: row.expected_inversion }).text
                 : 'no recorded expectation';
             const label = losses ? `${expected} (${losses})` : expected;
-            return ` <span class="unexpected-badge" title="Expected ${escapeHtml(label)}">unexpected</span>`;
+            return ` <span class="unexpected-badge" title="Expected ${escapeHtml(label)}">unexpected</span>` + rdf + validation;
         }
 
         function modeBadge(row) {
@@ -1192,6 +1195,17 @@ SPDX-License-Identifier: ISC
 
                 if (comparisonMessage) {
                     content += `<h3>Comparison message:</h3><p>${escapeHtml(comparisonMessage)}</p>`;
+                }
+
+                const morph = response.results.data[0].morph_ldp;
+                if (morph) {
+                    const showCheck = value => value === null ? 'Not evaluated' : (value ? 'Yes' : 'No');
+                    content += `<h3>Morph-LDP checks</h3><p>API invoked: ${showCheck(morph.attempted)}<br>Source tables equal: ${showCheck(morph.source_equal)}<br>Expected projection recovered: ${showCheck(morph.projection_equal)}<br>RDF round trip equal: ${showCheck(morph.rdf_equal)}</p>`;
+                    for (const error of morph.errors) {
+                        content += `<p>${escapeHtml(error.phase)} / ${escapeHtml(error.component)}: ${escapeHtml(error.reason)}</p>`;
+                    }
+                    content += `<h3>Generated SQL</h3><pre>${escapeHtml(morph.sql)}</pre>`;
+                    content += `<details><summary>Execution log</summary><pre>${escapeHtml(morph.log)}</pre></details>`;
                 }
 
                 if (originalTables && typeof originalTables === 'object' && Object.keys(originalTables).length > 0) {

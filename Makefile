@@ -25,7 +25,7 @@ DATABASE ?= postgresql
 KROWN_SOUFFLE_IMAGE = alloka/souffle:v1.0.0
 CONFORMANCE_SOUFFLE_IMAGE = alloka/souffle:v1.0.0@sha256:0e9288ca6f7a63faf93f4358f210de0ffcab6e3e2405d88c365391da6d54fe89
 MAVEN_IMAGE = maven:3.9.11-eclipse-temurin-17
-PUBLIC_SUBMODULES = KROWN R2RML2Datalog-Translator gtfs-bench r2rml_test_cases rml_io_registry
+PUBLIC_SUBMODULES = KROWN R2RML2Datalog-Translator gtfs-bench r2rml_test_cases rml_io_registry morph-LDP
 REVERSE_SUBMODULE = ReverseR2RML
 REVERSE_SCRIPT ?= $(abspath $(REVERSE_SUBMODULE)/reverseR2RML.py)
 R2RML_TRANSLATOR_SOURCE = R2RML2Datalog-Translator
@@ -41,8 +41,8 @@ KROWN_RUN = uv run python -m benchmarks.run_krown_benchmark --iterations $(I) --
 
 validate-conformance-options:
 	@case "$(FORWARD_ENGINE)/$(INVERSION_ENGINE)" in \
-		rmlmapper/kgi|souffle/souffle) ;; \
-		*) echo "FORWARD_ENGINE/INVERSION_ENGINE must be rmlmapper/kgi or souffle/souffle" >&2; exit 2 ;; \
+		rmlmapper/kgi|rmlmapper/morph-ldp|souffle/souffle) ;; \
+		*) echo "FORWARD_ENGINE/INVERSION_ENGINE must be rmlmapper/kgi, rmlmapper/morph-ldp, or souffle/souffle" >&2; exit 2 ;; \
 	esac
 	@case "$(DATABASE)" in \
 		postgresql|mysql) ;; \
@@ -116,6 +116,26 @@ benchmark-all: submodules krown-images krown-network
 	$(COMPOSE_GTFS) up -d gtfs_mysql; \
 	$(COMPOSE_GTFS) run --rm benchmark gtfs-benchmark --iterations $(I) --scales $(S)
 
+.PHONY: rmlmapper-assets
+rmlmapper-assets:
+	docker build --target rmlmapper-assets -t kgi-rmlmapper-assets .
+	@set -e; \
+	mkdir -p build; \
+	container=$$(docker create kgi-rmlmapper-assets); \
+	trap 'docker rm "$$container" >/dev/null' EXIT; \
+	docker cp "$$container:/rmlmapper/rmlmapper.jar" build/rmlmapper-8.1.0-binary-null.jar
+
+.PHONY: morph-ldp-assets
+morph-ldp-assets:
+	git submodule update --init morph-LDP
+	docker build --target morph-ldp-assets -t kgi-morph-ldp-assets .
+	@set -e; \
+	rm -rf build/morph-ldp/runtime; \
+	mkdir -p build/morph-ldp/runtime; \
+	container=$$(docker create kgi-morph-ldp-assets); \
+	trap 'docker rm "$$container" >/dev/null' EXIT; \
+	docker cp "$$container:/opt/morph-ldp/." build/morph-ldp/runtime/
+
 test-conformance: validate-conformance-options
 	@$(MAKE) submodules
 	@if [ "$(FORWARD_ENGINE)/$(INVERSION_ENGINE)" = "souffle/souffle" ]; then \
@@ -126,6 +146,8 @@ test-conformance: validate-conformance-options
 			--souffle-library="$(abspath $(R2RML_FUNCTOR_LIBRARY))" \
 			--reverse-script="$(REVERSE_SCRIPT)" \
 			--souffle-modes="$(SOUFFLE_MODES)"; \
+	elif [ "$(INVERSION_ENGINE)" = "morph-ldp" ]; then \
+		$(MAKE) rmlmapper-assets && $(MAKE) morph-ldp-assets && uv run pytest tests/morph_ldp_conformance.py -v --database=$(DATABASE); \
 	else \
-		uv run pytest tests/test_conformance.py -v --database=$(DATABASE); \
+		$(MAKE) rmlmapper-assets && uv run pytest tests/test_conformance.py -v --database=$(DATABASE); \
 	fi

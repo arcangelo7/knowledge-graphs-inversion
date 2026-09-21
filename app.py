@@ -30,7 +30,6 @@ from conformance.config import (
     DEFAULT_ENGINE_PAIR,
     ENGINE_PAIRS,
     RML_MYSQL_UNAVAILABLE,
-    SOUFFLE_RML_UNAVAILABLE,
     EnginePair,
     get_database_config,
     is_r2rml_case_available,
@@ -39,6 +38,7 @@ from conformance.config import (
 )
 from conformance.database import DatabaseConnection
 from conformance.expectations import expected_outcome
+from conformance.morph_ldp import evaluate_morph_case
 from conformance.outcome import (
     LOSS_LABELS,
     OUTCOME_LABELS,
@@ -138,7 +138,7 @@ def _artifact_path(
 
 
 def _engine_output_format(engine_pair: EnginePair) -> str:
-    if engine_pair == "souffle_souffle":
+    if engine_pair in ("souffle_souffle", "rmlmapper_morph_ldp"):
         return "nquads"
     return config["properties"]["output_format"]
 
@@ -178,7 +178,6 @@ def index():
         engine_options=AVAILABLE_ENGINE_PAIRS,
         default_engine_pair=DEFAULT_ENGINE_PAIR,
         rml_mysql_unavailable=RML_MYSQL_UNAVAILABLE,
-        souffle_rml_unavailable=SOUFFLE_RML_UNAVAILABLE,
     )
 
 
@@ -689,6 +688,48 @@ def _run_souffle_souffle_test(
     return results
 
 
+def _run_morph_ldp_test(
+    test_id: str,
+    database_system: str,
+    suite: TestSuite,
+    engine_pair: EnginePair,
+) -> list[dict[str, object]]:
+    database = validate_database_suite(database_system, suite.suite_id)
+    source, destination = database.connection_urls(suite.suite_id)
+    output = _artifact_path(suite, test_id, database_system, engine_pair, "nquads")
+    evaluation = evaluate_morph_case(
+        suite, test_id, database_system, source, destination, output.parent
+    )
+    metadata = suite.get_test_metadata(test_id)
+    assert metadata is not None
+    raw_results = [
+        ["tester", "platform", "rdbms", "testid", "result"],
+        [
+            config["tester"]["tester_name"],
+            "RMLMapper",
+            database.label,
+            test_id,
+            PASSED if evaluation.forward_ok else FAILED,
+        ],
+    ]
+    result = _case_result(
+        test_id,
+        database_system,
+        suite,
+        engine_pair,
+        DEFAULT_MODE,
+        evaluation.outcome,
+        raw_results,
+        metadata["purpose"],
+        souffle_provenance=False,
+        error_test=not metadata["expected_output"],
+    )
+    results = cast(dict[str, list[dict[str, object]]], result["results"])
+    results["data"][0]["morph_ldp"] = evaluation.diagnostics()
+    results["data"][0]["validation_ok"] = evaluation.validation_ok
+    return [result]
+
+
 def _postgresql_only_case_result(
     test_id: str,
     database_system: str,
@@ -765,6 +806,8 @@ def run_single_test(
         return _postgresql_only_case_result(
             test_id, database_system, suite, engine_pair
         )
+    if engine_pair == "rmlmapper_morph_ldp":
+        return _run_morph_ldp_test(test_id, database_system, suite, engine_pair)
     if engine_pair == "souffle_souffle":
         return _run_souffle_souffle_test(test_id, database_system, suite, engine_pair)
     return _run_rmlmapper_kgi_test(test_id, database_system, suite, engine_pair)
@@ -903,7 +946,9 @@ def generate_test_report(
         outcome_counts[outcome] += 1
         for loss in cast(list[str], test_data["losses"]):
             loss_counts[PartialLoss(loss)] += 1
-        if not test_data["matches_expectation"]:
+        if not test_data["matches_expectation"] or (
+            "validation_ok" in test_data and not test_data["validation_ok"]
+        ):
             regressions += 1
 
         test_details.append(
@@ -921,6 +966,9 @@ def generate_test_report(
                 "matches_expectation": test_data["matches_expectation"],
             }
         )
+
+        if "morph_ldp" in test_data:
+            test_details[-1]["morph_ldp"] = test_data["morph_ldp"]
 
     def pct(n: int) -> float:
         return round((n / total_tests * 100), 2) if total_tests > 0 else 0

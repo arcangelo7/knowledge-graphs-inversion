@@ -19,3 +19,6 @@
 [submodule "ReverseR2RML"]
 	path = ReverseR2RML
 	url = https://github.com/dtai-kg/ReverseR2RML.git
+[submodule "morph-LDP"]
+	path = morph-LDP
+	url = https://github.com/fpriyatna/morph-LDP.git
