@@ -9,7 +9,6 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from pyoxigraph import DefaultGraph, RdfFormat, Store
 from rdflib.exceptions import ParserError
 from sqlalchemy import Column, MetaData, Table, create_engine, inspect
 from sqlalchemy.engine import make_url
@@ -247,36 +246,10 @@ def evaluate_morph_case(
 def _invert(
     mapping: str, rdf: Path, source_url: str, destination_url: str, directory: Path
 ) -> MorphEvaluation:
-    store_path = directory / "rdf-store"
-    if store_path.exists():
-        shutil.rmtree(store_path)
-    store = Store(str(store_path))
-    store.load(path=str(rdf), format=RdfFormat.N_QUADS)
-    if any(not isinstance(quad.graph_name, DefaultGraph) for quad in store):
-        return MorphEvaluation(
-            CaseOutcome(
-                InversionOutcome.NOT_SUPPORTED,
-                message="createResource() accepts triples without graph names; the named dataset is retained unchanged.",
-            ),
-            True,
-            validation_ok=False,
-            errors=[
-                {
-                    "phase": "inversion",
-                    "component": "adapter",
-                    "reason": "Named graphs cannot be passed to the triples-only API.",
-                }
-            ],
-        )
-    triples = directory / "input.nt"
-    store.dump(
-        output=str(triples), format=RdfFormat.N_TRIPLES, from_graph=DefaultGraph()
-    )
-    del store
     tdb = directory / "tdb"
     if tdb.exists():
         shutil.rmtree(tdb)
-    execution = _execute(mapping, triples, destination_url, directory)
+    execution = _execute(mapping, rdf, destination_url, directory)
     log = execution.stdout + execution.stderr
     (directory / "morph.log").write_text(log)
     sql = (directory / "inserts.sql").read_text()
@@ -350,13 +323,13 @@ def _invert(
         losses = frozenset()
     elif result.projection_equal:
         outcome = InversionOutcome.PARTIALLY_INVERTED
-    elif "Only STG pattern is supported for insert operation!" in log:
-        outcome = InversionOutcome.NOT_SUPPORTED
-        message = "Morph rejects this subject group: only STG patterns are supported for insertion."
-        losses = frozenset()
     elif result.execution_error:
         outcome = InversionOutcome.ERROR
         message = result.execution_error
+        losses = frozenset()
+    elif "Only STG pattern is supported for insert operation!" in log:
+        outcome = InversionOutcome.NOT_SUPPORTED
+        message = "Morph rejects this subject group: only STG patterns are supported for insertion."
         losses = frozenset()
     else:
         outcome = InversionOutcome.MISMATCH
