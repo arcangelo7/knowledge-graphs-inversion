@@ -539,10 +539,22 @@ CONFIGURATION_ROWS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _failures(campaign: Campaign, forward: bool) -> list[dict[str, object]]:
+def _reported_scenarios(campaign: Campaign) -> list[dict[str, object]]:
+    names = {
+        cast(str, point["scenario"])
+        for sweep in cast(list[dict[str, object]], campaign.data["series"])
+        if sweep["name"] not in EXCLUDED_SERIES
+        for point in cast(list[dict[str, object]], sweep["points"])
+    }
+    return [campaign.scenarios[name] for name in names]
+
+
+def _failures(
+    scenarios: Sequence[dict[str, object]], forward: bool
+) -> list[dict[str, object]]:
     return [
         cast(dict[str, object], scenario["failure"])
-        for scenario in campaign.scenarios.values()
+        for scenario in scenarios
         if scenario["status"] != "completed"
         and (cast(dict[str, object], scenario["failure"])["stage"] == FORWARD_STAGE)
         is forward
@@ -550,14 +562,11 @@ def _failures(campaign: Campaign, forward: bool) -> list[dict[str, object]]:
 
 
 def _stage_rows(campaign: Campaign) -> list[list[CellValue]]:
-    total = len(campaign.scenarios)
-    completed = sum(
-        1
-        for scenario in campaign.scenarios.values()
-        if scenario["status"] == "completed"
-    )
-    forward_failures = _failures(campaign, forward=True)
-    inversion_failures = _failures(campaign, forward=False)
+    scenarios = _reported_scenarios(campaign)
+    total = len(scenarios)
+    completed = sum(1 for scenario in scenarios if scenario["status"] == "completed")
+    forward_failures = _failures(scenarios, forward=True)
+    inversion_failures = _failures(scenarios, forward=False)
     started = total - len(forward_failures)
     return [
         [
