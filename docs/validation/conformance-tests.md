@@ -6,7 +6,7 @@ SPDX-License-Identifier: ISC
 
 # Conformance tests
 
-The R2RML run contains the 62 W3C [R2RML](https://www.w3.org/TR/r2rml/) cases followed by ten local cases that isolate structural inversion limits. The local catalog follows the W3C manifest and asset layout but uses `INVTC` identifiers, so it remains outside the official numbering. The RML run contains 59 RDB cases from a [fork of rml-io-registry](https://github.com/arcangelo7/rml-io-registry/tree/add-rdb-core-tests), while the two official catalogs are included as git submodules. Forward mapping uses [RMLMapper](https://github.com/RMLio/rmlmapper-java) v8.1.0 and inversion uses KGI.
+The R2RML run contains the 62 W3C [R2RML](https://www.w3.org/TR/r2rml/) cases followed by nine local cases that isolate structural inversion limits. The local catalog follows the W3C manifest and asset layout but uses `INVTC` identifiers, so it remains outside the official numbering. The RML run contains 59 RDB cases from a [fork of rml-io-registry](https://github.com/arcangelo7/rml-io-registry/tree/add-rdb-core-tests), while the two official catalogs are included as git submodules. Forward mapping uses [RMLMapper](https://github.com/RMLio/rmlmapper-java) v8.1.0 and inversion uses KGI.
 
 ## Defining invertibility
 
@@ -38,19 +38,19 @@ Use the root Makefile entry point, with Docker running and Java 21 or newer avai
 make test-conformance
 ```
 
-`DATABASE` accepts `postgresql` and `mysql`. PostgreSQL is the default and runs 131 catalog cases: 72 R2RML cases and 59 RML cases:
+`DATABASE` accepts `postgresql` and `mysql`. PostgreSQL is the default and runs 130 catalog cases: 71 R2RML cases and 59 RML cases:
 
 ```bash
 make test-conformance DATABASE=postgresql
 ```
 
-MySQL 9.7.1 runs 70 R2RML cases:
+MySQL 9.7.1 runs 69 R2RML cases:
 
 ```bash
 make test-conformance DATABASE=mysql
 ```
 
-`R2RMLTC0002f` and `R2RMLTC0018a` run only with PostgreSQL, while the ten `INVTC` cases run on both databases. The 59 RML cases are skipped with MySQL because the RML Core RDB test suite does not yet provide MySQL variants.
+`R2RMLTC0002f` and `R2RMLTC0018a` run only with PostgreSQL, while the nine `INVTC` cases run on both databases. The 59 RML cases are skipped with MySQL because the RML Core RDB test suite does not yet provide MySQL variants.
 
 ### Dashboard
 
@@ -116,8 +116,7 @@ R2RMLTC0020a maps a single-column table through a subject map with an IRI term t
 | Indistinguishable graph maps | `INVTC0002d` | Partially inverted: columns lost |
 | Column-valued IRI term map | `INVTC0003`, `R2RMLTC0014b` | Partially inverted: columns lost |
 | Join key absent from every RDF term | `INVTC0004` | Partially inverted: columns lost |
-| Parent Triples Map reached only through a join | `INVTC0005a` | Partially inverted: columns lost |
-| Triples Map without a predicate-object map, subject class, or incoming join | `INVTC0005b` | Non-invertible |
+| Parent Triples Map reached only through a join | `INVTC0005` | Partially inverted: columns lost |
 
 ## RML test suite
 

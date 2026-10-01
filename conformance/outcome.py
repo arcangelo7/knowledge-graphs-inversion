@@ -180,14 +180,16 @@ def logical_queries(analysis: MappingAnalysis) -> dict[str, str]:
     }
 
 
-def _source_content(analysis: MappingAnalysis, source_db_url: str) -> DatabaseContent:
-    """The logical tables the mapping reads, as the source database holds them.
+def logical_table_content(
+    analysis: MappingAnalysis, database_url: str
+) -> DatabaseContent:
+    """The logical tables the mapping reads.
 
     A query-defined logical table stands for the base tables it reads, so those
     are replaced by the query result unless the mapping also reads them as a
     table, and the remaining base tables stay as they are, mapped or not.
     """
-    content = _db_connection.get_database_content(source_db_url)
+    content = _db_connection.get_database_content(database_url)
     queries = logical_queries(analysis)
     for sql in queries.values():
         for table_name in source_tables(sql):
@@ -201,7 +203,7 @@ def _source_content(analysis: MappingAnalysis, source_db_url: str) -> DatabaseCo
                 if name not in analysis:
                     del content[name]
     for name, sql in queries.items():
-        content[name] = _db_connection.get_query_content(source_db_url, sql)
+        content[name] = _db_connection.get_query_content(database_url, sql)
     return content
 
 
@@ -211,7 +213,7 @@ def _compare_reconstruction(
     dest_db_url: str,
     allow_empty_destination: bool,
 ) -> CaseOutcome:
-    source_content = _source_content(analysis, source_db_url)
+    source_content = logical_table_content(analysis, source_db_url)
     dest_content = _db_connection.get_database_content(dest_db_url)
     databases_equal, message, losses = compare_databases(
         source_content, dest_content, analysis

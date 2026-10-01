@@ -16,7 +16,7 @@ from sqlalchemy.engine import make_url
 from conformance import rmlmapper
 from conformance.config import get_database_config
 from conformance.database import DatabaseConnection
-from conformance.outcome import CaseOutcome, InversionOutcome
+from conformance.outcome import CaseOutcome, InversionOutcome, logical_table_content
 from conformance.souffle import rdf_datasets_isomorphic
 from conformance.suites import TestSuite
 from kgi import NonInvertibleError, UnsupportedMappingError, analyze_mapping
@@ -285,12 +285,15 @@ def _invert(
     else:
         projection_destination = {
             name: table
-            for name, table in destination.items()
+            for name, table in logical_table_content(analysis, destination_url).items()
             if name in analysis or table["data"]
         }
         equal, message, losses = compare_databases(
-            source, projection_destination, analysis
+            logical_table_content(analysis, source_url),
+            projection_destination,
+            analysis,
         )
+        result.source_equal = result.source_equal or equal
         result.projection_equal = equal or bool(losses)
         result.losses = sorted(losses)
     result.rdf_equal, verification_errors = verify_roundtrip(

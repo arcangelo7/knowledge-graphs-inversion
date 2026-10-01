@@ -11,8 +11,7 @@
 <#d-inv-002d> a rdb2rdftest:DataBase; dcterms:identifier "D-INV-002D"; rdb2rdftest:sqlScriptFile "d-inv-002d.sql"; rdb2rdftest:relatedTestCase <#INVTC0002d> .
 <#d-inv-003> a rdb2rdftest:DataBase; dcterms:identifier "D-INV-003"; rdb2rdftest:sqlScriptFile "d-inv-003.sql"; rdb2rdftest:relatedTestCase <#INVTC0003> .
 <#d-inv-004> a rdb2rdftest:DataBase; dcterms:identifier "D-INV-004"; rdb2rdftest:sqlScriptFile "d-inv-004.sql"; rdb2rdftest:relatedTestCase <#INVTC0004> .
-<#d-inv-005a> a rdb2rdftest:DataBase; dcterms:identifier "D-INV-005A"; rdb2rdftest:sqlScriptFile "d-inv-005a.sql"; rdb2rdftest:relatedTestCase <#INVTC0005a> .
-<#d-inv-005b> a rdb2rdftest:DataBase; dcterms:identifier "D-INV-005B"; rdb2rdftest:sqlScriptFile "d-inv-005b.sql"; rdb2rdftest:relatedTestCase <#INVTC0005b> .
+<#d-inv-005> a rdb2rdftest:DataBase; dcterms:identifier "D-INV-005"; rdb2rdftest:sqlScriptFile "d-inv-005.sql"; rdb2rdftest:relatedTestCase <#INVTC0005> .
 
 <#INVTC0001a> a rdb2rdftest:R2RML;
     dcterms:title "Adjacent template placeholders"; dcterms:identifier "INVTC0001a";
@@ -54,12 +53,7 @@
     test:purpose "Tests a self-join whose key controls relationships but is absent from every generated RDF term"; test:specificationReference "#dfn-join-condition"; test:reviewStatus test:unreviewed;
     rdb2rdftest:database <#d-inv-004>; rdb2rdftest:output "mapped.nq"; rdb2rdftest:hasExpectedOutput true; rdb2rdftest:mappingDocument "r2rml.ttl" .
 
-<#INVTC0005a> a rdb2rdftest:R2RML;
-    dcterms:title "Join target reached only as an RDF object"; dcterms:identifier "INVTC0005a";
+<#INVTC0005> a rdb2rdftest:R2RML;
+    dcterms:title "Join target reached only as an RDF object"; dcterms:identifier "INVTC0005";
     test:purpose "Tests a parent Triples Map without predicate-object maps whose subject identifier is recoverable from reference object map triples"; test:specificationReference "#dfn-parent-triples-map"; test:reviewStatus test:unreviewed;
-    rdb2rdftest:database <#d-inv-005a>; rdb2rdftest:output "mappeda.nq"; rdb2rdftest:hasExpectedOutput true; rdb2rdftest:mappingDocument "r2rmla.ttl" .
-
-<#INVTC0005b> a rdb2rdftest:R2RML;
-    dcterms:title "Triples Map without a predicate-object map"; dcterms:identifier "INVTC0005b";
-    test:purpose "Tests a non-empty logical table whose Triples Map generates no triples"; test:specificationReference "#dfn-triples-map"; test:reviewStatus test:unreviewed;
-    rdb2rdftest:database <#d-inv-005b>; rdb2rdftest:output "mappedb.nq"; rdb2rdftest:hasExpectedOutput true; rdb2rdftest:mappingDocument "r2rmlb.ttl" .
+    rdb2rdftest:database <#d-inv-005>; rdb2rdftest:output "mapped.nq"; rdb2rdftest:hasExpectedOutput true; rdb2rdftest:mappingDocument "r2rml.ttl" .
