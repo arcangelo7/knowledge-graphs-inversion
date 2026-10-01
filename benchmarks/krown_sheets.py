@@ -349,20 +349,80 @@ class Campaign:
     label: str
     source: Path
     data: dict[str, object]
+    reports_forward: bool
 
     @property
     def scenarios(self) -> dict[str, dict[str, object]]:
         return cast(dict[str, dict[str, object]], self.data["scenarios"])
 
 
+FORWARD_STATISTICS = ("forward_time", "inversion_overhead_percentage")
+
+
+def _without_forward(scenario: dict[str, object]) -> dict[str, object]:
+    if scenario["status"] != "completed":
+        return scenario
+    runs = []
+    for run in cast(list[dict[str, object]], scenario["raw_runs"]):
+        timing = cast(dict[str, object], run["timing_breakdown"])
+        metrics = cast(dict[str, object], run["metrics"])
+        stages = cast(dict[str, object], metrics["stages"])
+        runs.append(
+            dict(
+                run,
+                timing_breakdown={
+                    key: value
+                    for key, value in timing.items()
+                    if key not in FORWARD_STATISTICS
+                },
+                metrics=dict(
+                    metrics,
+                    stages={
+                        stage: value
+                        for stage, value in stages.items()
+                        if stage != "forward"
+                    },
+                ),
+            )
+        )
+    statistics = cast(dict[str, object], scenario["statistics"])
+    return dict(
+        scenario,
+        raw_runs=runs,
+        statistics={
+            key: value
+            for key, value in statistics.items()
+            if key not in FORWARD_STATISTICS
+        },
+        resource_summary=[
+            row
+            for row in cast(list[dict[str, str]], scenario["resource_summary"])
+            if row["stage_name"] != "forward"
+        ],
+    )
+
+
 def load_campaigns(stats_file: Path) -> tuple[Campaign, ...]:
     payloads = campaign_payloads(
         cast(dict[str, object], json.loads(stats_file.read_text(encoding="utf-8")))
     )
-    return tuple(
-        Campaign(label=campaign.label, source=stats_file, data=payloads[campaign.name])
-        for campaign in CAMPAIGNS
-    )
+    campaigns = []
+    for campaign in CAMPAIGNS:
+        data = payloads[campaign.name]
+        # The SPARQL-based campaign reverses the graph of the RDF-only forward,
+        # so that forward is reported once, under the RDF-only campaign.
+        reports_forward = campaign.inversion_engine == "souffle"
+        if not reports_forward:
+            scenarios = cast(dict[str, dict[str, object]], data["scenarios"])
+            data = dict(
+                data,
+                scenarios={
+                    name: _without_forward(scenario)
+                    for name, scenario in scenarios.items()
+                },
+            )
+        campaigns.append(Campaign(campaign.label, stats_file, data, reports_forward))
+    return tuple(campaigns)
 
 
 def _flatten(record: dict[str, object]) -> dict[str, object]:
@@ -502,6 +562,9 @@ def failure_records(campaigns: Sequence[Campaign]) -> list[Record]:
         scenario = campaign.scenarios[name]
         if scenario["status"] == "completed":
             continue
+        failure = cast(dict[str, object], scenario["failure"])
+        if failure["stage"] == FORWARD_STAGE and not campaign.reports_forward:
+            continue
         last_run = cast(list[dict[str, object]], scenario["raw_runs"])[-1]
         records.append(
             (
@@ -531,7 +594,6 @@ CONFIGURATION_ROWS: tuple[tuple[str, str], ...] = (
     ("Campaign timestamp (UTC)", "timestamp"),
     ("Forward software", "forward_engine_version"),
     ("Reverse software", "reverse_software"),
-    ("Forward RML reader", "forward_rml_reader"),
     ("Soufflé mode", "souffle_mode"),
     ("Iterations per completed scenario", "iterations"),
     ("Measurement scope", "measurement_scope"),
@@ -568,19 +630,18 @@ def _stage_rows(campaign: Campaign) -> list[list[CellValue]]:
     forward_failures = _failures(scenarios, forward=True)
     inversion_failures = _failures(scenarios, forward=False)
     started = total - len(forward_failures)
+    forward_row: list[CellValue] = [
+        campaign.label,
+        "Forward realization",
+        total,
+        started,
+        len(forward_failures),
+        0,
+        sum(1 for failure in forward_failures if failure["kind"] == "out_of_memory"),
+        sum(1 for failure in forward_failures if failure["kind"] == "timeout"),
+    ]
     return [
-        [
-            campaign.label,
-            "Forward realization",
-            total,
-            started,
-            len(forward_failures),
-            0,
-            sum(
-                1 for failure in forward_failures if failure["kind"] == "out_of_memory"
-            ),
-            sum(1 for failure in forward_failures if failure["kind"] == "timeout"),
-        ],
+        *([forward_row] if campaign.reports_forward else []),
         [
             campaign.label,
             "Reverse realization",
@@ -608,14 +669,11 @@ def _configuration_value(campaign: Campaign, key: str) -> CellValue:
             return ""
         return cast(str, data["souffle_mode"])
     if key == "forward_engine_version":
-        return SOUFFLE_SOFTWARE
+        return SOUFFLE_SOFTWARE if campaign.reports_forward else ""
     if key == "reverse_software":
         if data["inversion_engine"] == "souffle":
             return SOUFFLE_SOFTWARE
         return "SPARQL-based"
-    if key == "forward_rml_reader":
-        provenance = cast(dict[str, object], data["provenance"])
-        return f"RMLMapper {cast(str, provenance['forward_rml_reader_version'])}"
     return _cell(data[key])
 
 
@@ -823,6 +881,7 @@ class ChartMeasure:
     label: str
     column: str
     stage: str | None
+    forward: bool
 
 
 @dataclass(frozen=True)
@@ -839,8 +898,8 @@ CHART_TABS: tuple[ChartTab, ...] = (
         "Mean time (s)",
         SCENARIO_STATISTICS_TAB,
         (
-            ChartMeasure("Forward", "Forward mean (s)", None),
-            ChartMeasure("Reverse", "Reverse mean (s)", None),
+            ChartMeasure("Forward", "Forward mean (s)", None, True),
+            ChartMeasure("Reverse", "Reverse mean (s)", None, False),
         ),
     ),
     ChartTab(
@@ -848,8 +907,8 @@ CHART_TABS: tuple[ChartTab, ...] = (
         "Peak RAM (bytes)",
         RESOURCES_TAB,
         (
-            ChartMeasure("Forward", "Memory RAM max (bytes)", "forward"),
-            ChartMeasure("Reverse", "Memory RAM max (bytes)", "backward"),
+            ChartMeasure("Forward", "Memory RAM max (bytes)", "forward", True),
+            ChartMeasure("Reverse", "Memory RAM max (bytes)", "backward", False),
         ),
     ),
     ChartTab(
@@ -857,8 +916,8 @@ CHART_TABS: tuple[ChartTab, ...] = (
         "Bytes written",
         RESOURCES_TAB,
         (
-            ChartMeasure("Forward", "Disk write (bytes) diff", "forward"),
-            ChartMeasure("Reverse", "Disk write (bytes) diff", "backward"),
+            ChartMeasure("Forward", "Disk write (bytes) diff", "forward", True),
+            ChartMeasure("Reverse", "Disk write (bytes) diff", "backward", False),
         ),
     ),
 )
@@ -934,10 +993,22 @@ def _chart_sweeps(campaigns: Sequence[Campaign]) -> list[dict[str, object]]:
     return sweeps
 
 
+def _chart_series(
+    chart_tab: ChartTab, campaigns: Sequence[Campaign]
+) -> list[tuple[ChartMeasure, Campaign]]:
+    return [
+        (measure, campaign)
+        for measure in chart_tab.measures
+        for campaign in campaigns
+        if campaign.reports_forward or not measure.forward
+    ]
+
+
 def chart_tab_values(chart_tab: ChartTab, campaigns: Sequence[Campaign]) -> Table:
     """Lookup block feeding one chart per parameter sweep, stacked vertically."""
     series = _chart_sweeps(campaigns)
-    width = CHART_BLOCK_COLUMN + 2 + len(chart_tab.measures) * len(campaigns)
+    pairs = _chart_series(chart_tab, campaigns)
+    width = CHART_BLOCK_COLUMN + 2 + len(pairs)
     table: Table = []
     for position, sweep in enumerate(series):
         header_row = CHART_FIRST_ROW + position * CHART_ROW_STEP
@@ -948,24 +1019,15 @@ def chart_tab_values(chart_tab: ChartTab, campaigns: Sequence[Campaign]) -> Tabl
         table[header_row - CHART_TITLE_OFFSET] = title
         header: list[CellValue] = [""] * width
         header[CHART_BLOCK_COLUMN] = cast(str, sweep["parameter_label"])
-        labels = [
-            f"{measure.label} {campaign.label}"
-            for measure in chart_tab.measures
-            for campaign in campaigns
-        ]
-        for index, label in enumerate(labels):
-            header[CHART_BLOCK_COLUMN + 1 + index] = label
+        for index, (measure, campaign) in enumerate(pairs):
+            header[CHART_BLOCK_COLUMN + 1 + index] = f"{measure.label} {campaign.label}"
         header[width - 1] = "Scenario ID"
         table.append(header)
         for point in cast(list[dict[str, object]], sweep["points"]):
             row: list[CellValue] = [""] * width
             row[CHART_BLOCK_COLUMN] = _sweep_value(cast(CellValue, point["value"]))
             key_cell = f"${_column_letter(width - 1)}{len(table) + 1}"
-            for index, (measure, campaign) in enumerate(
-                (measure, campaign)
-                for measure in chart_tab.measures
-                for campaign in campaigns
-            ):
+            for index, (measure, campaign) in enumerate(pairs):
                 row[CHART_BLOCK_COLUMN + 1 + index] = _chart_formula(
                     chart_tab, measure, campaign, key_cell
                 )
@@ -987,7 +1049,7 @@ def _chart_requests(
     campaigns: Sequence[Campaign],
     sheet_id: int,
 ) -> list[dict[str, object]]:
-    series_count = len(chart_tab.measures) * len(campaigns)
+    series_count = len(_chart_series(chart_tab, campaigns))
     width = CHART_BLOCK_COLUMN + 2 + series_count
     requests: list[dict[str, object]] = []
     for position, sweep in enumerate(_chart_sweeps(campaigns)):
