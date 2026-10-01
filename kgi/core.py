@@ -34,6 +34,7 @@ from kgi.constants import (
     RML_OLD_REFERENCE,
     RML_PARENT_TRIPLES_MAP,
     RML_QUERY,
+    RML_QUERY_SOURCE,
     RML_REFERENCE,
     RML_REFERENCE_FORMULATION,
     RML_REFERENCE_NODE,
@@ -64,6 +65,7 @@ from kgi.exceptions import (
     NonInvertibleError,
     UnsupportedMappingError,
 )
+from kgi.logical_queries import LogicalQuery, query_text, resolve_reference
 from kgi.query import (
     _position_references,
     non_graph_exposed_references,
@@ -126,13 +128,15 @@ def _extract_db_url_from_mapping(store: Store) -> str | None:
     return f"{driver}://{credentials}{host_and_db}"
 
 
-def _check_for_sql_queries(store: Store) -> bool:
-    for predicate in (RR_SQL_QUERY, RML_QUERY, RML_OLD_QUERY):
-        if any(store.quads_for_pattern(None, predicate, None)):
-            return True
-    return any(
-        store.quads_for_pattern(None, RML_REFERENCE_FORMULATION, RML_SQL2008_QUERY)
-    )
+def _query_iterators(store: Store) -> set[str]:
+    """The SQL text of every RML logical source whose iterator is a query."""
+    return {
+        query_text(_literal_value(quad))
+        for formulation in store.quads_for_pattern(
+            None, RML_REFERENCE_FORMULATION, RML_SQL2008_QUERY
+        )
+        for quad in store.quads_for_pattern(formulation.subject, RML_ITERATOR, None)
+    }
 
 
 _SQL_REFERENCE_FORMULATIONS = (RML_SQL2008_TABLE, RML_SQL2008_QUERY)
@@ -146,21 +150,70 @@ def _check_for_non_relational_sources(store: Store) -> bool:
     )
 
 
-def _normalize_sql_table_sources(mappings: pd.DataFrame) -> None:
-    # New-vocabulary mappings carry the table name in rml:iterator; morph-kgc
-    # leaves the rule as a generic rml:source instead of the tableName form
-    # the rest of the pipeline expects
-    is_table_source = (
+def _normalize_sql_table_sources(
+    mappings: pd.DataFrame, query_iterators: set[str]
+) -> None:
+    # New-vocabulary mappings carry the table name or the query in rml:iterator;
+    # morph-kgc leaves the rule as a generic rml:source instead of the tableName
+    # or query form the rest of the pipeline expects
+    is_sql_source = (
         (mappings["source_type"] == "RDB")
         & (mappings["logical_source_type"] == RML_SOURCE)
         & mappings["iterator"].notna()
     )
-    if not is_table_source.any():
+    if not is_sql_source.any():
         return
+    is_query_source = is_sql_source & mappings["iterator"].map(
+        lambda iterator: query_text(str(iterator)) in query_iterators
+    ).astype(bool)
+    is_table_source = is_sql_source & ~is_query_source
     mappings.loc[is_table_source, "logical_source_value"] = mappings.loc[
         is_table_source, "iterator"
     ].map(normalize_sql_identifier)
     mappings.loc[is_table_source, "logical_source_type"] = RML_TABLE_NAME
+    mappings.loc[is_query_source, "logical_source_value"] = mappings.loc[
+        is_query_source, "iterator"
+    ]
+    mappings.loc[is_query_source, "logical_source_type"] = RML_QUERY_SOURCE
+
+
+def _name_logical_queries(mappings: pd.DataFrame) -> dict[str, str]:
+    """Give every distinct logical query a table name, and return its SQL by name.
+
+    The names follow the sorted query texts, so that they do not depend on the
+    order in which the mapping was parsed.
+    """
+    is_query = mappings["logical_source_type"] == RML_QUERY_SOURCE
+    texts = sorted(
+        {
+            query_text(str(value))
+            for value in mappings.loc[is_query, "logical_source_value"]
+        }
+    )
+    names = {text: f"query_{index}" for index, text in enumerate(texts, start=1)}
+    mappings.loc[is_query, "logical_source_value"] = mappings.loc[
+        is_query, "logical_source_value"
+    ].map(lambda value: names[query_text(str(value))])
+    return {name: text for text, name in names.items()}
+
+
+def _describe_logical_queries(
+    query_texts: dict[str, str], source_db_url: str | None
+) -> dict[str, LogicalQuery]:
+    if not query_texts:
+        return {}
+    if source_db_url is None:
+        return {
+            name: LogicalQuery(name, sql, None) for name, sql in query_texts.items()
+        }
+    retriever = DatabaseSchemaRetriever(source_db_url)
+    try:
+        return {
+            name: LogicalQuery(name, sql, retriever.get_query_schema(sql, name))
+            for name, sql in query_texts.items()
+        }
+    finally:
+        retriever.dispose()
 
 
 def _check_for_multiple_subject_maps(store: Store) -> bool:
@@ -183,6 +236,7 @@ def _check_for_literal_subjects(store: Store) -> bool:
 
 
 _TABLE_NAME_PREDICATES = (RR_TABLE_NAME, RML_ITERATOR)
+_QUERY_PREDICATES = (RR_SQL_QUERY, RML_QUERY, RML_OLD_QUERY)
 # A referencing object map reads columns of the parent triples map's own table
 _PARENT_TRIPLES_MAP_PREDICATES = (
     RR_PARENT_TRIPLES_MAP,
@@ -271,18 +325,29 @@ _VOCABULARIES = (
 )
 
 
-def _logical_table_name(
+def _logical_source_key(
     store: Store, logical_source: NamedNode | BlankNode
 ) -> str | None:
-    """Resolve the table the logical source names.
+    """Resolve the table the logical source names, or the text of its query.
 
-    Both languages write a SQL identifier here, so both fold it, while only
-    R2RML folds the references that name the columns.
+    Both languages write a SQL identifier for a table, so both fold it, while
+    only R2RML folds the references that name the columns.
     """
+    iterator_is_query = any(
+        store.quads_for_pattern(
+            logical_source, RML_REFERENCE_FORMULATION, RML_SQL2008_QUERY
+        )
+    )
     for predicate in _TABLE_NAME_PREDICATES:
         for quad in store.quads_for_pattern(logical_source, predicate, None):
             if isinstance(quad.object, Literal):
+                if predicate == RML_ITERATOR and iterator_is_query:
+                    return query_text(quad.object.value)
                 return normalize_sql_identifier(quad.object.value)
+    for predicate in _QUERY_PREDICATES:
+        for quad in store.quads_for_pattern(logical_source, predicate, None):
+            if isinstance(quad.object, Literal):
+                return query_text(quad.object.value)
     return None
 
 
@@ -315,8 +380,9 @@ def _triples_map_references(
 def mapped_references(store: Store) -> dict[str, set[str]]:
     """Source columns the mapping reads, per logical table.
 
-    The mapping is read as written, because morph-kgc drops the delimiters that
-    tell a reference how the database resolves it.
+    A logical table is keyed by its table name or by the text of its query. The
+    mapping is read as written, because morph-kgc drops the delimiters that tell
+    a reference how the database resolves it.
     """
     references: dict[str, set[str]] = {}
     for vocabulary in _VOCABULARIES:
@@ -326,21 +392,46 @@ def mapped_references(store: Store) -> dict[str, set[str]]:
                     quad.subject, (NamedNode, BlankNode)
                 ) or not isinstance(quad.object, (NamedNode, BlankNode)):
                     continue
-                table_name = _logical_table_name(store, quad.object)
-                if table_name is None:
+                key = _logical_source_key(store, quad.object)
+                if key is None:
                     continue
-                references.setdefault(table_name, set()).update(
+                references.setdefault(key, set()).update(
                     _triples_map_references(store, quad.subject, vocabulary)
                 )
     return references
 
 
-def _check_for_missing_references(store: Store, source_db_url: str) -> None:
-    """Reject a mapping that reads a column the source table does not have."""
+def _check_for_missing_query_references(
+    query: LogicalQuery, references: set[str]
+) -> None:
+    schema = query.schema
+    assert schema is not None
+    labels = schema.column_names_ordered
+    missing = sorted(
+        reference
+        for reference in references
+        if resolve_reference(labels, reference) is None
+    )
+    if missing:
+        raise MappingError(
+            f"Query '{query.name}' has no result column named {', '.join(missing)}"
+        )
+
+
+def _check_for_missing_references(
+    store: Store, source_db_url: str, queries: dict[str, LogicalQuery]
+) -> None:
+    """Reject a mapping that reads a column its logical table does not have."""
+    queries_by_text = {query_text(query.sql): query for query in queries.values()}
     retriever = DatabaseSchemaRetriever(source_db_url)
     try:
         ignores_case = retriever.engine.dialect.name == "mysql"
         for table_name, references in mapped_references(store).items():
+            if table_name in queries_by_text:
+                _check_for_missing_query_references(
+                    queries_by_text[table_name], references
+                )
+                continue
             stored = {
                 column.name for column in retriever.get_table_schema(table_name).columns
             }
@@ -724,12 +815,14 @@ class TableAnalysis:
 
     `subject_reference_sets` holds one entry per distinct subject map, because a
     row reaches the graph only through a subject map whose columns are all
-    non-NULL.
+    non-NULL. `query` is the SQL of a logical table the mapping defines as a query
+    result, which is the table its recovered rows are compared with.
     """
 
     references: frozenset[str]
     unrecoverable: frozenset[str]
     subject_reference_sets: tuple[frozenset[str], ...]
+    query: str | None = None
 
     @property
     def recoverable(self) -> frozenset[str]:
@@ -740,7 +833,9 @@ MappingAnalysis = dict[str, TableAnalysis]
 
 
 def _analyze_rules(
-    mappings: pd.DataFrame, endpoint: Endpoint | None = None
+    mappings: pd.DataFrame,
+    queries: dict[str, LogicalQuery],
+    endpoint: Endpoint | None = None,
 ) -> MappingAnalysis:
     unrecoverable = _unrecoverable_references(mappings)
     analysis: MappingAnalysis = {}
@@ -757,10 +852,12 @@ def _analyze_rules(
             table_unrecoverable.update(
                 _ambiguous_observed_template_references(source_rules, endpoint)
             )
+        query = queries.get(str(table_name))
         analysis[str(table_name)] = TableAnalysis(
             frozenset(references),
             frozenset(table_unrecoverable),
             tuple(dict.fromkeys(subject_reference_sets)),
+            query.sql if query is not None else None,
         )
     return analysis
 
@@ -803,15 +900,12 @@ def _load_mapping_rules(
     mapping: str | pathlib.Path,
     rdf_graph: str,
     source_db_url: str | None,
-) -> tuple[pd.DataFrame, str | None]:
+) -> tuple[pd.DataFrame, str | None, dict[str, LogicalQuery]]:
     logger = get_logger()
     mapping_store = _parse_mapping_store(str(mapping))
 
     if _check_for_literal_subjects(mapping_store):
         raise MappingError("rr:termType rr:Literal on subjectMap is not valid")
-
-    if _check_for_sql_queries(mapping_store):
-        raise UnsupportedMappingError("SQL query as logical table is not supported")
 
     if _check_for_non_relational_sources(mapping_store):
         raise UnsupportedMappingError("Only relational logical sources are supported")
@@ -831,9 +925,6 @@ def _load_mapping_rules(
             source_db_url = extracted_url
             logger.info(f"Extracted source database URL from mapping: {extracted_url}")
 
-    if source_db_url is not None:
-        _check_for_missing_references(mapping_store, source_db_url)
-
     config_file = _build_morph_config(mapping, rdf_graph, source_db_url)
     try:
         config = load_config_from_argument(config_file)
@@ -841,9 +932,13 @@ def _load_mapping_rules(
     finally:
         os.unlink(config_file)
 
-    _normalize_sql_table_sources(mappings)
+    _normalize_sql_table_sources(mappings, _query_iterators(mapping_store))
     if (mappings["logical_source_type"] == RML_SOURCE).any():
         raise UnsupportedMappingError("rml:source logical sources are not supported")
+    queries = _describe_logical_queries(_name_logical_queries(mappings), source_db_url)
+
+    if source_db_url is not None:
+        _check_for_missing_references(mapping_store, source_db_url, queries)
 
     if _check_for_constant_only_mappings(mappings):
         raise NonInvertibleError(
@@ -851,7 +946,7 @@ def _load_mapping_rules(
         )
 
     insert_columns(mappings)
-    return mappings, source_db_url
+    return mappings, source_db_url, queries
 
 
 def analyze_mapping(
@@ -865,10 +960,10 @@ def analyze_mapping(
     The inversion and the comparison of the two databases must agree on what
     can be recovered, so both read this single description of the mapping.
     """
-    mappings, _ = _load_mapping_rules(mapping, str(rdf_graph), source_db_url)
+    mappings, _, queries = _load_mapping_rules(mapping, str(rdf_graph), source_db_url)
     endpoint = EndpointFactory.create_from_url(str(rdf_graph))
     try:
-        analysis = _analyze_rules(mappings, endpoint)
+        analysis = _analyze_rules(mappings, queries, endpoint)
         _check_for_unrecoverable_tables(analysis)
         return analysis
     finally:
@@ -885,12 +980,14 @@ def reconstruct(
     logger = get_logger()
     rdf_graph_str = str(rdf_graph)
 
-    mappings, source_db_url = _load_mapping_rules(mapping, rdf_graph_str, source_db_url)
+    mappings, source_db_url, queries = _load_mapping_rules(
+        mapping, rdf_graph_str, source_db_url
+    )
     endpoint: Endpoint | None = None
     schema_retrievers: dict[str, DatabaseSchemaRetriever] = {}
     try:
         endpoint = EndpointFactory.create_from_url(rdf_graph_str)
-        analysis = _analyze_rules(mappings, endpoint)
+        analysis = _analyze_rules(mappings, queries, endpoint)
         _check_for_unrecoverable_tables(analysis)
         if source_db_url is not None:
             schema_retrievers["DataSource1"] = DatabaseSchemaRetriever(source_db_url)
@@ -920,11 +1017,14 @@ def reconstruct(
                 raise NonInvertibleError(
                     f"No column of table '{table_name}' can be recovered from the graph"
                 )
-            table_schema = (
-                schema_retrievers[source_section].get_table_schema(table_name)
-                if source_db_url is not None
-                else None
-            )
+            if table_name in queries:
+                table_schema = queries[table_name].schema
+            elif source_db_url is not None:
+                table_schema = schema_retrievers[source_section].get_table_schema(
+                    table_name
+                )
+            else:
+                table_schema = None
             if table_schema is not None:
                 source_data_chunks = (
                     apply_schema_ordering(

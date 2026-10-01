@@ -5,7 +5,7 @@
 """Schema retrieval and management for knowledge graph inversion."""
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Optional, cast
 
@@ -14,6 +14,40 @@ import sqlalchemy
 from sqlalchemy import inspect
 from sqlalchemy.dialects.mysql import TINYINT, VARBINARY
 from sqlalchemy.types import TypeEngine
+
+_RESULT_VALUE_TYPES: tuple[tuple[type[object], type[TypeEngine]], ...] = (
+    (bool, sqlalchemy.Boolean),
+    (int, sqlalchemy.Integer),
+    (float, sqlalchemy.Float),
+    (Decimal, sqlalchemy.Numeric),
+    (datetime, sqlalchemy.DateTime),
+    (date, sqlalchemy.Date),
+    (bytes, sqlalchemy.LargeBinary),
+    (str, sqlalchemy.Text),
+)
+
+
+def _result_column_type(values: pd.Series) -> TypeEngine:
+    """Read the SQL type of a query result column off the values it holds.
+
+    A query result carries no declared schema, so the values are the only evidence.
+    """
+    present = values.dropna()
+    if present.empty:
+        return sqlalchemy.Text()
+    if pd.api.types.is_bool_dtype(present):
+        return sqlalchemy.Boolean()
+    if pd.api.types.is_integer_dtype(present):
+        return sqlalchemy.Integer()
+    if pd.api.types.is_float_dtype(present):
+        return sqlalchemy.Float()
+    if pd.api.types.is_datetime64_any_dtype(present):
+        return sqlalchemy.DateTime()
+    sample = present.iloc[0]
+    for python_type, sql_type in _RESULT_VALUE_TYPES:
+        if isinstance(sample, python_type):
+            return sql_type()
+    raise TypeError(f"Unsupported query result value: {sample!r}")
 
 
 @dataclass
@@ -87,6 +121,23 @@ class DatabaseSchemaRetriever:
             columns=columns,
             primary_keys=primary_keys,
         )
+
+    def get_query_schema(self, sql: str, name: str) -> TableSchema:
+        """Describe the result set of a logical query as the schema of a table."""
+        with self.engine.connect() as connection:
+            result = pd.read_sql_query(sqlalchemy.text(sql), connection)
+        columns = []
+        for index, (label, values) in enumerate(result.items()):
+            sql_type = _result_column_type(values)
+            columns.append(
+                ColumnInfo(
+                    name=str(label),
+                    sql_type=sql_type,
+                    python_type=self._sql_to_python_type(sql_type),
+                    ordinal_position=index + 1,
+                )
+            )
+        return TableSchema(table_name=name, columns=columns, primary_keys=[])
 
     def _sql_to_python_type(self, sql_type: object) -> type[object]:
         """Convert SQLAlchemy type to Python type."""

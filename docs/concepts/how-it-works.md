@@ -41,7 +41,7 @@ The forward transformation produces this RDF:
 
 ## The three stages
 
-The algorithm proceeds in three stages. First, it extracts the source table name from the logical source specification in the mapping. Second, it inspects all term maps to discover which columns the table contains and how their values were transformed into RDF. Third, it assembles a SPARQL query that extracts each column value and executes it against the RDF graph to produce the reconstructed table rows.
+The algorithm proceeds in three stages. First, it reads the logical table from the logical source specification in the mapping: a table name, or a SQL query whose result is the table to rebuild. Second, it inspects all term maps to discover which columns the table contains and how their values were transformed into RDF. Third, it assembles a SPARQL query that extracts each column value and executes it against the RDF graph to produce the reconstructed table rows.
 
 ## Column discovery
 

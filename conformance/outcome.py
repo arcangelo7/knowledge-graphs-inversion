@@ -32,7 +32,8 @@ from kgi.comparison import (
     compare_databases,
     databases_identical,
 )
-from kgi.core import _check_for_sql_queries, _parse_mapping_store, reconstruct
+from kgi.core import reconstruct
+from kgi.logical_queries import source_tables
 
 RDF_FORMATS = {
     "turtle": RdfFormat.TURTLE,
@@ -164,10 +165,44 @@ def _provenance_analysis(analysis: MappingAnalysis) -> MappingAnalysis:
     # leaves unattributed. Columns no term map reads stay outside the references.
     return {
         table_name: TableAnalysis(
-            table.references, frozenset(), table.subject_reference_sets
+            table.references, frozenset(), table.subject_reference_sets, table.query
         )
         for table_name, table in analysis.items()
     }
+
+
+def logical_queries(analysis: MappingAnalysis) -> dict[str, str]:
+    """The SQL of every query-defined logical table, by the name its rows are stored under."""
+    return {
+        table_name: table.query
+        for table_name, table in analysis.items()
+        if table.query is not None
+    }
+
+
+def _source_content(analysis: MappingAnalysis, source_db_url: str) -> DatabaseContent:
+    """The logical tables the mapping reads, as the source database holds them.
+
+    A query-defined logical table stands for the base tables it reads, so those
+    are replaced by the query result unless the mapping also reads them as a
+    table, and the remaining base tables stay as they are, mapped or not.
+    """
+    content = _db_connection.get_database_content(source_db_url)
+    queries = logical_queries(analysis)
+    for sql in queries.values():
+        for table_name in source_tables(sql):
+            # The database folds an undelimited name, so the written one may not match
+            stored = [
+                name
+                for name in content
+                if name == table_name or name.casefold() == table_name.casefold()
+            ]
+            for name in stored:
+                if name not in analysis:
+                    del content[name]
+    for name, sql in queries.items():
+        content[name] = _db_connection.get_query_content(source_db_url, sql)
+    return content
 
 
 def _compare_reconstruction(
@@ -176,7 +211,7 @@ def _compare_reconstruction(
     dest_db_url: str,
     allow_empty_destination: bool,
 ) -> CaseOutcome:
-    source_content = _db_connection.get_database_content(source_db_url)
+    source_content = _source_content(analysis, source_db_url)
     dest_content = _db_connection.get_database_content(dest_db_url)
     databases_equal, message, losses = compare_databases(
         source_content, dest_content, analysis
@@ -231,14 +266,6 @@ def evaluate_kgi_case(
         )
 
     if not produced_rdf:
-        if _check_for_sql_queries(_parse_mapping_store(mapping_path)):
-            return CaseOutcome(
-                InversionOutcome.NOT_SUPPORTED,
-                message=(
-                    "Inversion not supported: SQL query as logical table is not "
-                    "supported"
-                ),
-            )
         if forward_failed:
             return CaseOutcome(
                 InversionOutcome.ERROR,
@@ -371,6 +398,7 @@ def evaluate_souffle_case(
             source_db_url,
             dest_db_url,
             inversion_mode,
+            {},
         )
         return _compare_recorded_provenance(source_db_url, dest_db_url, error)
 
@@ -379,6 +407,7 @@ def evaluate_souffle_case(
         source_db_url,
         dest_db_url,
         inversion_mode,
+        logical_queries(analysis),
     )
     if inversion_mode != "rdf":
         analysis = _provenance_analysis(analysis)

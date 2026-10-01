@@ -16,6 +16,8 @@ PROVENANCE_MARKER_FILES = ("ProvTriple.csv", "ProvQuad.csv")
 RECOVERED_DECLARATION = re.compile(r"^\.decl Recovered_(\w+)\((.*)\)$")
 OUTPUT_DECLARATION = re.compile(r'^\.output \w+\(filename="([^"]+)"')
 LOGICAL_TABLE_SUFFIX = re.compile(r"_lt\d+$")
+# The translator names the relation of every query-defined logical table this way
+QUERY_RELATION = "query"
 
 
 @dataclass(frozen=True)
@@ -27,6 +29,18 @@ class SourceRelation:
     @property
     def recovered_file(self) -> str:
         return f"Recovered_{self.name}.csv"
+
+    @property
+    def facts_file(self) -> str:
+        return f"{self.name}.facts"
+
+
+def translator_column_name(label: str) -> str:
+    """The Datalog variable the translator derives from a result column label."""
+    normalized = re.sub(r"[^a-z0-9_]", "_", label.lower())
+    if normalized == "count":
+        return "column_count"
+    return f"column_{normalized}" if normalized[0].isdigit() else normalized
 
 
 def _declared_columns(arguments: str) -> tuple[str, ...]:
@@ -71,6 +85,12 @@ def read_recovered_rows(
 ) -> list[tuple[str, ...]]:
     with (shared_directory / relation.recovered_file).open(encoding="utf-8") as file:
         return [tuple(line.rstrip("\n").split("\t")) for line in file]
+
+
+def read_fact_rows(shared_directory: Path, relation: SourceRelation) -> set[str]:
+    """The rows the translator read from the logical table, one text line each."""
+    with (shared_directory / relation.facts_file).open(encoding="utf-8") as file:
+        return {line.rstrip("\n") for line in file if line.strip()}
 
 
 def write_rdf_dataset(facts_directory: Path, rdf_file: Path) -> None:

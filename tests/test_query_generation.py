@@ -250,7 +250,7 @@ def test_template_decomposition_depends_on_the_observed_value(tmp_path: Path) ->
     )
     endpoint = LocalSparqlGraphStore(str(rdf_file))
     try:
-        analysis = _analyze_rules(mappings, endpoint)
+        analysis = _analyze_rules(mappings, {}, endpoint)
     finally:
         endpoint.close()
 
@@ -276,7 +276,7 @@ def test_ambiguous_template_keeps_a_column_exposed_by_another_map(
     )
     endpoint = LocalSparqlGraphStore(str(rdf_file))
     try:
-        analysis = _analyze_rules(mappings, endpoint)
+        analysis = _analyze_rules(mappings, {}, endpoint)
     finally:
         endpoint.close()
 
@@ -335,7 +335,7 @@ def test_table_without_recoverable_columns_is_non_invertible() -> None:
 
     assert unrecoverable == {"data": frozenset({"p1"})}
     with pytest.raises(NonInvertibleError) as exc_info:
-        _check_for_unrecoverable_tables(_analyze_rules(mappings))
+        _check_for_unrecoverable_tables(_analyze_rules(mappings, {}))
 
     assert str(exc_info.value) == (
         "No column of table 'data' can be recovered from the graph: p1"
@@ -350,7 +350,7 @@ def test_adjacent_subject_template_without_other_evidence_is_non_invertible() ->
     mappings = pd.DataFrame([rule])
     insert_columns(mappings)
 
-    analysis = _analyze_rules(mappings)
+    analysis = _analyze_rules(mappings, {})
 
     assert analysis["data"].unrecoverable == frozenset({"p1", "p2"})
     with pytest.raises(NonInvertibleError) as error:
@@ -389,7 +389,7 @@ def test_adjacent_object_template_is_not_used_as_subject_evidence() -> None:
     mappings = pd.DataFrame([target_rule, evidence_rule])
     insert_columns(mappings)
 
-    analysis = _analyze_rules(mappings)
+    analysis = _analyze_rules(mappings, {})
     triples = query_triples(
         mappings,
         mappings.loc[mappings["logical_source_value"] == "target"],
@@ -840,7 +840,7 @@ def test_triples_map_without_predicate_object_map_needs_a_join_to_be_invertible(
     unrecoverable = _unrecoverable_references(mappings)
     assert unrecoverable == {"data2": frozenset({"id"})}
     with pytest.raises(NonInvertibleError) as error:
-        _check_for_unrecoverable_tables(_analyze_rules(mappings))
+        _check_for_unrecoverable_tables(_analyze_rules(mappings, {}))
     assert (
         str(error.value)
         == "No column of table 'data2' can be recovered from the graph: id"

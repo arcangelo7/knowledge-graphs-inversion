@@ -5,7 +5,7 @@
 import pandas as pd
 from sqlalchemy import CHAR, MetaData, Table, create_engine, inspect, select, text
 
-from kgi.comparison import DatabaseContent
+from kgi.comparison import DatabaseContent, TableContent
 
 
 def hex_encode_binary_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -16,6 +16,15 @@ def hex_encode_binary_columns(df: pd.DataFrame) -> pd.DataFrame:
             )
         )
     return df
+
+
+def _table_content(content: pd.DataFrame) -> TableContent:
+    content = content.where(pd.notnull(content), None)
+    hex_encode_binary_columns(content)
+    return {
+        "columns": content.columns.tolist(),
+        "data": content.values.tolist(),
+    }
 
 
 class DatabaseConnection:
@@ -60,12 +69,15 @@ class DatabaseConnection:
                                     else value
                                 )
                             )
-                    content = content.where(pd.notnull(content), None)
-                    hex_encode_binary_columns(content)
-                    db_content[table_name] = {
-                        "columns": content.columns.tolist(),
-                        "data": content.values.tolist(),
-                    }
+                    db_content[table_name] = _table_content(content)
                 return db_content
+        finally:
+            engine.dispose()
+
+    def get_query_content(self, database_url: str, sql: str) -> TableContent:
+        engine = create_engine(database_url)
+        try:
+            with engine.connect() as connection:
+                return _table_content(pd.read_sql_query(text(sql), connection))
         finally:
             engine.dispose()

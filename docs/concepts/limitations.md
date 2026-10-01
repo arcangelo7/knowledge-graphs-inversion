@@ -13,9 +13,9 @@ SPDX-License-Identifier: ISC
 
 Local RDF files must be in N-Triples or N-Quads format. Other serializations (Turtle, RDF/XML, etc.) are not yet supported.
 
-## SQL query logical sources
+## SQL query logical tables
 
-Mappings that use `rr:sqlQuery` (R2RML) or `rml:query` (RML) instead of `rr:tableName` define their logical source as an arbitrary SQL query with joins, aggregations, or subqueries. Inverting the result of an arbitrary SQL expression is a different problem from inverting a table mapping, and the algorithm does not attempt it.
+Mappings that use `rr:sqlQuery` (R2RML) or an `rml:SQL2008Query` iterator (RML) define their logical table as the result of a SQL query. The inverse rebuilds the rows of that result.
 
 ## Constant-only mappings
 
@@ -63,4 +63,4 @@ A [Triples Map](https://www.w3.org/TR/r2rml/#dfn-triples-map) may have no predic
 
 ## Blank nodes
 
-R2RML requires templates for blank node generation, so the same string extraction applies when the blank node label still preserves the generated value. KGI reads local N-Triples and N-Quads files, where it can use the parsed blank node labels. Remote stores are outside this input path, and their blank node labels would not provide stable reconstruction evidence.
+R2RML builds a blank node from a column or a template, so the same extraction reads the value from the label as long as the label still carries it. RMLMapper writes the generated value into the label. KGI reads local N-Triples and N-Quads files where those labels survive, so the conformance cases with blank nodes pass. The specification does not promise this. A conforming processor [may rename blank nodes](https://www.w3.org/TR/r2rml/#generated-rdf) when it exposes the output dataset, and a store that loads the graph may assign its own labels. Once a label no longer carries the value, the column comes back only through another term map.

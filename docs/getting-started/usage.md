@@ -85,7 +85,7 @@ The exceptions are:
 
 | Exception | Meaning |
 |---|---|
-| `UnsupportedMappingError` | The mapping uses SQL queries as logical tables, which the algorithm does not handle. |
+| `UnsupportedMappingError` | The mapping reads a logical source that is neither a relational table nor a SQL query, which the algorithm does not handle. |
 | `MappingError` | The mapping document is syntactically invalid or violates the R2RML specification. |
 | `NonInvertibleError` | The mapping is valid but leaves no recoverable column for some table. Columns the graph cannot attribute are dropped from the reconstruction instead, without raising. See [limitations](limitations). |
 | `NoDataError` | The SPARQL queries returned no results, or the RDF input file does not exist. |

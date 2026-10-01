@@ -22,11 +22,13 @@ Test cases are therefore classified into these outcomes:
 | Fully inverted | D' = D |
 | Partially inverted | D' ⊊ D with characterised loss (columns, rows, multiplicity or tables) |
 | Non-invertible | Mapping does not preserve D in G (structural limitation) |
-| Not supported | Engine limitation unrelated to invertibility (e.g. SQL queries as logical sources) |
+| Not supported | Engine limitation unrelated to invertibility (e.g. non-relational logical sources) |
 | Error test case | The specification requires the mapping to stop, so no graph may exist to invert |
 | Not tested | The case does not run on the selected database |
 | Mismatch | D' differs from D and the difference has no characterised cause |
 | Execution error | The run stopped before it could classify the case |
+
+D is made of the logical tables the mapping reads. When a logical table is defined by a SQL query, its instance is the result of that query on the source database. The inverse rebuilds the query result, not the base tables, so a case with such a logical table counts as fully inverted when the result comes back whole.
 
 ## Running the test suite
 
@@ -65,24 +67,24 @@ The [R2RML test suite](https://www.w3.org/2001/sw/rdb2rdf/test-cases/) contains 
 
 | Outcome | PostgreSQL | MySQL |
 |---|---:|---:|
-| Fully inverted | 21 | 20 |
-| Partially inverted | 14 | 14 |
+| Fully inverted | 25 | 24 |
+| Partially inverted | 23 | 23 |
 | Non-invertible | 2 | 2 |
-| Not supported | 13 | 13 |
+| Not supported | 0 | 0 |
 | Error test case | 12 | 11 |
 | Mismatch | 0 | 0 |
 | Not tested | 0 | 2 |
 
-### Partially inverted (14)
+### Partially inverted (23)
 
 Each case recovers the information preserved in the RDF graph, but the forward mapping discards part of the source, while sub-categories are counted per tag. A test may contribute to more than one sub-category when multiple forms of loss co-occur, so the counts below sum to more than the number of tests.
 
 | Sub-category | PostgreSQL | MySQL |
 |---|---:|---:|
-| Columns lost (unmapped or unassignable columns) | 9 | 9 |
+| Columns lost (unmapped or unassignable columns) | 16 | 16 |
 | Rows lost (NULL in subject template) | 1 | 1 |
 | Multiplicity lost (duplicate rows collapsed) | 5 | 5 |
-| Tables lost (unmapped tables) | 1 | 1 |
+| Tables lost (unmapped tables) | 7 | 7 |
 
 
 ### Non-invertible (2)
@@ -99,7 +101,9 @@ R2RMLTC0020a maps a single-column table through a subject map with an IRI term t
 | Structural limit | Observable cases | Expected outcome |
 |---|---|---|
 | Unmapped column | `R2RMLTC0008c`, `R2RMLTC0010a`, `R2RMLTC0010b`, `R2RMLTC0012b`, `R2RMLTC0016a`, `R2RMLTC0016b`, `R2RMLTC0016c`, `R2RMLTC0016d`, `R2RMLTC0016e` | Partially inverted: columns lost |
+| Column of a query result that no term map reads | `R2RMLTC0002d`, `R2RMLTC0009c`, `R2RMLTC0014a`, `R2RMLTC0014d`, `R2RMLTC0015a`, `R2RMLTC0019a` | Partially inverted: columns lost |
 | Unmapped table | `R2RMLTC0012a` | Partially inverted: tables lost |
+| Base table left unmapped beside a query-defined logical table | `R2RMLTC0009c`, `R2RMLTC0009d`, `R2RMLTC0014a`, `R2RMLTC0014b`, `R2RMLTC0014c`, `R2RMLTC0014d` | Partially inverted: tables lost |
 | NULL in a subject template | `R2RMLTC0013a` | Partially inverted: rows lost |
 | Duplicate rows collapsed in RDF | `R2RMLTC0005a`, `R2RMLTC0005b`, `R2RMLTC0012a`, `R2RMLTC0012b`, `R2RMLTC0012e` | Partially inverted: multiplicity lost |
 | Constant-only mapping | `R2RMLTC0006a` | Non-invertible |
@@ -110,7 +114,7 @@ R2RMLTC0020a maps a single-column table through a subject map with an IRI term t
 | Indistinguishable predicate maps | `INVTC0002b` | Partially inverted: columns lost |
 | Indistinguishable object maps | `INVTC0002c` | Partially inverted: columns lost |
 | Indistinguishable graph maps | `INVTC0002d` | Partially inverted: columns lost |
-| Column-valued IRI term map | `INVTC0003` | Partially inverted: columns lost |
+| Column-valued IRI term map | `INVTC0003`, `R2RMLTC0014b` | Partially inverted: columns lost |
 | Join key absent from every RDF term | `INVTC0004` | Partially inverted: columns lost |
 | Parent Triples Map reached only through a join | `INVTC0005a` | Partially inverted: columns lost |
 | Triples Map without a predicate-object map, subject class, or incoming join | `INVTC0005b` | Non-invertible |
@@ -121,23 +125,23 @@ The RML test suite comes from a [fork of rml-io-registry](https://github.com/arc
 
 | Outcome | Count |
 |---|---|
-| Fully inverted | 13 |
-| Partially inverted | 22 |
+| Fully inverted | 17 |
+| Partially inverted | 28 |
 | Non-invertible | 2 |
-| Not supported | 10 |
+| Not supported | 0 |
 | Error test case | 12 |
 | Mismatch | 0 |
 
-### Partially inverted (22)
+### Partially inverted (28)
 
 Sub-categories are counted per tag; a test contributes to every form of loss that applies, so the counts below sum to more than the number of tests.
 
 | Sub-category | Count |
 |---|---|
-| Columns lost (unmapped or unassignable columns) | 17 |
+| Columns lost (unmapped or unassignable columns) | 22 |
 | Rows lost (NULL in subject template) | 1 |
 | Multiplicity lost (duplicate rows collapsed) | 5 |
-| Tables lost (unmapped tables) | 1 |
+| Tables lost (unmapped tables) | 4 |
 
 Test cases sharing an identifier across the two suites are not always equivalent: the RML-Core suite sometimes changed the source data. The seven RMLTC0007 variants use a `student` table with an extra `LastName` column that no term map references. This is the same data as their [RMLTC0007-JSON counterparts](https://github.com/kg-construct/rml-core/tree/main/test-cases) in the RML-Core suite, so they classify as partially inverted (columns lost), whereas the R2RML 0007 tests map every column and are fully inverted.
 

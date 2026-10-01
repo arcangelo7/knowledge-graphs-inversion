@@ -2,16 +2,19 @@
 #
 # SPDX-License-Identifier: ISC
 
+import math
 import re
 import shlex
 import shutil
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Literal
 
+import pandas as pd
 from rdflib import Dataset
 from rdflib.compare import to_isomorphic
 from sqlalchemy import (
@@ -27,6 +30,7 @@ from sqlalchemy import (
     String,
     Table,
     create_engine,
+    text,
 )
 from sqlalchemy.dialects.mysql import TINYINT, VARBINARY
 from sqlalchemy.engine import Engine, URL, make_url
@@ -38,14 +42,18 @@ from conformance.souffle_artifacts import (
     FORWARD_PROGRAM,
     FORWARD_PROVENANCE_PROGRAM,
     PROVENANCE_MARKER_FILES,
+    QUERY_RELATION,
     REVERSE_PROGRAM,
     SUPPORT_REPORT,
     SourceRelation,
     declared_output_files,
     parse_source_relations,
+    read_fact_rows,
     read_recovered_rows,
+    translator_column_name,
     write_rdf_dataset,
 )
+from kgi.schema import DatabaseSchemaRetriever
 
 Database = Literal["postgresql", "mysql"]
 ExecutionMode = Literal["docker", "local"]
@@ -129,6 +137,43 @@ def _convert_value(value: str, column: SchemaColumn[object]) -> object:
     if isinstance(sql_type, String):
         return value
     raise TypeError(f"Unsupported SQL type for {column.name}: {sql_type}")
+
+
+def _fact_value(value: object) -> str:
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return ""
+    return str(value)
+
+
+def _fact_line(row: tuple[object, ...]) -> str:
+    """A query result row as the translator writes it in a facts file."""
+    return "".join(f"{_fact_value(value)}\t" for value in row)
+
+
+def _matching_query(
+    relation: SourceRelation,
+    shared_directory: Path,
+    source_engine: Engine,
+    queries: Mapping[str, str],
+) -> str:
+    """The logical query whose result the translator stored as this relation.
+
+    Several queries can share their result labels, so the relation is matched by
+    the rows the translator wrote as facts.
+    """
+    facts = read_fact_rows(shared_directory, relation)
+    matches = []
+    for name, sql in queries.items():
+        with source_engine.connect() as connection:
+            result = pd.read_sql_query(text(sql), connection)
+        rows = {_fact_line(row) for row in result.itertuples(index=False, name=None)}
+        if rows == facts:
+            matches.append(name)
+    if len(matches) != 1:
+        raise ValueError(
+            f"{relation.name} matches {len(matches)} logical queries instead of one"
+        )
+    return matches[0]
 
 
 def _jdbc_url(source_url: URL, database: Database, host: str) -> str:
@@ -368,6 +413,7 @@ class SouffleConformanceAdapter:
         source_db_url: str,
         destination_db_url: str,
         inversion_mode: InversionMode,
+        queries: Mapping[str, str],
     ) -> None:
         uses_sidecars = inversion_mode != "rdf"
         generation_command = (
@@ -453,6 +499,7 @@ class SouffleConformanceAdapter:
                 shared_directory,
                 source_db_url,
                 destination_db_url,
+                queries,
             )
         except (OSError, KeyError, TypeError, ValueError, SQLAlchemyError) as error:
             detail = f"{type(error).__name__}: {error}"
@@ -463,13 +510,13 @@ class SouffleConformanceAdapter:
 
     @staticmethod
     def _destination_table(
-        source_table: Table,
+        name: str,
         recovered_columns: tuple[SchemaColumn[object], ...],
         destination_metadata: MetaData,
         destination_engine: Engine,
     ) -> Table:
         destination_table = Table(
-            source_table.name,
+            name,
             destination_metadata,
             *(
                 Column(column.name, column.type, nullable=True)
@@ -479,15 +526,33 @@ class SouffleConformanceAdapter:
         destination_table.create(destination_engine)
         return destination_table
 
+    @staticmethod
+    def _query_relation_columns(
+        relation: SourceRelation,
+        schema_retriever: DatabaseSchemaRetriever,
+        name: str,
+        sql: str,
+    ) -> tuple[SchemaColumn[object], ...]:
+        schema = schema_retriever.get_query_schema(sql, name)
+        labels = {
+            translator_column_name(column.name): column for column in schema.columns
+        }
+        return tuple(
+            Column(labels[column].name, labels[column].sql_type)
+            for column in relation.columns
+        )
+
     def _load_recovered_relations(
         self,
         relations: tuple[SourceRelation, ...],
         shared_directory: Path,
         source_db_url: str,
         destination_db_url: str,
+        queries: Mapping[str, str],
     ) -> None:
         source_engine = create_engine(source_db_url)
         destination_engine = create_engine(destination_db_url)
+        schema_retriever = DatabaseSchemaRetriever(source_db_url)
         try:
             source_metadata = MetaData()
             source_metadata.reflect(bind=source_engine)
@@ -499,23 +564,32 @@ class SouffleConformanceAdapter:
             destination_tables: dict[str, Table] = {}
 
             for relation in relations:
-                source_table = source_tables[_normalized_table_name(relation.table)]
-                source_columns = {
-                    _normalized_column_name(column.name): column
-                    for column in source_table.columns
-                }
-                relation_columns = tuple(
-                    source_columns[_normalized_column_name(name)]
-                    for name in relation.columns
-                )
-                if source_table.name not in destination_tables:
-                    destination_tables[source_table.name] = self._destination_table(
-                        source_table,
+                if relation.table == QUERY_RELATION:
+                    name = _matching_query(
+                        relation, shared_directory, source_engine, queries
+                    )
+                    relation_columns = self._query_relation_columns(
+                        relation, schema_retriever, name, queries[name]
+                    )
+                else:
+                    source_table = source_tables[_normalized_table_name(relation.table)]
+                    name = source_table.name
+                    source_columns = {
+                        _normalized_column_name(column.name): column
+                        for column in source_table.columns
+                    }
+                    relation_columns = tuple(
+                        source_columns[_normalized_column_name(column)]
+                        for column in relation.columns
+                    )
+                if name not in destination_tables:
+                    destination_tables[name] = self._destination_table(
+                        name,
                         relation_columns,
                         destination_metadata,
                         destination_engine,
                     )
-                destination_table = destination_tables[source_table.name]
+                destination_table = destination_tables[name]
                 rows = read_recovered_rows(shared_directory, relation)
                 records: list[dict[str, object]] = []
                 for row in rows:
@@ -536,3 +610,4 @@ class SouffleConformanceAdapter:
         finally:
             source_engine.dispose()
             destination_engine.dispose()
+            schema_retriever.dispose()
