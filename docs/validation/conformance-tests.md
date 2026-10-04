@@ -52,6 +52,21 @@ make test-conformance DATABASE=mysql
 
 `R2RMLTC0002f` and `R2RMLTC0018a` run only with PostgreSQL, while the nine `INVTC` cases run on both databases. The 59 RML cases are skipped with MySQL because the RML Core RDB test suite does not yet provide MySQL variants.
 
+### RML2CSV
+
+Run the original [RML2CSV implementation](https://bitbucket.org/carloallocca/rml2csv) on either database:
+
+```bash
+make test-conformance INVERSION_ENGINE=rml2csv DATABASE=postgresql
+make test-conformance INVERSION_ENGINE=rml2csv DATABASE=mysql
+```
+
+The build uses a fixed source revision and includes Java, while the launcher calls the authors' code with the unchanged mapping and RDF. Every valid case reaches the program. The harness passes each R2RML document unchanged, so parser failures remain visible as errors in the report for any kind of mapping.
+
+If the program produces a CSV, the harness imports its rows into an empty copy of the source schema. It uses the mapping to find the target table, and reports an import error if the output cannot be linked to one table. Empty CSV fields remain empty strings, since the output does not distinguish them from missing values. Columns absent from the CSV remain NULL.
+
+Reports under `build/conformance/rml2csv/<database>/` retain the original mapping, program logs, and any CSV files that the tool writes. They separate failures during inversion or import from differences found after import. After a successful import, the harness compares the rows and the RDF they produce; failed runs have no comparison result.
+
 ### Dashboard
 
 Start the dashboard and its PostgreSQL and MySQL databases with Docker Compose, then open [http://localhost:5000](http://localhost:5000) and choose the database and the test suite:

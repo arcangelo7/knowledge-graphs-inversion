@@ -41,8 +41,8 @@ KROWN_RUN = uv run python -m benchmarks.run_krown_benchmark --iterations $(I) --
 
 validate-conformance-options:
 	@case "$(FORWARD_ENGINE)/$(INVERSION_ENGINE)" in \
-		rmlmapper/kgi|rmlmapper/morph-ldp|rmlmapper/sparqlmap|souffle/souffle) ;; \
-		*) echo "FORWARD_ENGINE/INVERSION_ENGINE must be rmlmapper/kgi, rmlmapper/morph-ldp, rmlmapper/sparqlmap, or souffle/souffle" >&2; exit 2 ;; \
+		rmlmapper/kgi|rmlmapper/morph-ldp|rmlmapper/sparqlmap|rmlmapper/rml2csv|souffle/souffle) ;; \
+		*) echo "FORWARD_ENGINE/INVERSION_ENGINE must be rmlmapper/kgi, rmlmapper/morph-ldp, rmlmapper/sparqlmap, rmlmapper/rml2csv, or souffle/souffle" >&2; exit 2 ;; \
 	esac
 	@case "$(DATABASE)" in \
 		postgresql|mysql) ;; \
@@ -146,6 +146,16 @@ sparqlmap-assets:
 	trap 'docker rm "$$container" >/dev/null' EXIT; \
 	docker cp "$$container:/opt/sparqlmap/." build/sparqlmap/runtime/
 
+.PHONY: rml2csv-assets
+rml2csv-assets:
+	docker build --target rml2csv-assets -t kgi-rml2csv-assets .
+	@set -e; \
+	rm -rf build/rml2csv/runtime; \
+	mkdir -p build/rml2csv/runtime; \
+	container=$$(docker create kgi-rml2csv-assets); \
+	trap 'docker rm "$$container" >/dev/null' EXIT; \
+	docker cp "$$container:/opt/rml2csv/." build/rml2csv/runtime/
+
 test-conformance: validate-conformance-options
 	@$(MAKE) submodules
 	@if [ "$(FORWARD_ENGINE)/$(INVERSION_ENGINE)" = "souffle/souffle" ]; then \
@@ -160,6 +170,8 @@ test-conformance: validate-conformance-options
 		$(MAKE) rmlmapper-assets && $(MAKE) morph-ldp-assets && uv run pytest tests/morph_ldp_conformance.py -v --database=$(DATABASE); \
 	elif [ "$(INVERSION_ENGINE)" = "sparqlmap" ]; then \
 		$(MAKE) rmlmapper-assets && $(MAKE) sparqlmap-assets && uv run pytest tests/sparqlmap_conformance.py -v --database=$(DATABASE); \
+	elif [ "$(INVERSION_ENGINE)" = "rml2csv" ]; then \
+		$(MAKE) rmlmapper-assets && $(MAKE) rml2csv-assets && uv run pytest tests/rml2csv_conformance.py -v --database=$(DATABASE); \
 	else \
 		$(MAKE) rmlmapper-assets && uv run pytest tests/test_conformance.py -v --database=$(DATABASE); \
 	fi

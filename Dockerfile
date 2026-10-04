@@ -41,6 +41,20 @@ RUN git clone https://github.com/tomatophantastico/sparqlmap.git sparqlmap && \
 COPY conformance/sparqlmap_assets /source/adapter
 RUN sh /source/adapter/build.sh
 
+FROM maven:3.9.11-eclipse-temurin-17@sha256:e4a7ace3dc0d645ed97f8d9ad0b0d3f0b14fa8d150138f27f116d7105a639b82 AS rml2csv-dependencies
+WORKDIR /source
+RUN git clone https://bitbucket.org/carloallocca/rml2csv.git rml2csv && \
+    git -C rml2csv checkout --detach 18a914d7991d2644619b9cd3a4cc7f8935d5b6c6
+COPY conformance/rml2csv_assets/pom.xml ./pom.xml
+RUN mvn -B org.apache.maven.plugins:maven-dependency-plugin:3.8.1:copy-dependencies \
+    -DoutputDirectory=/opt/rml2csv/lib
+
+FROM eclipse-temurin:8-jdk@sha256:3525194d19338fd143e2038bd5e848e335f50d04e89ba8734c0458df8d494254 AS rml2csv-assets
+COPY --from=rml2csv-dependencies /source/rml2csv /source/rml2csv
+COPY --from=rml2csv-dependencies /opt/rml2csv/lib /opt/rml2csv/lib
+COPY conformance/rml2csv_assets /source/adapter
+RUN sh /source/adapter/build.sh
+
 FROM alloka/souffle:v1.0.0@sha256:0e9288ca6f7a63faf93f4358f210de0ffcab6e3e2405d88c365391da6d54fe89 AS souffle-assets
 
 COPY R2RML2Datalog-Translator/functors.cpp /tmp/functors.cpp
