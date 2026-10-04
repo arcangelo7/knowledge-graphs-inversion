@@ -96,7 +96,7 @@ include = [
     "kgi",
     "tests",
 ]
-exclude = ["benchmarks/krown_souffle"]
+exclude = ["benchmarks/krown_souffle", "benchmarks/*/results", "benchmarks/*/scenarios"]
 
 [tool.ruff]
 include = [

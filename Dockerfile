@@ -33,6 +33,14 @@ COPY R2RML2Datalog-Translator/translator/src ./src
 
 RUN mvn --quiet -Dproject.build.outputTimestamp=1980-01-01T00:00:02Z package
 
+FROM eclipse-temurin:8-jdk AS sparqlmap-assets
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+WORKDIR /source
+RUN git clone https://github.com/tomatophantastico/sparqlmap.git sparqlmap && \
+    git -C sparqlmap checkout -B develop bbcea34f7e3bfb89e0cc184d0d11865ad143df86
+COPY conformance/sparqlmap_assets /source/adapter
+RUN sh /source/adapter/build.sh
+
 FROM alloka/souffle:v1.0.0@sha256:0e9288ca6f7a63faf93f4358f210de0ffcab6e3e2405d88c365391da6d54fe89 AS souffle-assets
 
 COPY R2RML2Datalog-Translator/functors.cpp /tmp/functors.cpp

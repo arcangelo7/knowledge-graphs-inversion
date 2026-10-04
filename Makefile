@@ -41,8 +41,8 @@ KROWN_RUN = uv run python -m benchmarks.run_krown_benchmark --iterations $(I) --
 
 validate-conformance-options:
 	@case "$(FORWARD_ENGINE)/$(INVERSION_ENGINE)" in \
-		rmlmapper/kgi|rmlmapper/morph-ldp|souffle/souffle) ;; \
-		*) echo "FORWARD_ENGINE/INVERSION_ENGINE must be rmlmapper/kgi, rmlmapper/morph-ldp, or souffle/souffle" >&2; exit 2 ;; \
+		rmlmapper/kgi|rmlmapper/morph-ldp|rmlmapper/sparqlmap|souffle/souffle) ;; \
+		*) echo "FORWARD_ENGINE/INVERSION_ENGINE must be rmlmapper/kgi, rmlmapper/morph-ldp, rmlmapper/sparqlmap, or souffle/souffle" >&2; exit 2 ;; \
 	esac
 	@case "$(DATABASE)" in \
 		postgresql|mysql) ;; \
@@ -136,6 +136,16 @@ morph-ldp-assets:
 	trap 'docker rm "$$container" >/dev/null' EXIT; \
 	docker cp "$$container:/opt/morph-ldp/." build/morph-ldp/runtime/
 
+.PHONY: sparqlmap-assets
+sparqlmap-assets:
+	docker build --target sparqlmap-assets -t kgi-sparqlmap-assets .
+	@set -e; \
+	rm -rf build/sparqlmap/runtime; \
+	mkdir -p build/sparqlmap/runtime; \
+	container=$$(docker create kgi-sparqlmap-assets); \
+	trap 'docker rm "$$container" >/dev/null' EXIT; \
+	docker cp "$$container:/opt/sparqlmap/." build/sparqlmap/runtime/
+
 test-conformance: validate-conformance-options
 	@$(MAKE) submodules
 	@if [ "$(FORWARD_ENGINE)/$(INVERSION_ENGINE)" = "souffle/souffle" ]; then \
@@ -148,6 +158,8 @@ test-conformance: validate-conformance-options
 			--souffle-modes="$(SOUFFLE_MODES)"; \
 	elif [ "$(INVERSION_ENGINE)" = "morph-ldp" ]; then \
 		$(MAKE) rmlmapper-assets && $(MAKE) morph-ldp-assets && uv run pytest tests/morph_ldp_conformance.py -v --database=$(DATABASE); \
+	elif [ "$(INVERSION_ENGINE)" = "sparqlmap" ]; then \
+		$(MAKE) rmlmapper-assets && $(MAKE) sparqlmap-assets && uv run pytest tests/sparqlmap_conformance.py -v --database=$(DATABASE); \
 	else \
 		$(MAKE) rmlmapper-assets && uv run pytest tests/test_conformance.py -v --database=$(DATABASE); \
 	fi
