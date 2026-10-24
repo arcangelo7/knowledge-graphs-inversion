@@ -9,11 +9,11 @@
 
 Given an RDF graph and the [R2RML](https://www.w3.org/TR/r2rml/) or [RML](https://kg-construct.github.io/rml-core/spec/docs/) mapping that produced it, this tool reconstructs the original relational data. It parses the mapping document, generates SPARQL queries that reverse each mapping rule, and materializes the reconstructed rows in a destination database.
 
-Full documentation at [arcangelo7.github.io/knowledge-graphs-inversion](https://arcangelo7.github.io/knowledge-graphs-inversion/).
+The documentation explains [how inversion works](https://arcangelo7.github.io/knowledge-graphs-inversion/concepts/how-it-works/) and records the [supported scope and limits](https://arcangelo7.github.io/knowledge-graphs-inversion/concepts/limitations/).
 
 ## Quick start
 
-Requires Python 3.11, 3.12, or 3.13 and [uv](https://docs.astral.sh/uv/):
+Requires Python 3.11, 3.12, or 3.13 and [uv](https://docs.astral.sh/uv/). See [Installation](https://arcangelo7.github.io/knowledge-graphs-inversion/getting-started/installation/) for the full setup and [Usage](https://arcangelo7.github.io/knowledge-graphs-inversion/getting-started/usage/) for the Python API:
 
 ```bash
 git clone https://github.com/arcangelo7/knowledge-graphs-inversion.git
@@ -36,37 +36,24 @@ kgi.reconstruct(
 
 `dest_db_url` is required and identifies the database that receives the reconstructed tables. The function returns `None`. `source_db_url` is optional and is used to read the original column types and ordering. When an RML mapping contains a [D2RQ](http://d2rq.org/) database definition, its connection information is used as `source_db_url` unless an explicit value is passed. RDF queries are executed locally with PyOxigraph.
 
+## Dashboard
+
+Start the web interface and its databases with Docker Compose:
+
+```bash
+make submodules
+docker compose up --build
+```
+
+Open [http://localhost:5000](http://localhost:5000), then choose a database and a test suite. RMLMapper maps forward and KGI inverts, on both the R2RML and the RML suite, and both tools run inside the application container. The [dashboard guide](https://arcangelo7.github.io/knowledge-graphs-inversion/validation/conformance-tests/#dashboard) covers this workflow.
+
 ## Testing
 
-Conformance tests require [Docker](https://www.docker.com/) to run the databases and Java 21 or newer for RMLMapper v8.1.0. PostgreSQL is the default and runs all 121 cases across the R2RML and RML suites:
+[Conformance tests](https://arcangelo7.github.io/knowledge-graphs-inversion/validation/conformance-tests/) need [Docker](https://www.docker.com/) and Java 21 or later for RMLMapper:
 
 ```bash
 make test-conformance
 ```
-
-MySQL 9.7.1 runs the 62 R2RML cases. The RML cases are skipped because the RML Core RDB test suite does not yet provide MySQL variants:
-
-```bash
-make test-conformance DATABASE=mysql
-```
-
-`DATABASE` accepts `postgresql` and `mysql`.
-
-## Benchmarking
-
-Benchmark targets initialize submodules, run the needed Docker Compose services, validate completed inversions, and clean up Compose services on exit:
-
-```bash
-make benchmark-krown
-make benchmark-krown KROWN_MODE=forward KROWN_SUITES=mappings
-make benchmark-krown I=3 KROWN_MODE=backward KROWN_SCENARIO=namedgraph_0SM-NG_5POM-NG_1TM_1POM_True
-make benchmark-gtfs I=10 S=1,5,10
-make benchmark-all I=5 S=1,5,10 KROWN_SUITES=mappings
-```
-
-The KROWN runner supports `forward`, `backward`, and `roundtrip` measurement modes. The forward phase uses KROWN's `Executor`; the local inversion phase uses KROWN's `Collector` and `Stats`. It defaults to five iterations in `roundtrip` mode and requires an odd `I` of at least 3. `KROWN_SUITES` accepts `raw`, `mappings`, `named-graphs`, and `joins`; omitting it selects all 58 scenarios. Set `KROWN_SCENARIO` to an exact generated scenario name to run only that case.
-
-The KROWN collector runs on the Linux host and reports system-wide CPU, memory, disk, and network activity. Avoid unrelated workloads while collecting results.
 
 ## License
 

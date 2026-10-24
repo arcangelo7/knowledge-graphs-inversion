@@ -6,7 +6,7 @@ SPDX-License-Identifier: ISC
 
 # Conformance tests
 
-The algorithm is validated against two test suites: the W3C [R2RML](https://www.w3.org/TR/r2rml/) test suite and the [RML](https://kg-construct.github.io/rml-core/spec/docs/) RDB test cases from a [fork of rml-io-registry](https://github.com/arcangelo7/rml-io-registry/tree/add-rdb-core-tests). Both are included as git submodules. Forward mapping for both suites is performed with [RMLMapper](https://github.com/RMLio/rmlmapper-java) v8.1.0.
+The R2RML run contains the 62 W3C [R2RML](https://www.w3.org/TR/r2rml/) cases. The RML run contains 59 RDB cases from a [fork of rml-io-registry](https://github.com/arcangelo7/rml-io-registry/tree/add-rdb-core-tests), while the two official catalogs are included as git submodules. Forward mapping uses [RMLMapper](https://github.com/RMLio/rmlmapper-java) v8.1.0 and inversion uses KGI.
 
 ## Defining invertibility
 
@@ -15,51 +15,51 @@ Given a mapping M and the RDF graph G = M(D) produced by applying M to a relatio
 - **Recoverability**: the reconstructed instance D' = M⁻¹(G) is consistent with the information that M preserves in G. Values, rows and tables that survive the forward mapping are reproduced correctly.
 - **Completeness**: D' = D. Every row, column, duplicate and NULL present in D is reconstructed.
 
-A mapping is **fully invertible** when the inversion is both recoverable and complete. It is **partially invertible** when the inversion is recoverable but incomplete, because M projects away part of D (unmapped columns or tables, NULL values in subject templates, duplicate rows collapsed by non-unique subject identifiers). It is **non-invertible** when the RDF graph does not retain enough information to reconstruct any useful approximation of D, either because all terms are constants independent of D or because the encoding is ambiguous (e.g. `rr:column` with IRI term type, where the base IRI cannot be separated from the column value).
-
-Test cases are therefore classified into five outcomes:
+Test cases are therefore classified into these outcomes:
 
 | Outcome | Meaning |
 |---|---|
 | Fully inverted | D' = D |
 | Partially inverted | D' ⊊ D with characterised loss (columns, rows, multiplicity or tables) |
 | Non-invertible | Mapping does not preserve D in G (structural limitation) |
-| Not supported | Engine limitation unrelated to invertibility (e.g. SQL queries as logical sources) |
-| Forward mapping failed | Error test case: the forward mapping produces no RDF output |
+| Not supported | Engine limitation unrelated to invertibility (e.g. non-relational logical sources) |
+| Error test case | The specification requires the mapping to stop, so no graph may exist to invert |
+| Not tested | The case does not run on the selected database |
+| Mismatch | D' differs from D and the difference has no characterised cause |
+| Execution error | The run stopped before it could classify the case |
+
+D is made of the logical tables the mapping reads. When a logical table is defined by a SQL query, its instance is the result of that query on the source database. The inverse rebuilds the query result, not the base tables, so a case with such a logical table counts as fully inverted when the result comes back whole.
 
 ## Running the test suite
 
-Use the root Makefile entry point. Docker must be running, and Java 21 or newer must be available for RMLMapper. The RMLMapper v8.1.0 jar is downloaded automatically on the first forward mapping run:
+Use the root Makefile entry point, with Docker running and Java 21 or newer available for RMLMapper. The RMLMapper v8.1.0 jar is downloaded automatically on the first forward mapping run:
 
 ```bash
 make test-conformance
 ```
 
-`DATABASE` accepts `postgresql` and `mysql`. PostgreSQL is the default and runs all 121 cases:
+`DATABASE` accepts `postgresql` and `mysql`. PostgreSQL is the default and runs 121 catalog cases: 62 R2RML cases and 59 RML cases:
 
 ```bash
 make test-conformance DATABASE=postgresql
 ```
 
-MySQL 9.7.1 runs the 62 R2RML cases:
+MySQL 9.7.1 runs 60 R2RML cases:
 
 ```bash
 make test-conformance DATABASE=mysql
 ```
 
-The 59 RML cases are skipped with MySQL because the RML Core RDB test suite does not yet provide MySQL variants.
-
-To pass the conformance tests, MySQL is configured to interpret double-quoted table and column names as identifiers (`ANSI_QUOTES`). Moreover, the JDBC connection is configured to preserve trailing spaces when reading fixed-width `CHAR` values (`padCharsWithSpace=true`); this padding is required by R2RMLTC0018a.
+`R2RMLTC0002f` and `R2RMLTC0018a` run only with PostgreSQL. The 59 RML cases are skipped with MySQL because the RML Core RDB test suite does not yet provide MySQL variants.
 
 ### Dashboard
 
-Start the dashboard and its PostgreSQL and MySQL databases with Docker Compose:
+Start the dashboard and its PostgreSQL and MySQL databases with Docker Compose, then open [http://localhost:5000](http://localhost:5000) and choose the database and the test suite:
 
 ```bash
+make submodules
 docker compose up --build
 ```
-
-Open [http://localhost:5000](http://localhost:5000), then choose the database and test suite.
 
 ## W3C R2RML test suite
 
@@ -67,41 +67,49 @@ The [R2RML test suite](https://www.w3.org/2001/sw/rdb2rdf/test-cases/) contains 
 
 | Outcome | PostgreSQL | MySQL |
 |---|---:|---:|
-| Fully inverted | 22 | 22 |
-| Partially inverted | 14 | 14 |
-| Non-invertible | 4 | 4 |
-| Not supported | 13 | 14 |
-| Forward mapping failed | 9 | 8 |
+| Fully inverted | 25 | 24 |
+| Partially inverted | 23 | 23 |
+| Non-invertible | 2 | 2 |
+| Not supported | 0 | 0 |
+| Error test case | 12 | 11 |
+| Mismatch | 0 | 0 |
+| Not tested | 0 | 2 |
 
-### Partially inverted (14)
+### Partially inverted (23)
 
-Each case recovers the information preserved in the RDF graph, but the forward mapping discards part of the source. Sub-categories are counted per tag: a test may contribute to more than one sub-category when multiple forms of loss co-occur, so the counts below sum to more than the number of tests.
+Each case recovers the information preserved in the RDF graph, but the forward mapping discards part of the source, while sub-categories are counted per tag. A test may contribute to more than one sub-category when multiple forms of loss co-occur, so the counts below sum to more than the number of tests.
 
 | Sub-category | PostgreSQL | MySQL |
 |---|---:|---:|
-| Columns lost (unmapped columns) | 10 | 10 |
+| Columns lost (unmapped or unassignable columns) | 16 | 16 |
 | Rows lost (NULL in subject template) | 1 | 1 |
-| Multiplicity lost (duplicate rows collapsed) | 4 | 4 |
-| Tables lost (unmapped tables) | 1 | 1 |
+| Multiplicity lost (duplicate rows collapsed) | 5 | 5 |
+| Tables lost (unmapped tables) | 7 | 7 |
 
-One test (R2RMLTC0012a) is tagged with three sub-categories simultaneously: the `Lives` table has no triples map, `IOUs` has non-unique subject identifiers that collapse duplicates, and the column coverage check also flags unmapped columns.
 
-### Non-invertible (4)
+### Non-invertible (2)
 
 | Reason | PostgreSQL | MySQL |
 |---|---:|---:|
 | Constant-only mapping | 1 | 1 |
-| IRI column term type (ambiguous base IRI resolution) | 3 | 3 |
+| Sole column reference has an IRI term type (ambiguous base IRI resolution) | 1 | 1 |
 
-### Not supported
+R2RMLTC0020a maps a single-column table through a subject map with an IRI term type over that column. The column is unassignable and no other term map names one, so nothing remains to reconstruct.
 
-These test cases use SQL queries as logical sources (`rr:sqlQuery`), which the algorithm does not handle.
+## Inversion limit test cases
 
-The difference concerns R2RMLTC0002h, which stops at different stages of the test pipeline. With PostgreSQL, forward mapping produces no RDF, so inversion cannot be attempted. With MySQL, RDF is produced and inversion proceeds until it encounters the unsupported SQL query. The databases therefore provide the same inversion support; only the stage at which this test stops changes.
-
-### Forward mapping failed
-
-The forward mapping produces no RDF output for nine PostgreSQL cases and eight MySQL cases, so inversion cannot be attempted. R2RMLTC0002h accounts for the difference.
+| Structural limit | Observable cases | Expected outcome |
+|---|---|---|
+| Unmapped column | `R2RMLTC0008c`, `R2RMLTC0010a`, `R2RMLTC0010b`, `R2RMLTC0012b`, `R2RMLTC0016a`, `R2RMLTC0016b`, `R2RMLTC0016c`, `R2RMLTC0016d`, `R2RMLTC0016e` | Partially inverted: columns lost |
+| Column of a query result that no term map reads | `R2RMLTC0002d`, `R2RMLTC0009c`, `R2RMLTC0014a`, `R2RMLTC0014d`, `R2RMLTC0015a`, `R2RMLTC0019a` | Partially inverted: columns lost |
+| Unmapped table | `R2RMLTC0012a` | Partially inverted: tables lost |
+| Base table left unmapped beside a query-defined logical table | `R2RMLTC0009c`, `R2RMLTC0009d`, `R2RMLTC0014a`, `R2RMLTC0014b`, `R2RMLTC0014c`, `R2RMLTC0014d` | Partially inverted: tables lost |
+| NULL in a subject template | `R2RMLTC0013a` | Partially inverted: rows lost |
+| Duplicate rows collapsed in RDF | `R2RMLTC0005a`, `R2RMLTC0005b`, `R2RMLTC0012a`, `R2RMLTC0012b`, `R2RMLTC0012e` | Partially inverted: multiplicity lost |
+| Constant-only mapping | `R2RMLTC0006a` | Non-invertible |
+| Single-placeholder IRI template | `R2RMLTC0020a` | Non-invertible |
+| Adjacent template placeholders, with no term map of the same table naming those columns | `R2RMLTC0012b` | Partially inverted: columns lost |
+| Column-valued IRI term map | `R2RMLTC0014b` | Partially inverted: columns lost |
 
 ## RML test suite
 
@@ -109,28 +117,25 @@ The RML test suite comes from a [fork of rml-io-registry](https://github.com/arc
 
 | Outcome | Count |
 |---|---|
-| Fully inverted | 14 |
-| Partially inverted | 22 |
+| Fully inverted | 17 |
+| Partially inverted | 28 |
 | Non-invertible | 2 |
-| Not supported | 11 |
-| Forward mapping failed | 10 |
+| Not supported | 0 |
+| Error test case | 12 |
+| Mismatch | 0 |
 
-### Partially inverted (22)
+### Partially inverted (28)
 
 Sub-categories are counted per tag; a test contributes to every form of loss that applies, so the counts below sum to more than the number of tests.
 
 | Sub-category | Count |
 |---|---|
-| Columns lost (unmapped columns) | 18 |
+| Columns lost (unmapped or unassignable columns) | 22 |
 | Rows lost (NULL in subject template) | 1 |
-| Multiplicity lost (duplicate rows collapsed) | 4 |
-| Tables lost (unmapped tables) | 1 |
-
-One test (RMLTC0012a) is tagged with three sub-categories simultaneously, mirroring its R2RML counterpart: the `Lives` table has no triples map, `IOUs` has non-unique subject identifiers that collapse duplicates, and the column coverage check also flags unmapped columns.
+| Multiplicity lost (duplicate rows collapsed) | 5 |
+| Tables lost (unmapped tables) | 4 |
 
 Test cases sharing an identifier across the two suites are not always equivalent: the RML-Core suite sometimes changed the source data. The seven RMLTC0007 variants use a `student` table with an extra `LastName` column that no term map references. This is the same data as their [RMLTC0007-JSON counterparts](https://github.com/kg-construct/rml-core/tree/main/test-cases) in the RML-Core suite, so they classify as partially inverted (columns lost), whereas the R2RML 0007 tests map every column and are fully inverted.
-
-Another example is 0019b (subject map from a column whose value is not a valid IRI): the RML variant keeps only the invalid row, RMLMapper produces no output and the test classifies as forward mapping failed, while the R2RML variant also contains valid rows for which RMLMapper emits triples, so the inversion is attempted and stops at the non-invertible check on the IRI column term map.
 
 A column can also be lost through a join condition. RMLTC0021a (an RML-Core addition with no R2RML counterpart) joins the `student` table with itself on the `Sport` column, whose values never appear in the generated RDF: the graph records which students share a sport, but not which sport. A join condition equates its child and parent columns, so a join column counts as covered only when the column on the other side is emitted by a term map; here neither side is, so `Sport` is counted as lost.
 
@@ -139,12 +144,4 @@ A column can also be lost through a join condition. RMLTC0021a (an RML-Core addi
 | Reason | Count |
 |---|---|
 | Constant-only mapping | 1 |
-| IRI column term type (ambiguous base IRI resolution) | 1 |
-
-### Not supported (11)
-
-All eleven use SQL queries as logical sources (`rml:referenceFormulation rml:SQL2008Query`), same as the R2RML counterpart (`rr:sqlQuery`).
-
-### Forward mapping failed (10)
-
-All ten are intentional error test cases: the mapping or the data contains the error under test, RMLMapper produces no RDF output, and inversion cannot be attempted.
+| Sole column reference has an IRI term type (ambiguous base IRI resolution) | 1 |

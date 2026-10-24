@@ -3,12 +3,13 @@
 # SPDX-License-Identifier: ISC
 
 import configparser
+import json
 import logging
 import os
 import pathlib
 import re
 import tempfile
-from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import cast
 from urllib.parse import quote_plus
 
@@ -24,18 +25,35 @@ from kgi.constants import (
     D2RQ_USERNAME,
     JDBC_DRIVERS,
     RDF_TYPE,
-    RML_IRI,
+    REF_TEMPLATE_REGEX,
+    RML_CHILD,
+    RML_ITERATOR,
+    RML_LOGICAL_SOURCE,
+    RML_OLD_LOGICAL_SOURCE,
     RML_OLD_QUERY,
+    RML_OLD_REFERENCE,
+    RML_PARENT_TRIPLES_MAP,
     RML_QUERY,
+    RML_QUERY_SOURCE,
     RML_REFERENCE,
     RML_REFERENCE_FORMULATION,
+    RML_REFERENCE_NODE,
     RML_SOURCE,
     RML_SQL2008_QUERY,
+    RML_SQL2008_TABLE,
+    RML_SUBJECT_MAP,
     RML_TABLE_NAME,
     RML_TEMPLATE,
+    RML_TEMPLATE_NODE,
+    RR_CHILD,
+    RR_COLUMN,
     RR_LITERAL,
+    RR_LOGICAL_TABLE,
+    RR_PARENT_TRIPLES_MAP,
     RR_SQL_QUERY,
     RR_SUBJECT_MAP,
+    RR_TABLE_NAME,
+    RR_TEMPLATE,
     RR_TERM_TYPE,
     RR_TRIPLES_MAP,
 )
@@ -47,7 +65,18 @@ from kgi.exceptions import (
     NonInvertibleError,
     UnsupportedMappingError,
 )
-from kgi.query import retrieve_data
+from kgi.logical_queries import LogicalQuery, query_text, resolve_reference
+from kgi.query import (
+    _position_references,
+    non_graph_exposed_references,
+    non_object_exposed_references,
+    non_predicate_exposed_references,
+    non_subject_term_references,
+    retrieve_data,
+    subject_term_signature,
+    term_map_is_opaque,
+)
+from kgi.triples import has_multiple_template_decompositions
 from kgi.schema import (
     DatabaseSchemaRetriever,
     apply_schema_ordering,
@@ -58,6 +87,7 @@ from kgi.utils import (
     insert_columns,
     normalize_sql_identifier,
     signature_value as _signature_value,
+    undelimited_sql_identifier,
 )
 
 
@@ -98,30 +128,92 @@ def _extract_db_url_from_mapping(store: Store) -> str | None:
     return f"{driver}://{credentials}{host_and_db}"
 
 
-def _check_for_sql_queries(store: Store) -> bool:
-    for predicate in (RR_SQL_QUERY, RML_QUERY, RML_OLD_QUERY):
-        if any(store.quads_for_pattern(None, predicate, None)):
-            return True
+def _query_iterators(store: Store) -> set[str]:
+    """The SQL text of every RML logical source whose iterator is a query."""
+    return {
+        query_text(_literal_value(quad))
+        for formulation in store.quads_for_pattern(
+            None, RML_REFERENCE_FORMULATION, RML_SQL2008_QUERY
+        )
+        for quad in store.quads_for_pattern(formulation.subject, RML_ITERATOR, None)
+    }
+
+
+_SQL_REFERENCE_FORMULATIONS = (RML_SQL2008_TABLE, RML_SQL2008_QUERY)
+
+
+def _check_for_non_relational_sources(store: Store) -> bool:
+    """Report a logical source that names a data format other than SQL."""
     return any(
-        store.quads_for_pattern(None, RML_REFERENCE_FORMULATION, RML_SQL2008_QUERY)
+        quad.object not in _SQL_REFERENCE_FORMULATIONS
+        for quad in store.quads_for_pattern(None, RML_REFERENCE_FORMULATION, None)
     )
 
 
-def _normalize_sql_table_sources(mappings: pd.DataFrame) -> None:
-    # New-vocabulary mappings carry the table name in rml:iterator; morph-kgc
-    # leaves the rule as a generic rml:source instead of the tableName form
-    # the rest of the pipeline expects
-    is_table_source = (
+def _normalize_sql_table_sources(
+    mappings: pd.DataFrame, query_iterators: set[str]
+) -> None:
+    # New-vocabulary mappings carry the table name or the query in rml:iterator;
+    # morph-kgc leaves the rule as a generic rml:source instead of the tableName
+    # or query form the rest of the pipeline expects
+    is_sql_source = (
         (mappings["source_type"] == "RDB")
         & (mappings["logical_source_type"] == RML_SOURCE)
         & mappings["iterator"].notna()
     )
-    if not is_table_source.any():
+    if not is_sql_source.any():
         return
+    is_query_source = is_sql_source & mappings["iterator"].map(
+        lambda iterator: query_text(str(iterator)) in query_iterators
+    ).astype(bool)
+    is_table_source = is_sql_source & ~is_query_source
     mappings.loc[is_table_source, "logical_source_value"] = mappings.loc[
         is_table_source, "iterator"
     ].map(normalize_sql_identifier)
     mappings.loc[is_table_source, "logical_source_type"] = RML_TABLE_NAME
+    mappings.loc[is_query_source, "logical_source_value"] = mappings.loc[
+        is_query_source, "iterator"
+    ]
+    mappings.loc[is_query_source, "logical_source_type"] = RML_QUERY_SOURCE
+
+
+def _name_logical_queries(mappings: pd.DataFrame) -> dict[str, str]:
+    """Give every distinct logical query a table name, and return its SQL by name.
+
+    The names follow the sorted query texts, so that they do not depend on the
+    order in which the mapping was parsed.
+    """
+    is_query = mappings["logical_source_type"] == RML_QUERY_SOURCE
+    texts = sorted(
+        {
+            query_text(str(value))
+            for value in mappings.loc[is_query, "logical_source_value"]
+        }
+    )
+    names = {text: f"query_{index}" for index, text in enumerate(texts, start=1)}
+    mappings.loc[is_query, "logical_source_value"] = mappings.loc[
+        is_query, "logical_source_value"
+    ].map(lambda value: names[query_text(str(value))])
+    return {name: text for text, name in names.items()}
+
+
+def _describe_logical_queries(
+    query_texts: dict[str, str], source_db_url: str | None
+) -> dict[str, LogicalQuery]:
+    if not query_texts:
+        return {}
+    if source_db_url is None:
+        return {
+            name: LogicalQuery(name, sql, None) for name, sql in query_texts.items()
+        }
+    retriever = DatabaseSchemaRetriever(source_db_url)
+    try:
+        return {
+            name: LogicalQuery(name, sql, retriever.get_query_schema(sql, name))
+            for name, sql in query_texts.items()
+        }
+    finally:
+        retriever.dispose()
 
 
 def _check_for_multiple_subject_maps(store: Store) -> bool:
@@ -143,6 +235,219 @@ def _check_for_literal_subjects(store: Store) -> bool:
     return False
 
 
+_TABLE_NAME_PREDICATES = (RR_TABLE_NAME, RML_ITERATOR)
+_QUERY_PREDICATES = (RR_SQL_QUERY, RML_QUERY, RML_OLD_QUERY)
+# A referencing object map reads columns of the parent triples map's own table
+_PARENT_TRIPLES_MAP_PREDICATES = (
+    RR_PARENT_TRIPLES_MAP,
+    NamedNode(RML_PARENT_TRIPLES_MAP),
+)
+_PREDICATE_OBJECT_MAP_PREDICATES = (
+    NamedNode("http://www.w3.org/ns/r2rml#predicateObjectMap"),
+    NamedNode("http://w3id.org/rml/predicateObjectMap"),
+)
+_SUBJECT_MAP_PREDICATES = (RR_SUBJECT_MAP, RML_SUBJECT_MAP)
+_CLASS_PREDICATES = (
+    NamedNode("http://www.w3.org/ns/r2rml#class"),
+    NamedNode("http://w3id.org/rml/class"),
+)
+
+
+def _has_unreferenced_triples_map_without_generated_triples(
+    store: Store,
+) -> bool:
+    triples_maps: set[NamedNode | BlankNode] = set()
+    for predicate in (RR_LOGICAL_TABLE, RML_LOGICAL_SOURCE, RML_OLD_LOGICAL_SOURCE):
+        for quad in store.quads_for_pattern(None, predicate, None):
+            if isinstance(quad.subject, (NamedNode, BlankNode)):
+                triples_maps.add(quad.subject)
+
+    for triples_map in triples_maps:
+        has_predicate_object_map = any(
+            any(store.quads_for_pattern(triples_map, predicate, None))
+            for predicate in _PREDICATE_OBJECT_MAP_PREDICATES
+        )
+        has_subject_class = any(
+            any(store.quads_for_pattern(subject_map.object, class_predicate, None))
+            for subject_predicate in _SUBJECT_MAP_PREDICATES
+            for subject_map in store.quads_for_pattern(
+                triples_map, subject_predicate, None
+            )
+            if isinstance(subject_map.object, (NamedNode, BlankNode))
+            for class_predicate in _CLASS_PREDICATES
+        )
+        is_join_target = any(
+            any(store.quads_for_pattern(None, predicate, triples_map))
+            for predicate in _PARENT_TRIPLES_MAP_PREDICATES
+        )
+        if (
+            not has_predicate_object_map
+            and not has_subject_class
+            and not is_join_target
+        ):
+            return True
+    return False
+
+
+@dataclass(frozen=True)
+class _Vocabulary:
+    """How a mapping language names the columns it reads.
+
+    R2RML writes SQL identifiers, so the database folds a reference that carries
+    no delimiters. RML-Core names the column of the result set itself, and its
+    test cases read a delimited column through an undelimited reference.
+    """
+
+    logical_sources: tuple[NamedNode, ...]
+    template: NamedNode
+    references: tuple[NamedNode, ...]
+    folds_regular_identifiers: bool
+
+    def resolve(self, reference: str) -> str:
+        if self.folds_regular_identifiers:
+            return normalize_sql_identifier(reference)
+        return undelimited_sql_identifier(reference)
+
+
+_VOCABULARIES = (
+    _Vocabulary(
+        (RR_LOGICAL_TABLE,),
+        RR_TEMPLATE,
+        (RR_COLUMN, RR_CHILD),
+        folds_regular_identifiers=True,
+    ),
+    _Vocabulary(
+        (RML_LOGICAL_SOURCE, RML_OLD_LOGICAL_SOURCE),
+        RML_TEMPLATE_NODE,
+        (RML_REFERENCE_NODE, RML_OLD_REFERENCE, RML_CHILD),
+        folds_regular_identifiers=False,
+    ),
+)
+
+
+def _logical_source_key(
+    store: Store, logical_source: NamedNode | BlankNode
+) -> str | None:
+    """Resolve the table the logical source names, or the text of its query.
+
+    Both languages write a SQL identifier for a table, so both fold it, while
+    only R2RML folds the references that name the columns.
+    """
+    iterator_is_query = any(
+        store.quads_for_pattern(
+            logical_source, RML_REFERENCE_FORMULATION, RML_SQL2008_QUERY
+        )
+    )
+    for predicate in _TABLE_NAME_PREDICATES:
+        for quad in store.quads_for_pattern(logical_source, predicate, None):
+            if isinstance(quad.object, Literal):
+                if predicate == RML_ITERATOR and iterator_is_query:
+                    return query_text(quad.object.value)
+                return normalize_sql_identifier(quad.object.value)
+    for predicate in _QUERY_PREDICATES:
+        for quad in store.quads_for_pattern(logical_source, predicate, None):
+            if isinstance(quad.object, Literal):
+                return query_text(quad.object.value)
+    return None
+
+
+def _triples_map_references(
+    store: Store, triples_map: NamedNode | BlankNode, vocabulary: _Vocabulary
+) -> set[str]:
+    references: set[str] = set()
+    visited: set[NamedNode | BlankNode] = {triples_map}
+    pending = [triples_map]
+    while pending:
+        node = pending.pop()
+        for quad in store.quads_for_pattern(node, None, None):
+            if quad.predicate in _PARENT_TRIPLES_MAP_PREDICATES:
+                continue
+            value = quad.object
+            if isinstance(value, Literal):
+                if quad.predicate == vocabulary.template:
+                    references.update(
+                        vocabulary.resolve(reference)
+                        for reference in re.findall(REF_TEMPLATE_REGEX, value.value)
+                    )
+                elif quad.predicate in vocabulary.references:
+                    references.add(vocabulary.resolve(value.value))
+            elif isinstance(value, (NamedNode, BlankNode)) and value not in visited:
+                visited.add(value)
+                pending.append(value)
+    return references
+
+
+def mapped_references(store: Store) -> dict[str, set[str]]:
+    """Source columns the mapping reads, per logical table.
+
+    A logical table is keyed by its table name or by the text of its query. The
+    mapping is read as written, because morph-kgc drops the delimiters that tell
+    a reference how the database resolves it.
+    """
+    references: dict[str, set[str]] = {}
+    for vocabulary in _VOCABULARIES:
+        for predicate in vocabulary.logical_sources:
+            for quad in store.quads_for_pattern(None, predicate, None):
+                if not isinstance(
+                    quad.subject, (NamedNode, BlankNode)
+                ) or not isinstance(quad.object, (NamedNode, BlankNode)):
+                    continue
+                key = _logical_source_key(store, quad.object)
+                if key is None:
+                    continue
+                references.setdefault(key, set()).update(
+                    _triples_map_references(store, quad.subject, vocabulary)
+                )
+    return references
+
+
+def _check_for_missing_query_references(
+    query: LogicalQuery, references: set[str]
+) -> None:
+    schema = query.schema
+    assert schema is not None
+    labels = schema.column_names_ordered
+    missing = sorted(
+        reference
+        for reference in references
+        if resolve_reference(labels, reference) is None
+    )
+    if missing:
+        raise MappingError(
+            f"Query '{query.name}' has no result column named {', '.join(missing)}"
+        )
+
+
+def _check_for_missing_references(
+    store: Store, source_db_url: str, queries: dict[str, LogicalQuery]
+) -> None:
+    """Reject a mapping that reads a column its logical table does not have."""
+    queries_by_text = {query_text(query.sql): query for query in queries.values()}
+    retriever = DatabaseSchemaRetriever(source_db_url)
+    try:
+        ignores_case = retriever.engine.dialect.name == "mysql"
+        for table_name, references in mapped_references(store).items():
+            if table_name in queries_by_text:
+                _check_for_missing_query_references(
+                    queries_by_text[table_name], references
+                )
+                continue
+            stored = {
+                column.name for column in retriever.get_table_schema(table_name).columns
+            }
+            if ignores_case:
+                stored = {name.lower() for name in stored}
+                references = {reference.lower() for reference in references}
+            missing = sorted(references - stored)
+            if missing:
+                raise MappingError(
+                    f"Table '{table_name}' of the source database has no column "
+                    f"named {', '.join(missing)}"
+                )
+    finally:
+        retriever.dispose()
+
+
 def _generate_template(source_rules: pd.DataFrame, db_url: str) -> RDBTemplate:
     source_type = source_rules.iloc[0]["source_type"]
 
@@ -152,37 +457,54 @@ def _generate_template(source_rules: pd.DataFrame, db_url: str) -> RDBTemplate:
         raise ValueError(f"Unsupported source type: {source_type}")
 
 
-def _is_column_only_iri(map_type: object, map_value: object, term_type: object) -> bool:
-    if map_type == RML_REFERENCE and term_type == RML_IRI:
-        return True
-    if map_type == RML_TEMPLATE and term_type == RML_IRI:
-        stripped = str(map_value).strip()
-        if (
-            stripped.startswith("{")
-            and stripped.endswith("}")
-            and stripped.count("{") == 1
-        ):
-            return True
-    return False
+def _term_map_references(
+    rule: pd.Series, join_targets: set[str]
+) -> tuple[set[str], set[str]]:
+    """Split the rule's references into the opaque ones and the exposed ones.
+
+    A term map that builds an IRI out of a bare column reference names a column
+    without exposing it, because the base IRI it resolves against cannot be
+    separated from the column value. A triples map with no predicate-object map
+    generates no triples, so the graph carries its subjects only through a join
+    that references it, and exposes nothing without one.
+    """
+    if (
+        cast(bool, pd.isna(rule["object_map_type"]))
+        and rule["triples_map_id"] not in join_targets
+    ):
+        return _reference_set(rule["subject_references"]), set()
+
+    subject_references = _reference_set(rule["subject_references"])
+    subject_is_opaque = term_map_is_opaque(
+        rule["subject_map_type"],
+        rule["subject_map_value"],
+        rule["subject_termtype"],
+        rule["subject_references_template"],
+    )
+    opaque = subject_references if subject_is_opaque else set()
+    exposed = set() if subject_is_opaque else subject_references
+    non_subject_opaque, non_subject_exposed = non_subject_term_references(rule)
+    opaque.update(non_subject_opaque)
+    exposed.update(non_subject_exposed)
+    return opaque, exposed
 
 
-def _check_for_column_iri_term_maps(mappings: pd.DataFrame) -> bool:
-    for _, rule in mappings.iterrows():
-        if _is_column_only_iri(
-            rule["subject_map_type"],
-            rule["subject_map_value"],
-            rule["subject_termtype"],
-        ):
-            return True
-        if _is_column_only_iri(
-            rule["object_map_type"], rule["object_map_value"], rule["object_termtype"]
-        ):
-            return True
-        if _is_column_only_iri(
-            rule["predicate_map_type"], rule["predicate_map_value"], RML_IRI
-        ):
-            return True
-    return False
+def _opaque_join_references(rule: pd.Series, mappings: pd.DataFrame) -> set[str]:
+    parent_rules = mappings.loc[mappings["triples_map_id"] == rule["object_map_value"]]
+    parent_subject_references = set().union(
+        *(
+            _reference_set(parent_rule["subject_references"])
+            for _, parent_rule in parent_rules.iterrows()
+        )
+    )
+    join_conditions = json.loads(
+        cast(str, rule["object_join_conditions"]).replace("'", '"')
+    )
+    return {
+        str(condition["child_value"])
+        for condition in join_conditions.values()
+        if condition["parent_value"] not in parent_subject_references
+    }
 
 
 def _check_for_constant_only_mappings(mappings: pd.DataFrame) -> bool:
@@ -223,42 +545,331 @@ def _subject_signature(subject_rules: pd.DataFrame) -> frozenset[tuple[str, ...]
     return frozenset(signature)
 
 
-def _check_for_ambiguous_subject_templates(mappings: pd.DataFrame) -> None:
-    for table_name, source_rules in mappings.groupby("logical_source_value"):
-        observed_refs: set[str] = set()
-        for _, rule in source_rules.iterrows():
-            observed_refs.update(_reference_set(rule["predicate_references"]))
-            observed_refs.update(_reference_set(rule["object_references"]))
-            observed_refs.update(_reference_set(rule["graph_references"]))
+def _all_references(rule: pd.Series) -> set[str]:
+    return (
+        _reference_set(rule["subject_references"])
+        | _reference_set(rule["predicate_references"])
+        | _reference_set(rule["object_references"])
+        | _reference_set(rule["graph_references"])
+    )
 
-        subject_infos: list[tuple[str, frozenset[tuple[str, ...]], set[str]]] = []
-        for _, subject_rules in source_rules.groupby("subject_map_value", dropna=False):
-            first_rule = subject_rules.iloc[0]
-            if first_rule["subject_map_type"] != RML_TEMPLATE:
+
+def _ambiguous_subject_references(source_rules: pd.DataFrame) -> set[str]:
+    """Columns reachable only through subject templates that cannot be told apart.
+
+    Subject maps sharing a template skeleton and a predicate-object signature build
+    interchangeable IRIs, so a value found in one of them could belong to any of the
+    columns those templates reference.
+    """
+    observed_refs: set[str] = set()
+    for _, rule in source_rules.iterrows():
+        _, non_subject_exposed = non_subject_term_references(rule)
+        observed_refs.update(non_subject_exposed)
+
+    buckets: dict[tuple[str, frozenset[tuple[str, ...]]], list[set[str]]] = {}
+    for _, subject_rules in source_rules.groupby("subject_map_value", dropna=False):
+        first_rule = subject_rules.iloc[0]
+        if first_rule["subject_map_type"] != RML_TEMPLATE:
+            continue
+        subject_refs = _reference_set(first_rule["subject_references"])
+        key = (
+            _signature_value(first_rule["subject_references_template"]),
+            _subject_signature(subject_rules),
+        )
+        buckets.setdefault(key, []).append(subject_refs - observed_refs)
+
+    ambiguous: set[str] = set()
+    for subject_only_refs in buckets.values():
+        if len(subject_only_refs) > 1:
+            ambiguous.update(*subject_only_refs)
+    return ambiguous
+
+
+def _ambiguous_object_references(source_rules: pd.DataFrame) -> set[str]:
+    """Columns reachable only through object maps that cannot be told apart.
+
+    Object maps hanging off the same subject, predicate and graph map and building
+    terms of the same shape are interchangeable, so a value found in one of them
+    could belong to any of the columns those object maps reference.
+    """
+    context_columns = (
+        "predicate_map_type",
+        "predicate_map_value",
+        "graph_map_type",
+        "graph_map_value",
+        "object_termtype",
+        "object_references_template",
+        "lang_datatype",
+    )
+    observable_refs: set[str] = set()
+    buckets: dict[tuple[str, ...], dict[str, set[str]]] = {}
+    for _, rule in source_rules.iterrows():
+        observable_refs.update(non_object_exposed_references(rule))
+        if rule["object_map_type"] not in (RML_TEMPLATE, RML_REFERENCE):
+            continue
+        object_refs = _reference_set(rule["object_references"])
+        if not object_refs:
+            continue
+        key = subject_term_signature(rule) + tuple(
+            _signature_value(rule[column]) for column in context_columns
+        )
+        object_maps = buckets.setdefault(key, {})
+        object_maps.setdefault(
+            _signature_value(rule["object_map_value"]), set()
+        ).update(object_refs)
+
+    ambiguous: set[str] = set()
+    identified_refs: set[str] = set()
+    for object_maps in buckets.values():
+        target = ambiguous if len(object_maps) > 1 else identified_refs
+        target.update(*object_maps.values())
+    return ambiguous - observable_refs - identified_refs
+
+
+def _ambiguous_predicate_references(source_rules: pd.DataFrame) -> set[str]:
+    context_columns = (
+        "object_map_type",
+        "object_map_value",
+        "object_termtype",
+        "object_references_template",
+        "lang_datatype",
+        "graph_map_type",
+        "graph_map_value",
+    )
+    observable_refs: set[str] = set()
+    buckets: dict[tuple[str, ...], dict[str, set[str]]] = {}
+    for _, rule in source_rules.iterrows():
+        observable_refs.update(non_predicate_exposed_references(rule))
+        if rule["predicate_map_type"] not in (RML_TEMPLATE, RML_REFERENCE):
+            continue
+        predicate_refs = _reference_set(rule["predicate_references"])
+        if not predicate_refs:
+            continue
+        key = (
+            subject_term_signature(rule)
+            + tuple(_signature_value(rule[column]) for column in context_columns)
+            + (_signature_value(rule["predicate_references_template"]),)
+        )
+        predicate_maps = buckets.setdefault(key, {})
+        predicate_maps.setdefault(
+            _signature_value(rule["predicate_map_value"]), set()
+        ).update(predicate_refs)
+
+    ambiguous: set[str] = set()
+    identified_refs: set[str] = set()
+    for predicate_maps in buckets.values():
+        target = ambiguous if len(predicate_maps) > 1 else identified_refs
+        target.update(*predicate_maps.values())
+    return ambiguous - observable_refs - identified_refs
+
+
+def _ambiguous_graph_references(source_rules: pd.DataFrame) -> set[str]:
+    """Columns reachable only through graph maps that cannot be told apart.
+
+    Graph maps sharing a template skeleton produce graph IRIs that cannot be traced
+    back to the term map that built them.
+    """
+    observable_refs: set[str] = set()
+    for _, rule in source_rules.iterrows():
+        observable_refs.update(non_graph_exposed_references(rule))
+
+    skeletons: dict[str, dict[str, set[str]]] = {}
+    for _, rule in source_rules.iterrows():
+        graph_refs = _reference_set(rule["graph_references"])
+        if not graph_refs:
+            continue
+        skeleton = _signature_value(rule["graph_references_template"])
+        graph_maps = skeletons.setdefault(skeleton, {})
+        graph_maps.setdefault(_signature_value(rule["graph_map_value"]), set()).update(
+            graph_refs
+        )
+
+    ambiguous: set[str] = set()
+    for graph_maps in skeletons.values():
+        if len(graph_maps) > 1:
+            ambiguous.update(set().union(*graph_maps.values()) - observable_refs)
+    return ambiguous
+
+
+def _observed_template_terms(
+    endpoint: Endpoint, position: str, references_template: str
+) -> set[str]:
+    triple = {
+        "subject": "?term ?predicate ?object",
+        "predicate": "?subject ?term ?object",
+        "object": "?subject ?predicate ?term",
+    }
+    if position == "graph":
+        body = "GRAPH ?term { ?subject ?predicate ?object }"
+    else:
+        pattern = triple[position]
+        body = f"{{ {pattern} }} UNION {{ GRAPH ?graph {{ {pattern} }} }}"
+    escaped_template = references_template.replace("\\", "\\\\").replace("'", "\\'")
+    query = (
+        "SELECT DISTINCT ?term WHERE { "
+        f"{body} FILTER(REGEX(STR(?term), '^{escaped_template}$')) }}"
+    )
+    solutions = endpoint.query(query)
+    variable = list(solutions.variables)[0]
+    return {
+        str(term.value)
+        for solution in solutions
+        if (term := solution[variable]) is not None
+    }
+
+
+def _ambiguous_observed_template_references(
+    source_rules: pd.DataFrame, endpoint: Endpoint
+) -> set[str]:
+    ambiguous: set[str] = set()
+    other_exposed: set[str] = set()
+    observations: dict[tuple[str, str], set[str]] = {}
+
+    for _, rule in source_rules.iterrows():
+        for position in ("subject", "predicate", "object", "graph"):
+            if rule[f"{position}_map_type"] != RML_TEMPLATE:
+                other_exposed.update(_position_references(rule, position)[1])
                 continue
-            subject_refs = _reference_set(first_rule["subject_references"])
-            subject_infos.append(
-                (
-                    _signature_value(first_rule["subject_references_template"]),
-                    _subject_signature(subject_rules),
-                    subject_refs - observed_refs,
+            references = _reference_set(rule[f"{position}_references"])
+            if len(references) < 2:
+                other_exposed.update(references)
+                continue
+            template = str(rule[f"{position}_references_template"])
+            key = (position, template)
+            if key not in observations:
+                observations[key] = _observed_template_terms(
+                    endpoint, position, template
                 )
+            terms = observations[key]
+            if any(
+                has_multiple_template_decompositions(term, template) for term in terms
+            ):
+                ambiguous.update(references)
+            else:
+                other_exposed.update(references)
+
+    return ambiguous - other_exposed
+
+
+def _unrecoverable_references(mappings: pd.DataFrame) -> dict[str, frozenset[str]]:
+    """Columns whose values the graph carries but cannot attribute to them.
+
+    They are left out of the reconstruction: the remaining columns are recovered as
+    usual, the same way columns the mapping never uses are simply absent.
+    """
+    join_targets = set(
+        mappings.loc[
+            mappings["object_map_type"] == RML_PARENT_TRIPLES_MAP, "object_map_value"
+        ]
+    )
+    opaque_join_references_by_rule = {
+        rule_index: _opaque_join_references(rule, mappings)
+        for rule_index, rule in mappings.loc[
+            mappings["object_map_type"] == RML_PARENT_TRIPLES_MAP
+        ].iterrows()
+    }
+    shared_subject_evidence: dict[tuple[str, ...], set[str]] = {}
+    for rule_index, rule in mappings.iterrows():
+        _, exposed_references = non_subject_term_references(rule)
+        if rule["object_map_type"] == RML_PARENT_TRIPLES_MAP:
+            exposed_references.difference_update(
+                opaque_join_references_by_rule[rule_index]
+            )
+        shared_subject_evidence.setdefault(subject_term_signature(rule), set()).update(
+            exposed_references
+        )
+
+    unrecoverable: dict[str, frozenset[str]] = {}
+    for table_name, source_rules in mappings.groupby("logical_source_value"):
+        ambiguous = _ambiguous_subject_references(source_rules)
+        ambiguous.update(_ambiguous_predicate_references(source_rules))
+        ambiguous.update(_ambiguous_object_references(source_rules))
+        ambiguous.update(_ambiguous_graph_references(source_rules))
+
+        opaque: set[str] = set()
+        exposed: set[str] = set()
+        for rule_index, rule in source_rules.iterrows():
+            rule_opaque, rule_exposed = _term_map_references(rule, join_targets)
+            if rule["object_map_type"] == RML_PARENT_TRIPLES_MAP:
+                opaque_join_references = opaque_join_references_by_rule[rule_index]
+                rule_opaque.update(opaque_join_references)
+                rule_exposed.difference_update(
+                    opaque_join_references - non_object_exposed_references(rule)
+                )
+            opaque.update(rule_opaque)
+            exposed.update(rule_exposed)
+            exposed.update(
+                _reference_set(rule["subject_references"])
+                & shared_subject_evidence[subject_term_signature(rule)]
             )
 
-        buckets: dict[tuple[str, frozenset[tuple[str, ...]]], list[set[str]]] = {}
-        for template, signature, subject_only_refs in subject_infos:
-            buckets.setdefault((template, signature), []).append(subject_only_refs)
+        unrecoverable[str(table_name)] = frozenset(
+            ambiguous | (opaque - (exposed - ambiguous))
+        )
+    return unrecoverable
 
-        for subject_only_refs in buckets.values():
-            if len(subject_only_refs) <= 1:
-                continue
-            ambiguous_refs = sorted(set().union(*subject_only_refs))
-            if ambiguous_refs:
-                columns = ", ".join(ambiguous_refs)
-                raise NonInvertibleError(
-                    f"Subject templates for table '{table_name}' contain columns "
-                    f"that are not observable outside indistinguishable subjects: {columns}"
-                )
+
+@dataclass(frozen=True)
+class TableAnalysis:
+    """What the graph preserves of one logical table.
+
+    `subject_reference_sets` holds one entry per distinct subject map, because a
+    row reaches the graph only through a subject map whose columns are all
+    non-NULL. `query` is the SQL of a logical table the mapping defines as a query
+    result, which is the table its recovered rows are compared with.
+    """
+
+    references: frozenset[str]
+    unrecoverable: frozenset[str]
+    subject_reference_sets: tuple[frozenset[str], ...]
+    query: str | None = None
+
+    @property
+    def recoverable(self) -> frozenset[str]:
+        return self.references - self.unrecoverable
+
+
+MappingAnalysis = dict[str, TableAnalysis]
+
+
+def _analyze_rules(
+    mappings: pd.DataFrame,
+    queries: dict[str, LogicalQuery],
+    endpoint: Endpoint | None = None,
+) -> MappingAnalysis:
+    unrecoverable = _unrecoverable_references(mappings)
+    analysis: MappingAnalysis = {}
+    for table_name, source_rules in mappings.groupby("logical_source_value"):
+        references: set[str] = set()
+        subject_reference_sets: list[frozenset[str]] = []
+        for _, rule in source_rules.iterrows():
+            references.update(_all_references(rule))
+            subject_reference_sets.append(
+                frozenset(_reference_set(rule["subject_references"]))
+            )
+        table_unrecoverable = set(unrecoverable[str(table_name)])
+        if endpoint is not None:
+            table_unrecoverable.update(
+                _ambiguous_observed_template_references(source_rules, endpoint)
+            )
+        query = queries.get(str(table_name))
+        analysis[str(table_name)] = TableAnalysis(
+            frozenset(references),
+            frozenset(table_unrecoverable),
+            tuple(dict.fromkeys(subject_reference_sets)),
+            query.sql if query is not None else None,
+        )
+    return analysis
+
+
+def _check_for_unrecoverable_tables(analysis: MappingAnalysis) -> None:
+    for table_name, table in analysis.items():
+        if not table.recoverable:
+            columns = ", ".join(sorted(table.references))
+            raise NonInvertibleError(
+                f"No column of table '{table_name}' can be recovered from the "
+                f"graph: {columns}"
+            )
 
 
 def _build_morph_config(
@@ -272,10 +883,10 @@ def _build_morph_config(
         "output_format": "N-QUADS",
         "logging_level": "ERROR",
     }
-    data_source: dict[str, str] = {"mappings": str(mapping)}
-    if source_db_url is not None:
-        data_source["db_url"] = source_db_url
-    config["DataSource1"] = data_source
+    config["DataSource1"] = {
+        "mappings": str(mapping),
+        "db_url": source_db_url if source_db_url is not None else "",
+    }
 
     tmp = tempfile.NamedTemporaryFile(
         mode="w", suffix=".ini", delete=False, prefix="kgi_"
@@ -283,6 +894,80 @@ def _build_morph_config(
     config.write(tmp)
     tmp.close()
     return tmp.name
+
+
+def _load_mapping_rules(
+    mapping: str | pathlib.Path,
+    rdf_graph: str,
+    source_db_url: str | None,
+) -> tuple[pd.DataFrame, str | None, dict[str, LogicalQuery]]:
+    logger = get_logger()
+    mapping_store = _parse_mapping_store(str(mapping))
+
+    if _check_for_literal_subjects(mapping_store):
+        raise MappingError("rr:termType rr:Literal on subjectMap is not valid")
+
+    if _check_for_non_relational_sources(mapping_store):
+        raise UnsupportedMappingError("Only relational logical sources are supported")
+
+    if _check_for_multiple_subject_maps(mapping_store):
+        raise MappingError("TriplesMap contains multiple subjectMaps")
+
+    if _has_unreferenced_triples_map_without_generated_triples(mapping_store):
+        raise NonInvertibleError(
+            "Triples Map without a predicate-object map or subject class is not "
+            "referenced by a join"
+        )
+
+    if source_db_url is None:
+        extracted_url = _extract_db_url_from_mapping(mapping_store)
+        if extracted_url is not None:
+            source_db_url = extracted_url
+            logger.info(f"Extracted source database URL from mapping: {extracted_url}")
+
+    config_file = _build_morph_config(mapping, rdf_graph, source_db_url)
+    try:
+        config = load_config_from_argument(config_file)
+        mappings, _, _ = retrieve_mappings(config)
+    finally:
+        os.unlink(config_file)
+
+    _normalize_sql_table_sources(mappings, _query_iterators(mapping_store))
+    if (mappings["logical_source_type"] == RML_SOURCE).any():
+        raise UnsupportedMappingError("rml:source logical sources are not supported")
+    queries = _describe_logical_queries(_name_logical_queries(mappings), source_db_url)
+
+    if source_db_url is not None:
+        _check_for_missing_references(mapping_store, source_db_url, queries)
+
+    if _check_for_constant_only_mappings(mappings):
+        raise NonInvertibleError(
+            "Mappings contain only constants (no column references) - original data cannot be recovered"
+        )
+
+    insert_columns(mappings)
+    return mappings, source_db_url, queries
+
+
+def analyze_mapping(
+    mapping: str | pathlib.Path,
+    rdf_graph: str | pathlib.Path,
+    *,
+    source_db_url: str | None = None,
+) -> MappingAnalysis:
+    """Report, per logical table, which columns the graph preserves.
+
+    The inversion and the comparison of the two databases must agree on what
+    can be recovered, so both read this single description of the mapping.
+    """
+    mappings, _, queries = _load_mapping_rules(mapping, str(rdf_graph), source_db_url)
+    endpoint = EndpointFactory.create_from_url(str(rdf_graph))
+    try:
+        analysis = _analyze_rules(mappings, queries, endpoint)
+        _check_for_unrecoverable_tables(analysis)
+        return analysis
+    finally:
+        endpoint.close()
 
 
 def reconstruct(
@@ -293,57 +978,19 @@ def reconstruct(
     source_db_url: str | None = None,
 ) -> None:
     logger = get_logger()
-    mapping_path = str(mapping)
     rdf_graph_str = str(rdf_graph)
 
-    mapping_store = _parse_mapping_store(mapping_path)
-
-    if _check_for_literal_subjects(mapping_store):
-        raise MappingError("rr:termType rr:Literal on subjectMap is not valid")
-
-    if _check_for_sql_queries(mapping_store):
-        raise UnsupportedMappingError("SQL query as logical table is not supported")
-
-    if _check_for_multiple_subject_maps(mapping_store):
-        raise MappingError("TriplesMap contains multiple subjectMaps")
-
-    if source_db_url is None:
-        extracted_url = _extract_db_url_from_mapping(mapping_store)
-        if extracted_url is not None:
-            source_db_url = extracted_url
-            logger.info(f"Extracted source database URL from mapping: {extracted_url}")
-
-    config_file = _build_morph_config(mapping, rdf_graph_str, source_db_url)
+    mappings, source_db_url, queries = _load_mapping_rules(
+        mapping, rdf_graph_str, source_db_url
+    )
     endpoint: Endpoint | None = None
     schema_retrievers: dict[str, DatabaseSchemaRetriever] = {}
     try:
-        config = load_config_from_argument(config_file)
-
-        mappings, _, _ = retrieve_mappings(config)
-
-        _normalize_sql_table_sources(mappings)
-        if (mappings["logical_source_type"] == RML_SOURCE).any():
-            raise UnsupportedMappingError(
-                "rml:source logical sources are not supported"
-            )
-
-        if _check_for_constant_only_mappings(mappings):
-            raise NonInvertibleError(
-                "Mappings contain only constants (no column references) - original data cannot be recovered"
-            )
-
-        if _check_for_column_iri_term_maps(mappings):
-            raise NonInvertibleError(
-                "Term map uses rr:column with IRI term type - base IRI resolution makes inversion ambiguous"
-            )
-
-        insert_columns(mappings)
-        _check_for_ambiguous_subject_templates(mappings)
-
+        endpoint = EndpointFactory.create_from_url(rdf_graph_str)
+        analysis = _analyze_rules(mappings, queries, endpoint)
+        _check_for_unrecoverable_tables(analysis)
         if source_db_url is not None:
             schema_retrievers["DataSource1"] = DatabaseSchemaRetriever(source_db_url)
-
-        endpoint = EndpointFactory.create_from_url(rdf_graph_str)
 
         reconstructed_table_count = 0
         for table_name_value, source_rules in mappings.groupby("logical_source_value"):
@@ -351,19 +998,42 @@ def reconstruct(
             source_section = str(source_rules.iloc[0]["source_name"])
             template = _generate_template(source_rules, dest_db_url)
 
-            source_data_chunks, _ = retrieve_data(
-                mappings, source_rules, endpoint, decode_columns=True
-            )
-            schema_retriever = schema_retrievers[source_section]
-            table_schema = schema_retriever.get_table_schema(table_name)
-            source_data_chunks = (
-                apply_schema_ordering(
-                    apply_schema_types(chunk, table_schema), table_schema
+            excluded_references = analysis[table_name].unrecoverable
+            if excluded_references:
+                columns = ", ".join(sorted(excluded_references))
+                logger.warning(
+                    f"Columns of table '{table_name}' left out of the reconstruction "
+                    f"because the graph does not expose them unambiguously: {columns}"
                 )
-                for chunk in cast(Iterator[pd.DataFrame], source_data_chunks)
-            )
 
-            template.fill_data(source_data_chunks, table_name)
+            source_data_chunks, _ = retrieve_data(
+                mappings,
+                source_rules,
+                endpoint,
+                excluded_references,
+                decode_columns=True,
+            )
+            if source_data_chunks is None:
+                raise NonInvertibleError(
+                    f"No column of table '{table_name}' can be recovered from the graph"
+                )
+            if table_name in queries:
+                table_schema = queries[table_name].schema
+            elif source_db_url is not None:
+                table_schema = schema_retrievers[source_section].get_table_schema(
+                    table_name
+                )
+            else:
+                table_schema = None
+            if table_schema is not None:
+                source_data_chunks = (
+                    apply_schema_ordering(
+                        apply_schema_types(chunk, table_schema), table_schema
+                    )
+                    for chunk in source_data_chunks
+                )
+
+            template.fill_data(source_data_chunks, table_name, table_schema)
             reconstructed_table_count += 1
 
         if reconstructed_table_count == 0:
@@ -373,4 +1043,3 @@ def reconstruct(
             endpoint.close()
         for retriever in schema_retrievers.values():
             retriever.dispose()
-        os.unlink(config_file)

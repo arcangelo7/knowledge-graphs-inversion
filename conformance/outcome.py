@@ -1,0 +1,295 @@
+# SPDX-FileCopyrightText: 2026 Arcangelo Massari <arcangelo.massari@unibo.it>
+#
+# SPDX-License-Identifier: ISC
+
+from dataclasses import dataclass, field
+from enum import StrEnum
+from pathlib import Path
+
+from pyoxigraph import BlankNode, Quad, RdfFormat, Store
+
+from conformance.database import DatabaseConnection
+from kgi import (
+    MappingAnalysis,
+    NoDataError,
+    NonInvertibleError,
+    UnsupportedMappingError,
+    analyze_mapping,
+)
+from kgi.comparison import (
+    DatabaseContent,
+    PartialLoss,
+    compare_databases,
+)
+from kgi.core import reconstruct
+from kgi.logical_queries import source_tables
+
+RDF_FORMATS = {
+    "turtle": RdfFormat.TURTLE,
+    "nquads": RdfFormat.N_QUADS,
+    "ntriples": RdfFormat.N_TRIPLES,
+}
+
+
+class InversionOutcome(StrEnum):
+    FULLY_INVERTED = "fully_inverted"
+    PARTIALLY_INVERTED = "partially_inverted"
+    NON_INVERTIBLE = "non_invertible"
+    NOT_SUPPORTED = "not_supported"
+    ERROR_TEST_CASE = "error_test_case"
+    NOT_TESTED = "not_tested"
+    MISMATCH = "mismatch"
+    ERROR = "error"
+
+
+OUTCOME_LABELS = {
+    InversionOutcome.FULLY_INVERTED: "Fully inverted",
+    InversionOutcome.PARTIALLY_INVERTED: "Partially inverted",
+    InversionOutcome.NON_INVERTIBLE: "Non-invertible",
+    InversionOutcome.NOT_SUPPORTED: "Not supported",
+    InversionOutcome.ERROR_TEST_CASE: "Error test case",
+    InversionOutcome.NOT_TESTED: "Not tested",
+    InversionOutcome.MISMATCH: "Mismatch",
+    InversionOutcome.ERROR: "Execution error",
+}
+
+LOSS_LABELS = {
+    PartialLoss.COLUMNS_LOST: "Columns lost (unmapped or unassignable columns)",
+    PartialLoss.ROWS_LOST: "Rows lost (NULL in subject template)",
+    PartialLoss.MULTIPLICITY_LOST: "Multiplicity lost (duplicate rows collapsed)",
+    PartialLoss.TABLES_LOST: "Tables lost (unmapped tables)",
+}
+
+
+@dataclass(frozen=True)
+class CaseOutcome:
+    outcome: InversionOutcome
+    losses: frozenset[PartialLoss] = frozenset()
+    message: str = field(default="", compare=False)
+    source_content: DatabaseContent | None = field(default=None, compare=False)
+    dest_content: DatabaseContent | None = field(default=None, compare=False)
+
+
+def describe_difference(expected: CaseOutcome | None, observed: CaseOutcome) -> str:
+    def render(case: CaseOutcome) -> str:
+        if not case.losses:
+            return str(case.outcome)
+        return f"{case.outcome} ({', '.join(sorted(case.losses))})"
+
+    expected_label = render(expected) if expected else "no recorded expectation"
+    return f"expected {expected_label}, got {render(observed)}: {observed.message}"
+
+
+def _normalize_term(term: object) -> str:
+    if isinstance(term, BlankNode):
+        return "_:BNODE"
+    return str(term)
+
+
+def graphs_isomorphic(expected: Store, actual: Store) -> bool:
+    expected_quads = list(expected)
+    actual_quads = list(actual)
+    if len(expected_quads) != len(actual_quads):
+        return False
+
+    has_bnodes = any(
+        isinstance(quad.subject, BlankNode) or isinstance(quad.object, BlankNode)
+        for quad in expected_quads + actual_quads
+    )
+    if not has_bnodes:
+        return set(expected_quads) == set(actual_quads)
+
+    def signature(quads: list[Quad]) -> set[tuple[str, str, str, str]]:
+        return {
+            (
+                _normalize_term(quad.subject),
+                str(quad.predicate),
+                _normalize_term(quad.object),
+                str(quad.graph_name),
+            )
+            for quad in quads
+        }
+
+    return signature(expected_quads) == signature(actual_quads)
+
+
+def _load_expected_store(expected_output_path: str) -> Store:
+    store = Store()
+    if Path(expected_output_path).is_file():
+        store.load(path=expected_output_path, format=RdfFormat.N_QUADS)
+    return store
+
+
+def forward_conformance_failed(
+    expects_output: bool,
+    expected_output_path: str,
+    rdf_path: Path,
+    output_format: str,
+    exit_code: int,
+) -> bool:
+    if not (rdf_path.is_file() and rdf_path.stat().st_size > 0):
+        if not expects_output:
+            return False
+        return len(_load_expected_store(expected_output_path)) > 0
+
+    if not expects_output:
+        return exit_code == 0
+
+    produced = Store()
+    try:
+        produced.load(path=str(rdf_path), format=RDF_FORMATS[output_format])
+    except SyntaxError:
+        return True
+    return not graphs_isomorphic(_load_expected_store(expected_output_path), produced)
+
+
+_db_connection = DatabaseConnection()
+
+
+def logical_queries(analysis: MappingAnalysis) -> dict[str, str]:
+    """The SQL of every query-defined logical table, by the name its rows are stored under."""
+    return {
+        table_name: table.query
+        for table_name, table in analysis.items()
+        if table.query is not None
+    }
+
+
+def logical_table_content(
+    analysis: MappingAnalysis, database_url: str
+) -> DatabaseContent:
+    """The logical tables the mapping reads.
+
+    A query-defined logical table stands for the base tables it reads, so those
+    are replaced by the query result unless the mapping also reads them as a
+    table, and the remaining base tables stay as they are, mapped or not.
+    """
+    content = _db_connection.get_database_content(database_url)
+    queries = logical_queries(analysis)
+    for sql in queries.values():
+        for table_name in source_tables(sql):
+            # The database folds an undelimited name, so the written one may not match
+            stored = [
+                name
+                for name in content
+                if name == table_name or name.casefold() == table_name.casefold()
+            ]
+            for name in stored:
+                if name not in analysis:
+                    del content[name]
+    for name, sql in queries.items():
+        content[name] = _db_connection.get_query_content(database_url, sql)
+    return content
+
+
+def _compare_reconstruction(
+    analysis: MappingAnalysis,
+    source_db_url: str,
+    dest_db_url: str,
+    allow_empty_destination: bool,
+) -> CaseOutcome:
+    source_content = logical_table_content(analysis, source_db_url)
+    dest_content = _db_connection.get_database_content(dest_db_url)
+    databases_equal, message, losses = compare_databases(
+        source_content, dest_content, analysis
+    )
+    if databases_equal:
+        return CaseOutcome(
+            InversionOutcome.FULLY_INVERTED,
+            message=message,
+            source_content=source_content,
+            dest_content=dest_content,
+        )
+    if allow_empty_destination and not dest_content:
+        return CaseOutcome(
+            InversionOutcome.FULLY_INVERTED,
+            message=(
+                "Inversion correctly not performed due to mapping errors - "
+                "destination database appropriately empty"
+            ),
+            source_content=source_content,
+            dest_content=dest_content,
+        )
+    outcome = (
+        InversionOutcome.PARTIALLY_INVERTED if losses else InversionOutcome.MISMATCH
+    )
+    return CaseOutcome(
+        outcome,
+        losses,
+        message=message,
+        source_content=source_content,
+        dest_content=dest_content,
+    )
+
+
+def evaluate_kgi_case(
+    mapping_path: str,
+    rdf_path: Path,
+    expects_output: bool,
+    forward_failed: bool,
+    source_db_url: str,
+    dest_db_url: str,
+) -> CaseOutcome:
+    produced_rdf = rdf_path.is_file() and rdf_path.stat().st_size > 0
+
+    if not expects_output:
+        return CaseOutcome(
+            InversionOutcome.ERROR_TEST_CASE,
+            message=(
+                "The forward mapping produced RDF the specification forbids"
+                if produced_rdf
+                else "The forward mapping stopped, as the specification requires"
+            ),
+        )
+
+    if not produced_rdf:
+        if forward_failed:
+            return CaseOutcome(
+                InversionOutcome.ERROR,
+                message=(
+                    "The forward mapping did not produce the expected graph, so the "
+                    "inversion could not be attempted"
+                ),
+            )
+        if not rdf_path.is_file():
+            rdf_path.touch()
+
+    try:
+        reconstruct(
+            mapping=mapping_path,
+            rdf_graph=rdf_path,
+            source_db_url=source_db_url,
+            dest_db_url=dest_db_url,
+        )
+    except UnsupportedMappingError as error:
+        return CaseOutcome(
+            InversionOutcome.NOT_SUPPORTED,
+            message=f"Inversion not supported: {error}",
+        )
+    except NonInvertibleError as error:
+        return CaseOutcome(
+            InversionOutcome.NON_INVERTIBLE,
+            message=f"Non-invertible mapping detected: {error}",
+        )
+    except NoDataError:
+        if forward_failed:
+            return CaseOutcome(
+                InversionOutcome.ERROR,
+                message=(
+                    "The forward mapping did not produce the expected graph, so the "
+                    "inversion could not be attempted"
+                ),
+            )
+        return _compare_reconstruction(
+            analyze_mapping(mapping_path, rdf_path, source_db_url=source_db_url),
+            source_db_url,
+            dest_db_url,
+            allow_empty_destination=True,
+        )
+
+    return _compare_reconstruction(
+        analyze_mapping(mapping_path, rdf_path, source_db_url=source_db_url),
+        source_db_url,
+        dest_db_url,
+        allow_empty_destination=False,
+    )

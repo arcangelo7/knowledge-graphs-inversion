@@ -2,33 +2,38 @@
 #
 # SPDX-License-Identifier: ISC
 
+x-dashboard: &dashboard
+  ports:
+    - "5000:5000"
+  volumes:
+    - .:/app
+    - app-venv:/app/.venv
+  working_dir: /app
+  environment:
+    - FLASK_ENV=development
+    - FLASK_DEBUG=1
+  depends_on:
+    postgresql_r2rml:
+      condition: service_healthy
+    dest_postgresql_r2rml:
+      condition: service_healthy
+    postgresql_rml:
+      condition: service_healthy
+    dest_postgresql_rml:
+      condition: service_healthy
+    mysql_r2rml:
+      condition: service_healthy
+    dest_mysql_r2rml:
+      condition: service_healthy
+  restart: unless-stopped
+
 services:
   app:
-    build: .
+    <<: *dashboard
+    build:
+      context: .
+      target: app
     container_name: kgi-app
-    ports:
-      - "5000:5000"
-    volumes:
-      - .:/app
-      - app-venv:/app/.venv
-    working_dir: /app
-    environment:
-      - FLASK_ENV=development
-      - FLASK_DEBUG=1
-    depends_on:
-      postgresql_r2rml:
-        condition: service_healthy
-      dest_postgresql_r2rml:
-        condition: service_healthy
-      postgresql_rml:
-        condition: service_healthy
-      dest_postgresql_rml:
-        condition: service_healthy
-      mysql_r2rml:
-        condition: service_healthy
-      dest_mysql_r2rml:
-        condition: service_healthy
-    restart: unless-stopped
 
   postgresql_r2rml:
     image: postgres:13
@@ -105,7 +110,7 @@ services:
   mysql_r2rml:
     image: mysql:9.7.1
     container_name: kgi-mysql-r2rml
-    command: --sql-mode=ANSI_QUOTES
+    command: --sql-mode=ANSI_QUOTES,PAD_CHAR_TO_FULL_LENGTH,PIPES_AS_CONCAT
     environment:
       MYSQL_ROOT_PASSWORD: r2rml
       MYSQL_USER: r2rml
@@ -123,7 +128,7 @@ services:
   dest_mysql_r2rml:
     image: mysql:9.7.1
     container_name: kgi-dest-mysql-r2rml
-    command: --sql-mode=ANSI_QUOTES
+    command: --sql-mode=ANSI_QUOTES,PAD_CHAR_TO_FULL_LENGTH,PIPES_AS_CONCAT
     environment:
       MYSQL_ROOT_PASSWORD: r2rml
       MYSQL_USER: r2rml

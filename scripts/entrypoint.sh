@@ -17,20 +17,6 @@ shutdown() {
 trap shutdown SIGTERM SIGINT
 
 case "${1:-app}" in
-    "krown-benchmark")
-        echo "Starting KROWN benchmark..."
-        cd /app
-        exec uv run python -m benchmarks.run_krown_benchmark "${@:2}"
-        ;;
-    "gtfs-benchmark")
-        echo "Starting GTFS benchmark..."
-        cd /app
-        exec uv run python benchmarks/run_gtfs_benchmark.py "${@:2}"
-        ;;
-    "benchmark")
-        echo "Use krown-benchmark or gtfs-benchmark"
-        exit 64
-        ;;
     "app"|*)
         echo "Starting main application..."
         cd /app

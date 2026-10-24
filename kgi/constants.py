@@ -4,8 +4,6 @@
 
 """Constants used throughout the KGI library."""
 
-import re
-
 from pyoxigraph import NamedNode
 
 RML_BLANK_NODE = "http://w3id.org/rml/BlankNode"
@@ -15,6 +13,8 @@ RML_LITERAL = "http://w3id.org/rml/Literal"
 RML_PARENT_TRIPLES_MAP = "http://w3id.org/rml/parentTriplesMap"
 RML_REFERENCE = "http://w3id.org/rml/reference"
 RML_DEFAULT_GRAPH = "http://w3id.org/rml/defaultGraph"
+RML_LANGUAGE_MAP = "http://w3id.org/rml/languageMap"
+RML_QUERY_SOURCE = "http://w3id.org/rml/query"
 RML_SOURCE = "http://w3id.org/rml/source"
 RML_TABLE_NAME = "http://w3id.org/rml/tableName"
 RML_TEMPLATE = "http://w3id.org/rml/template"
@@ -26,6 +26,7 @@ RR_COLUMN = NamedNode("http://www.w3.org/ns/r2rml#column")
 RR_TEMPLATE = NamedNode("http://www.w3.org/ns/r2rml#template")
 RR_CHILD = NamedNode("http://www.w3.org/ns/r2rml#child")
 RR_PARENT = NamedNode("http://www.w3.org/ns/r2rml#parent")
+RR_PARENT_TRIPLES_MAP = NamedNode("http://www.w3.org/ns/r2rml#parentTriplesMap")
 RR_TABLE_NAME = NamedNode("http://www.w3.org/ns/r2rml#tableName")
 RR_LOGICAL_TABLE = NamedNode("http://www.w3.org/ns/r2rml#logicalTable")
 RR_SQL_QUERY = NamedNode("http://www.w3.org/ns/r2rml#sqlQuery")
@@ -59,7 +60,4 @@ JDBC_DRIVERS: dict[str, str] = {
     "mysql": "mysql+pymysql",
 }
 
-# Placeholders in template values already normalized by morph-kgc, e.g. {Name}
 REF_TEMPLATE_REGEX = r"{([^{}]*)}"
-# Placeholders in raw mapping text, where identifiers may be delimited, e.g. {\"Name\"}
-TEMPLATE_COLUMN_REGEX = re.compile(r'\{\\?"?\'?([^"\'{}\\]+)\\?"?\'?\}')

@@ -4,7 +4,7 @@
 
 import subprocess
 
-import rmlmapper
+from conformance import rmlmapper
 
 
 def test_execute_returns_process_output(monkeypatch, tmp_path):

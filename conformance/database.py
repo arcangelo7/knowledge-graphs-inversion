@@ -5,6 +5,8 @@
 import pandas as pd
 from sqlalchemy import CHAR, MetaData, Table, create_engine, inspect, select, text
 
+from kgi.comparison import DatabaseContent, TableContent
+
 
 def hex_encode_binary_columns(df: pd.DataFrame) -> pd.DataFrame:
     for col in df.columns:
@@ -14,6 +16,15 @@ def hex_encode_binary_columns(df: pd.DataFrame) -> pd.DataFrame:
             )
         )
     return df
+
+
+def _table_content(content: pd.DataFrame) -> TableContent:
+    content = content.where(pd.notnull(content), None)
+    hex_encode_binary_columns(content)
+    return {
+        "columns": content.columns.tolist(),
+        "data": content.values.tolist(),
+    }
 
 
 class DatabaseConnection:
@@ -39,15 +50,13 @@ class DatabaseConnection:
         finally:
             engine.dispose()
 
-    def get_database_content(
-        self, database_url: str
-    ) -> dict[str, dict[str, list[str]]]:
+    def get_database_content(self, database_url: str) -> DatabaseContent:
         engine = create_engine(database_url)
         try:
             with engine.connect() as connection:
                 metadata = MetaData()
                 table_names = inspect(connection).get_table_names()
-                db_content: dict[str, dict[str, list[str]]] = {}
+                db_content: DatabaseContent = {}
                 for table_name in table_names:
                     table = Table(table_name, metadata, autoload_with=connection)
                     content = pd.read_sql(select(table), connection)
@@ -60,12 +69,15 @@ class DatabaseConnection:
                                     else value
                                 )
                             )
-                    content = content.where(pd.notnull(content), None)
-                    hex_encode_binary_columns(content)
-                    db_content[table_name] = {
-                        "columns": content.columns.tolist(),
-                        "data": content.values.tolist(),
-                    }
+                    db_content[table_name] = _table_content(content)
                 return db_content
+        finally:
+            engine.dispose()
+
+    def get_query_content(self, database_url: str, sql: str) -> TableContent:
+        engine = create_engine(database_url)
+        try:
+            with engine.connect() as connection:
+                return _table_content(pd.read_sql_query(text(sql), connection))
         finally:
             engine.dispose()

@@ -5,6 +5,7 @@
 """SPARQL query generation and execution."""
 
 from collections.abc import Iterator
+from dataclasses import dataclass, field
 from typing import cast
 
 import pandas as pd
@@ -14,12 +15,19 @@ from kgi.base import Endpoint
 from kgi.constants import (
     RML_BLANK_NODE,
     RML_CONSTANT,
+    RML_IRI,
     RML_PARENT_TRIPLES_MAP,
     RML_REFERENCE,
     RML_TEMPLATE,
 )
 from kgi.exceptions import UnsupportedMappingError
-from kgi.triples import QueryTriple, SubjectTriple, extract_from_iri_template
+from kgi.triples import (
+    QueryTriple,
+    ReferencedSubjectTriple,
+    SubjectTriple,
+    extract_from_iri_template,
+    has_adjacent_template_captures,
+)
 from kgi.utils import (
     Codex,
     IdGenerator,
@@ -51,25 +59,59 @@ GROUP_SIGNATURE_COLUMNS = [
     "object_join_conditions",
 ]
 _QUERY_CHUNK_SIZE = 10_000
+_SUBJECT_TERM_SIGNATURE_COLUMNS = (
+    "subject_map_type",
+    "subject_map_value",
+    "subject_termtype",
+)
 RdfTerm = NamedNode | BlankNode | Literal | Triple | None
+
+
+@dataclass
+class GraphMapPattern:
+    """A graph map to invert, with the triple pattern that identifies its graphs."""
+
+    map_type: str
+    map_value: str
+    references: list[str]
+    references_template: str
+    anchor: str | None
+    hidden_references: list[str] = field(default_factory=list)
+
+    @property
+    def variable_key(self) -> str:
+        """Codex key for the graph variable.
+
+        A reference graph map names a column, so the key is suffixed to keep the
+        graph variable distinct from the variable holding that column value.
+        """
+        if self.map_type == RML_REFERENCE:
+            return f"{self.map_value}_graph"
+        return self.map_value
 
 
 class Query:
     """Represents a SPARQL query for data inversion."""
 
-    def __init__(self, triples: list[QueryTriple] | None = None):
+    def __init__(
+        self,
+        triples: list[QueryTriple] | None = None,
+        excluded_references: frozenset[str] = frozenset(),
+    ):
         self.triples: list[QueryTriple] = triples or []
+        self.excluded_references = excluded_references
         self.id_generator = IdGenerator()
         self.codex = Codex()
         self.generated_query = None
+        self._dropped_references: set[str] = set()
 
     @property
     def references(self) -> list[str]:
-        """Get all references used in the query."""
-        references = set()
+        """Get the references the query selects, without the unrecoverable ones."""
+        references: set[str] = set()
         for triple in self.triples:
             references.update(triple.references)
-        return list(references)
+        return list(references - self.excluded_references - self._dropped_references)
 
     @property
     def template_references(self) -> list[str]:
@@ -106,6 +148,7 @@ class Query:
 
         triple_strings = []
         generated_patterns = set()
+        patterns_by_triple: dict[int, str] = {}
 
         # Separate SubjectTriples from ObjectTriples.
         # SubjectTriples must be processed last so their BINDs are skipped
@@ -139,96 +182,122 @@ class Query:
                 triple_string = triple.generate(
                     self.id_generator, self.codex, all_mapping_rules
                 )
-                if (
-                    triple_string is not None
-                    and triple_string not in generated_patterns
-                ):
+                if triple_string is None:
+                    continue
+                if not isinstance(triple, SubjectTriple):
+                    patterns_by_triple[id(triple)] = triple_string
+                if triple_string not in generated_patterns:
                     triple_strings.append(triple_string)
                     generated_patterns.add(triple_string)
 
-        graph_info = self._get_exclusive_graph_info()
-        graph_binds = ""
-        graph_var: str | None = None
-        if graph_info:
-            graph_var = self.codex.get_id(str(graph_info["graph_map_value"]))
-            graph_binds = self._generate_graph_binds(graph_info, graph_var)
+        graph_clauses = [
+            self._generate_graph_clause(graph_map)
+            for graph_map in self._exclusive_graph_maps(patterns_by_triple)
+        ]
 
-        all_vars = [f"?{self.codex.get_id(ref)}" for ref in all_references]
-        select_part = "SELECT " + " ".join(all_vars) + " WHERE {"
+        selected_references = self.references
+        if not selected_references:
+            return None
 
-        if graph_var is not None:
-            body = (
-                f"GRAPH ?{graph_var} {{\n"
-                + "\n".join(triple_strings)
-                + "\n}\n"
-                + graph_binds
-            )
-        else:
-            body = "\n".join(triple_strings)
+        # Merging indistinguishable subject groups makes one source row match through
+        # several subjects, so the same tuple would be returned once per subject
+        select_keyword = (
+            "SELECT DISTINCT"
+            if self.excluded_references or self._dropped_references
+            else "SELECT"
+        )
+        all_vars = [f"?{self.codex.get_id(ref)}" for ref in selected_references]
+        select_part = select_keyword + " " + " ".join(all_vars) + " WHERE {"
+        body = "\n".join(triple_strings + graph_clauses)
 
         generated_query = select_part + body + "}"
         self.generated_query = generated_query.replace("\\", "\\\\")
         return self.generated_query
 
-    def _get_exclusive_graph_info(self) -> dict[str, object] | None:
-        """Return graph map info if there are column references exclusive to the graph map."""
-        all_graph_refs: set[str] = set()
+    def _exclusive_graph_maps(self, patterns: dict[int, str]) -> list[GraphMapPattern]:
+        """Collect the graph maps carrying columns no other term map exposes.
+
+        Each one is inverted on its own graph variable, anchored to a triple
+        pattern of the predicate-object map it belongs to.
+        """
         all_other_refs: set[str] = set()
-        graph_info: dict[str, object] | None = None
+        groups: dict[str, GraphMapPattern] = {}
 
         for triple in self.triples:
             all_other_refs.update(triple.subject_references)
             all_other_refs.update(triple.predicate_references)
             all_other_refs.update(triple.object_references)
 
-            g_refs = triple.graph_references
-            if g_refs:
-                all_graph_refs.update(g_refs)
-                if graph_info is None:
-                    graph_info = {
-                        "graph_map_type": triple.rule["graph_map_type"],
-                        "graph_map_value": triple.rule["graph_map_value"],
-                        "graph_references": triple.rule["graph_references"],
-                        "graph_references_template": triple.rule[
-                            "graph_references_template"
-                        ],
-                    }
-
-        exclusive = all_graph_refs - all_other_refs
-        if not exclusive or graph_info is None:
-            return None
-
-        graph_info["exclusive_references"] = exclusive
-        return graph_info
-
-    def _generate_graph_binds(
-        self, graph_info: dict[str, object], graph_var: str
-    ) -> str:
-        """Generate SPARQL BINDs for extracting column values from graph IRIs."""
-        graph_map_type = str(graph_info["graph_map_type"])
-        rule = self.triples[0].rule
-
-        if graph_map_type == RML_REFERENCE:
-            ref = list(cast(set[str], graph_info["exclusive_references"]))
-            ref_id = str(ref[0])
-            ref_var = self.codex.get_id(ref_id)
-            return f"BIND(STR(?{graph_var}) AS ?{ref_var})\n"
-
-        if graph_map_type == RML_TEMPLATE:
-            return (
-                extract_from_iri_template(
-                    template_value=str(graph_info["graph_map_value"]),
-                    references_template=str(graph_info["graph_references_template"]),
-                    references=cast(list[str], graph_info["graph_references"]),
-                    rule=rule,
-                    codex=self.codex,
-                    id_generator=self.id_generator,
-                    slice_label="graph",
-                )
-                + "\n"
+            graph_refs = triple.graph_references
+            if not graph_refs:
+                continue
+            value = str(triple.rule["graph_map_value"])
+            anchor = patterns[id(triple)] if id(triple) in patterns else None
+            if value in groups:
+                if groups[value].anchor is None:
+                    groups[value].anchor = anchor
+                continue
+            groups[value] = GraphMapPattern(
+                map_type=str(triple.rule["graph_map_type"]),
+                map_value=value,
+                references=[str(item) for item in triple.rule["graph_references"]],
+                references_template=signature_value(
+                    triple.rule["graph_references_template"]
+                ),
+                anchor=anchor,
             )
 
-        raise UnsupportedMappingError(f"Unsupported graph map type: {graph_map_type}")
+        selected = []
+        for graph_map in groups.values():
+            hidden = [
+                reference
+                for reference in graph_map.references
+                if reference not in all_other_refs
+                and reference not in self.excluded_references
+            ]
+            if not hidden:
+                continue
+            has_siblings = any(
+                other.map_value != graph_map.map_value
+                and other.references_template == graph_map.references_template
+                for other in groups.values()
+            )
+            # Sibling graph maps build indistinguishable IRIs, so no filter can
+            # restrict a graph variable to the one that carries these columns, and
+            # a graph map whose predicate-object map produced no triple pattern has
+            # nothing to match its graphs with
+            if has_siblings or graph_map.anchor is None:
+                self._dropped_references.update(hidden)
+                continue
+            graph_map.hidden_references = hidden
+            selected.append(graph_map)
+        return selected
+
+    def _generate_graph_clause(self, graph_map: GraphMapPattern) -> str:
+        """Bind a graph variable to the given graph map and extract its columns."""
+        graph_var = self.codex.get_id(graph_map.variable_key)
+        binds = self._generate_graph_binds(graph_map, graph_var)
+        return f"GRAPH ?{graph_var} {{\n{graph_map.anchor}\n}}\n{binds}"
+
+    def _generate_graph_binds(self, graph_map: GraphMapPattern, graph_var: str) -> str:
+        """Generate SPARQL BINDs for extracting column values from graph IRIs."""
+        if graph_map.map_type == RML_REFERENCE:
+            ref_var = self.codex.get_id(graph_map.hidden_references[0])
+            return f"BIND(STR(?{graph_var}) AS ?{ref_var})"
+
+        if graph_map.map_type == RML_TEMPLATE:
+            return extract_from_iri_template(
+                template_value=graph_map.map_value,
+                references_template=graph_map.references_template,
+                references=graph_map.references,
+                codex=self.codex,
+                id_generator=self.id_generator,
+                slice_label="graph",
+            )
+
+        raise UnsupportedMappingError(
+            f"Unsupported graph map type: {graph_map.map_type}"
+        )
 
     def decode_dataframe(self, df: pd.DataFrame) -> pd.DataFrame:
         """Decode query results DataFrame."""
@@ -290,29 +359,116 @@ def _subject_group_signature(subject_rules: pd.DataFrame) -> frozenset[tuple[str
     return frozenset(signature)
 
 
+def subject_term_signature(rule: pd.Series) -> tuple[str, ...]:
+    return tuple(
+        signature_value(rule[column]) for column in _SUBJECT_TERM_SIGNATURE_COLUMNS
+    )
+
+
+def term_map_is_opaque(
+    map_type: object,
+    map_value: object,
+    term_type: object,
+    references_template: object,
+) -> bool:
+    if map_type == RML_REFERENCE and term_type == RML_IRI:
+        return True
+    if map_type != RML_TEMPLATE:
+        return False
+    if has_adjacent_template_captures(str(references_template)):
+        return True
+    if term_type != RML_IRI:
+        return False
+    stripped = str(map_value).strip()
+    return (
+        stripped.startswith("{") and stripped.endswith("}") and stripped.count("{") == 1
+    )
+
+
+def _position_term_type(rule: pd.Series, position: str) -> object:
+    if position == "predicate":
+        return RML_IRI
+    if position == "graph":
+        return None
+    return rule[f"{position}_termtype"]
+
+
+def _position_references(rule: pd.Series, position: str) -> tuple[set[str], set[str]]:
+    """Split the references of one term map into the opaque ones and the exposed ones."""
+    references = {str(value) for value in rule[f"{position}_references"]}
+    if term_map_is_opaque(
+        rule[f"{position}_map_type"],
+        rule[f"{position}_map_value"],
+        _position_term_type(rule, position),
+        rule[f"{position}_references_template"],
+    ):
+        return references, set()
+    return set(), references
+
+
+def _exposed_references(rule: pd.Series, positions: tuple[str, ...]) -> set[str]:
+    return set().union(
+        *(_position_references(rule, position)[1] for position in positions)
+    )
+
+
+def non_subject_term_references(rule: pd.Series) -> tuple[set[str], set[str]]:
+    opaque: set[str] = set()
+    exposed: set[str] = set()
+    for position in ("predicate", "object", "graph"):
+        position_opaque, position_exposed = _position_references(rule, position)
+        opaque.update(position_opaque)
+        exposed.update(position_exposed)
+    return opaque, exposed
+
+
+def non_graph_exposed_references(rule: pd.Series) -> set[str]:
+    return _exposed_references(rule, ("subject", "predicate", "object"))
+
+
+def non_object_exposed_references(rule: pd.Series) -> set[str]:
+    return _exposed_references(rule, ("subject", "predicate", "graph"))
+
+
+def non_predicate_exposed_references(rule: pd.Series) -> set[str]:
+    return _exposed_references(rule, ("subject", "object", "graph"))
+
+
 def _subject_group_references(subject_rules: pd.DataFrame) -> tuple[set[str], set[str]]:
     subject_references: set[str] = set()
     non_subject_references: set[str] = set()
     for _, rule in subject_rules.iterrows():
         triple = QueryTriple(rule)
         subject_references.update(triple.subject_references)
-        non_subject_references.update(triple.predicate_references)
-        non_subject_references.update(triple.object_references)
-        non_subject_references.update(triple.graph_references)
+        _, rule_exposed = non_subject_term_references(rule)
+        non_subject_references.update(rule_exposed)
     return subject_references, non_subject_references
 
 
-def _select_query_source_rules(source_rules: pd.DataFrame) -> pd.DataFrame:
-    selected_groups = []
-    reducible_signatures: set[frozenset[tuple[str, ...]]] = set()
-
+def _select_query_source_rules(
+    source_rules: pd.DataFrame, excluded_references: frozenset[str] = frozenset()
+) -> pd.DataFrame:
+    subject_groups: list[tuple[bool, pd.DataFrame, bool]] = []
     for _, subject_rules in source_rules.groupby("subject_map_value", dropna=False):
-        signature = _subject_group_signature(subject_rules)
         subject_references, non_subject_references = _subject_group_references(
             subject_rules
         )
-        is_reducible = subject_references <= non_subject_references
+        # Subject columns left out of the reconstruction do not need a group of their
+        # own: this is what collapses indistinguishable subject templates into one
+        is_reducible = (
+            subject_references - excluded_references
+        ) <= non_subject_references
+        drops_subject_columns = bool(subject_references & excluded_references)
+        subject_groups.append((drops_subject_columns, subject_rules, is_reducible))
 
+    # Among interchangeable groups prefer one whose subject columns are recovered, so
+    # that its template is matched against them instead of every subject matching
+    subject_groups.sort(key=lambda subject_group: subject_group[0])
+
+    selected_groups = []
+    reducible_signatures: set[frozenset[tuple[str, ...]]] = set()
+    for _, subject_rules, is_reducible in subject_groups:
+        signature = _subject_group_signature(subject_rules)
         if is_reducible and signature in reducible_signatures:
             continue
 
@@ -326,25 +482,99 @@ def _select_query_source_rules(source_rules: pd.DataFrame) -> pd.DataFrame:
     return pd.concat(selected_groups)
 
 
+def _referencing_join_rule(mapping_rules: pd.DataFrame, rule: pd.Series) -> pd.Series:
+    """The join that carries the subjects of a triples map generating no triples."""
+    referencing = mapping_rules[
+        (mapping_rules["object_map_type"] == RML_PARENT_TRIPLES_MAP)
+        & (mapping_rules["object_map_value"] == rule["triples_map_id"])
+    ]
+    if len(referencing) > 1:
+        raise UnsupportedMappingError(
+            f"Triples map '{rule['triples_map_id']}' has no predicate-object map "
+            "and is referenced by more than one join"
+        )
+    return referencing.iloc[0]
+
+
+def query_triples(
+    mapping_rules: pd.DataFrame,
+    query_source_rules: pd.DataFrame,
+    excluded_references: frozenset[str] = frozenset(),
+) -> list[QueryTriple]:
+    """Build the triples the inversion query of one logical source is made of."""
+    triples: list[QueryTriple] = [
+        QueryTriple(rule, excluded_references)
+        for _, rule in query_source_rules.iterrows()
+        if cast(bool, pd.notna(rule["object_map_type"]))
+        and rule["object_map_type"] != RML_BLANK_NODE
+    ]
+
+    target_references: set[str] = set()
+    subject_references: dict[tuple[str, ...], set[str]] = {}
+    exposed_subject_references: dict[tuple[str, ...], set[str]] = {}
+    for _, rule in query_source_rules.iterrows():
+        triple = QueryTriple(rule)
+        target_references.update(triple.references)
+        signature = subject_term_signature(rule)
+        _, exposed_references = non_subject_term_references(rule)
+        subject_references.setdefault(signature, set()).update(
+            triple.subject_references
+        )
+        exposed_subject_references.setdefault(signature, set()).update(
+            exposed_references
+        )
+    missing_subject_references = {
+        signature: references
+        - exposed_subject_references[signature]
+        - excluded_references
+        for signature, references in subject_references.items()
+    }
+
+    source_tables = set(query_source_rules["logical_source_value"])
+    for _, rule in mapping_rules.iterrows():
+        if rule["logical_source_value"] in source_tables or cast(
+            bool, pd.isna(rule["object_map_type"])
+        ):
+            continue
+        signature = subject_term_signature(rule)
+        if signature not in missing_subject_references:
+            continue
+        needed_references = missing_subject_references[signature]
+        _, evidence_references = non_subject_term_references(rule)
+        if (
+            evidence_references & needed_references
+            and evidence_references <= target_references
+        ):
+            triples.append(QueryTriple(rule, excluded_references))
+
+    for _, subject_rules in query_source_rules.groupby(
+        "subject_map_value", dropna=False
+    ):
+        rule = subject_rules.iloc[0]
+        if cast(bool, subject_rules["object_map_type"].isna().all()):
+            triples.append(
+                ReferencedSubjectTriple(
+                    rule,
+                    _referencing_join_rule(mapping_rules, rule),
+                    excluded_references,
+                )
+            )
+        else:
+            triples.append(SubjectTriple(rule, excluded_references))
+    return triples
+
+
 def retrieve_data(
     mapping_rules: pd.DataFrame,
     source_rules: pd.DataFrame,
     endpoint: Endpoint,
+    excluded_references: frozenset[str] = frozenset(),
     decode_columns: bool = False,
 ) -> tuple[Iterator[pd.DataFrame] | None, str | None]:
     """Retrieve data from SPARQL endpoint using mapping rules."""
-    query_source_rules = _select_query_source_rules(source_rules)
-    triples: list[QueryTriple] = [
-        QueryTriple(rule)
-        for _, rule in query_source_rules.iterrows()
-        if rule["object_map_type"] not in [RML_BLANK_NODE]
-    ]
-
-    subject_groups = list(query_source_rules.groupby("subject_map_value", dropna=False))
-    triples.extend(
-        SubjectTriple(subject_rules.iloc[0]) for _, subject_rules in subject_groups
-    )
-    query = Query(triples)
+    query_source_rules = _select_query_source_rules(source_rules, excluded_references)
+    triples = query_triples(mapping_rules, query_source_rules, excluded_references)
+    query = Query(triples, excluded_references)
     generated_query = query.generate(mapping_rules)
 
     if generated_query is None:

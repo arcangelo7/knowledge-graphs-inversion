@@ -1,0 +1,11 @@
+--- a/be/ugent/idlab/knows/dataio/access/RDBAccess.java
++++ b/be/ugent/idlab/knows/dataio/access/RDBAccess.java
+@@ -210,7 +210,7 @@
+                 // Normalize value and add value to CSV row.
+                 if (VARBINARY.equals(dataType)) {
+                     byte[] data = rs.getBytes(columnName);
+-                    csvRow[i - 1] = bytesToHexString(data);
++                    csvRow[i - 1] = data == null ? null : bytesToHexString(data);
+                 } else {
+                     String data = rs.getString(columnName);
+                     csvRow[i - 1] = normalizeData(data, dataType);

@@ -5,6 +5,7 @@
 """Triple classes for SPARQL query generation."""
 
 import json
+import re
 from typing import cast
 
 import pandas as pd
@@ -15,6 +16,7 @@ from kgi.constants import (
     RML_CONSTANT,
     RML_DEFAULT_GRAPH,
     RML_IRI,
+    RML_LANGUAGE_MAP,
     RML_LITERAL,
     RML_PARENT_TRIPLES_MAP,
     RML_REFERENCE,
@@ -32,16 +34,68 @@ def _same_value_filter(left_var: str, right_var: str) -> str:
     )
 
 
-def _has_adjacent_template_captures(references_template: str) -> bool:
+def _blank_node_label_bind(term_var: str, target_var: str) -> str:
+    return (
+        f"BIND(REPLACE(REPLACE(STR(?{term_var}), '^urn:bnode:', ''), '^_:', '') "
+        f"AS ?{target_var})"
+    )
+
+
+def subject_variable_key(rule: pd.Series) -> str:
+    """Codex key for the subject term variable of a rule.
+
+    A reference subject map names a column without exposing it as is: an IRI
+    resolves the value against the base IRI and a blank node label carries it
+    behind a prefix. The key is suffixed so that the term variable stays distinct
+    from the variable holding the column value.
+    """
+    map_value = str(rule["subject_map_value"])
+    if rule["subject_map_type"] == RML_REFERENCE:
+        return f"{map_value}_subject"
+    return map_value
+
+
+def has_adjacent_template_captures(references_template: str) -> bool:
     parts = references_template.split("([^/]*)")
     return any(part == "" for part in parts[1:-1])
+
+
+def has_multiple_template_decompositions(value: str, references_template: str) -> bool:
+    parts = references_template.split("([^/]*)")
+    if len(parts) < 3:
+        return False
+
+    matches = 0
+
+    def count_matches(part_index: int, position: int) -> None:
+        nonlocal matches
+        if matches > 1:
+            return
+        literal = parts[part_index]
+        literal_match = re.match(literal, value[position:])
+        if literal_match is None:
+            return
+        capture_start = position + literal_match.end()
+        if part_index == len(parts) - 1:
+            if capture_start == len(value):
+                matches += 1
+            return
+
+        next_literal = parts[part_index + 1]
+        for capture_end in range(capture_start, len(value) + 1):
+            if "/" in value[capture_start:capture_end]:
+                break
+            if re.match(next_literal, value[capture_end:]) is not None:
+                count_matches(part_index + 1, capture_end)
+
+    count_matches(0, 0)
+    return matches > 1
 
 
 def extract_from_iri_template(
     template_value: str,
     references_template: str,
     references: list[str],
-    rule: pd.Series,
     codex: Codex,
     id_generator: IdGenerator,
     slice_label: str,
@@ -110,8 +164,30 @@ def extract_from_iri_template(
 class QueryTriple(Triple):
     """Represents a query triple with subject, predicate, and object."""
 
-    def __init__(self, rule: pd.Series):
+    def __init__(
+        self, rule: pd.Series, excluded_references: frozenset[str] = frozenset()
+    ):
         self.rule = rule
+        self.excluded_references = excluded_references
+
+    def _variable_key(self, map_type: object, map_value: str, role: str) -> str:
+        """Codex key for an object term variable.
+
+        A reference term map names a column, so the key is suffixed when that column
+        is left out of the reconstruction, to keep the term variable distinct from
+        the variable that would hold the column value.
+        """
+        if map_type == RML_REFERENCE and map_value in self.excluded_references:
+            return f"{map_value}_{role}"
+        return map_value
+
+    def _constant_language(self) -> str | None:
+        if (
+            self.rule["lang_datatype"] == RML_LANGUAGE_MAP
+            and self.rule["lang_datatype_map_type"] == RML_CONSTANT
+        ):
+            return str(self.rule["lang_datatype_map_value"])
+        return None
 
     @property
     def references(self) -> set[str]:
@@ -187,6 +263,27 @@ class QueryTriple(Triple):
         pattern = self._generate_pattern(id_generator, codex, all_mapping_rules)
         if pattern is None:
             return None
+        if (
+            self.rule["predicate_map_type"] == RML_TEMPLATE
+            and not self.predicate_references & self.excluded_references
+        ):
+            pattern = "\n".join(
+                (
+                    pattern,
+                    extract_from_iri_template(
+                        template_value=str(self.rule["predicate_map_value"]),
+                        references_template=str(
+                            self.rule["predicate_references_template"]
+                        ),
+                        references=[
+                            str(value) for value in self.rule["predicate_references"]
+                        ],
+                        codex=codex,
+                        id_generator=id_generator,
+                        slice_label="predicate",
+                    ),
+                )
+            )
         if str(self.rule["object_map_type"]) == RML_PARENT_TRIPLES_MAP:
             return pattern
         return self._wrap_in_graph(pattern)
@@ -194,8 +291,12 @@ class QueryTriple(Triple):
     def _generate_pattern(
         self, id_generator: IdGenerator, codex: Codex, all_mapping_rules: pd.DataFrame
     ) -> str | None:
-        subject_reference = codex.get_id(str(self.rule["subject_map_value"]))
-        predicate = f"<{self.rule['predicate_map_value']}>"
+        subject_reference = codex.get_id(subject_variable_key(self.rule))
+        predicate = (
+            f"<{self.rule['predicate_map_value']}>"
+            if self.rule["predicate_map_type"] == RML_CONSTANT
+            else f"?{codex.get_id(str(self.rule['predicate_map_value']))}"
+        )
         object_map_value = str(self.rule["object_map_value"])
         object_map_type = str(self.rule["object_map_type"])
         object_references_template = str(self.rule["object_references_template"])
@@ -213,7 +314,9 @@ class QueryTriple(Triple):
             return f"?{subject_reference} {predicate} {object_map_value} ."
 
         if object_map_type == RML_REFERENCE:
-            object_identifier = object_map_value
+            object_identifier = self._variable_key(
+                RML_REFERENCE, object_map_value, "object"
+            )
             object_reference, already_bound = codex.get_id_and_is_bound(
                 object_identifier
             )
@@ -226,12 +329,20 @@ class QueryTriple(Triple):
                 lines.append(
                     f"?{subject_reference} {predicate} ?{temp_object_reference} ."
                 )
+                matched_object = temp_object_reference
+            else:
+                lines.append(f"?{subject_reference} {predicate} ?{object_reference} .")
+                matched_object = object_reference
+            language = self._constant_language()
+            if language is not None:
+                lines.append(
+                    f'FILTER(LCASE(LANG(?{matched_object})) = "{language.lower()}")'
+                )
+            if already_bound:
                 lines.append(f"BIND(?{temp_object_reference} as ?{object_reference})")
                 lines.append(
                     f"FILTER(!BOUND(?{object_reference}) || !BOUND(?{temp_object_reference})  || ?{temp_object_reference} = ?{object_reference})"
                 )
-            else:
-                lines.append(f"?{subject_reference} {predicate} ?{object_reference} .")
             return "\n".join(lines)
 
         elif object_map_type == RML_TEMPLATE:
@@ -239,9 +350,12 @@ class QueryTriple(Triple):
             object_reference, already_bound = codex.get_id_and_is_bound(
                 object_identifier
             )
-            lines = []
-            lines.append(f"?{subject_reference} {predicate} ?{object_reference}")
+            pattern = f"?{subject_reference} {predicate} ?{object_reference}"
 
+            if has_adjacent_template_captures(object_references_template):
+                return f"{pattern} ."
+
+            lines = [pattern]
             evaluated_template = object_references_template
             current_slice = object_reference
 
@@ -290,7 +404,7 @@ class QueryTriple(Triple):
                 all_mapping_rules["triples_map_id"] == object_parent_triples_map_id
             ].iloc[0]
             object_map_value = object_rule["subject_map_value"]
-            object_reference = codex.get_id(object_map_value)
+            object_reference = codex.get_id(subject_variable_key(object_rule))
             predicate = f"<{self.rule['predicate_map_value']}>"
 
             graph_iri = self._graph_iri()
@@ -309,6 +423,10 @@ class QueryTriple(Triple):
             parent_references = object_rule["subject_references"]
 
             for jc in join_conditions.values():
+                # A reference parent subject carries no template to read the join
+                # column from, so the column stays with the term maps that expose it
+                if object_rule["subject_map_type"] == RML_REFERENCE:
+                    continue
                 child_value = str(jc["child_value"])
                 parent_value = jc["parent_value"]
                 child_identifier = child_value
@@ -360,9 +478,6 @@ class QueryTriple(Triple):
 class SubjectTriple(QueryTriple):
     """Represents a subject triple for template extraction."""
 
-    def __init__(self, rule: pd.Series):
-        super().__init__(rule)
-
     @property
     def template_extracted_references(self) -> set[str]:
         """Subject references extracted from templates (not column references)."""
@@ -385,20 +500,18 @@ class SubjectTriple(QueryTriple):
         subject_term_type = self.rule["subject_termtype"]
 
         if subject_map_type == RML_REFERENCE:
-            # Column-reference subjects: the subject variable already binds
-            # to the IRI which IS the column value. No extraction needed.
-            return None
+            return self._generate_reference_label(codex)
 
         if subject_map_type == RML_TEMPLATE:
+            if has_adjacent_template_captures(
+                str(self.rule["subject_references_template"])
+            ):
+                return None
             all_already_bound = all(
                 str(ref) in codex.codex for ref in self.rule["subject_references"]
             )
             if all_already_bound:
                 if subject_term_type == RML_BLANK_NODE:
-                    return None
-                if _has_adjacent_template_captures(
-                    str(self.rule["subject_references_template"])
-                ):
                     return None
 
             if subject_term_type == RML_IRI:
@@ -411,13 +524,32 @@ class SubjectTriple(QueryTriple):
             f"subject term type: {subject_term_type}"
         )
 
+    def _generate_reference_label(self, codex: Codex) -> str | None:
+        """Read the column value a blank node label carries.
+
+        An IRI built from a column resolves the value against the base IRI, so
+        the value must come from another term map; a value another term map has
+        already bound is kept.
+        """
+        map_value = str(self.rule["subject_map_value"])
+        if (
+            self.rule["subject_termtype"] != RML_BLANK_NODE
+            or map_value in self.excluded_references
+        ):
+            return None
+        value_variable, already_bound = codex.get_id_and_is_bound(map_value)
+        if already_bound:
+            return None
+        return _blank_node_label_bind(
+            codex.get_id(subject_variable_key(self.rule)), value_variable
+        )
+
     def _generate_iri_template(self, codex: Codex, id_generator: IdGenerator):
         """Generate SPARQL for IRI template."""
         return extract_from_iri_template(
             template_value=str(self.rule["subject_map_value"]),
             references_template=str(self.rule["subject_references_template"]),
             references=list(self.rule["subject_references"]),
-            rule=self.rule,
             codex=codex,
             id_generator=id_generator,
             slice_label="subject",
@@ -433,7 +565,7 @@ class SubjectTriple(QueryTriple):
         )
 
         lines = [
-            f"BIND(REPLACE(REPLACE(STR(?{subject_reference}), '^urn:bnode:', ''), '^_:', '') AS ?{normalized_subject_reference})"
+            _blank_node_label_bind(subject_reference, normalized_subject_reference)
         ]
         evaluated_template = subject_references_template
         current_slice_reference = normalized_subject_reference
@@ -493,3 +625,38 @@ class SubjectTriple(QueryTriple):
             evaluated_template = current_post_string
 
         return "\n".join(lines)
+
+
+class ReferencedSubjectTriple(SubjectTriple):
+    """Subject of a triples map that has no predicate-object map of its own.
+
+    Such a triples map generates no triples, so the graph carries its subjects only
+    as the objects of the join that references it. That join supplies the pattern
+    binding the subject variable the template extraction reads from.
+    """
+
+    def __init__(
+        self,
+        rule: pd.Series,
+        referencing_rule: pd.Series,
+        excluded_references: frozenset[str] = frozenset(),
+    ):
+        super().__init__(rule, excluded_references)
+        self.referencing = QueryTriple(referencing_rule, excluded_references)
+
+    def generate(
+        self, id_generator: IdGenerator, codex: Codex, all_mapping_rules: pd.DataFrame
+    ) -> str | None:
+        """Generate the join pattern binding the subject, then extract from it."""
+        subject_variable = codex.get_id(subject_variable_key(self.rule))
+        anchor_variable = codex.get_id(
+            f"{self.rule['triples_map_id']}_referencing_subject"
+        )
+        predicate = f"<{self.referencing.rule['predicate_map_value']}>"
+        anchor = self.referencing._wrap_in_graph(
+            f"?{anchor_variable} {predicate} ?{subject_variable} ."
+        )
+        extraction = super().generate(id_generator, codex, all_mapping_rules)
+        if extraction is None:
+            return anchor
+        return f"{anchor}\n{extraction}"

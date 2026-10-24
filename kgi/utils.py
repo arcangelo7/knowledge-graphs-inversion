@@ -16,12 +16,19 @@ from kgi.constants import REF_TEMPLATE_REGEX
 from kgi.exceptions import UnsupportedMappingError
 
 
+def _is_delimited(identifier: str) -> bool:
+    return identifier.startswith('"') and identifier.endswith('"')
+
+
+def undelimited_sql_identifier(identifier: str) -> str:
+    """Drop the delimiters of a SQL identifier, leaving its case untouched."""
+    return identifier[1:-1] if _is_delimited(identifier) else identifier
+
+
 def normalize_sql_identifier(identifier: str) -> str:
     """Resolve a SQL identifier to its stored form: delimited identifiers keep
     their exact case, undelimited ones are folded to lowercase as PostgreSQL does."""
-    if identifier.startswith('"') and identifier.endswith('"'):
-        return identifier[1:-1]
-    return identifier.lower()
+    return identifier[1:-1] if _is_delimited(identifier) else identifier.lower()
 
 
 class IdGenerator:
@@ -247,64 +254,71 @@ def insert_columns(df: pd.DataFrame, pure=False) -> pd.DataFrame:
                 )
 
         # Predicate references
-        match df.at[index, "predicate_map_type"]:
-            case "http://w3id.org/rml/constant":
-                df.at[index, "predicate_references"] = []
-                df.at[index, "predicate_reference_count"] = 0
-            case "http://w3id.org/rml/reference":
-                df.at[index, "predicate_references"] = [
-                    df.at[index, "predicate_map_value"]
-                ]
-                df.at[index, "predicate_reference_count"] = 1
-            case "http://w3id.org/rml/template":
-                references_list = re.findall(
-                    REF_TEMPLATE_REGEX, df.at[index, "predicate_map_value"]
-                )
-                df.at[index, "predicate_references"] = references_list
-                df.at[index, "predicate_reference_count"] = len(references_list)
-                df.at[index, "predicate_references_template"] = re.sub(
-                    REF_TEMPLATE_REGEX,
-                    r"([^/]*)",
-                    df.at[index, "predicate_map_value"],
-                )
-            case predicate_map_type:
-                raise UnsupportedMappingError(
-                    f"Unsupported predicate map type: {predicate_map_type}"
-                )
+        predicate_map_type = df.at[index, "predicate_map_type"]
+        if pd.notna(predicate_map_type):
+            match predicate_map_type:
+                case "http://w3id.org/rml/constant":
+                    df.at[index, "predicate_references"] = []
+                    df.at[index, "predicate_reference_count"] = 0
+                case "http://w3id.org/rml/reference":
+                    df.at[index, "predicate_references"] = [
+                        df.at[index, "predicate_map_value"]
+                    ]
+                    df.at[index, "predicate_reference_count"] = 1
+                case "http://w3id.org/rml/template":
+                    references_list = re.findall(
+                        REF_TEMPLATE_REGEX, df.at[index, "predicate_map_value"]
+                    )
+                    df.at[index, "predicate_references"] = references_list
+                    df.at[index, "predicate_reference_count"] = len(references_list)
+                    df.at[index, "predicate_references_template"] = re.sub(
+                        REF_TEMPLATE_REGEX,
+                        r"([^/]*)",
+                        df.at[index, "predicate_map_value"],
+                    )
+                case unsupported_predicate_map_type:
+                    raise UnsupportedMappingError(
+                        f"Unsupported predicate map type: "
+                        f"{unsupported_predicate_map_type}"
+                    )
 
         # Object references
-        match df.at[index, "object_map_type"]:
-            case "http://w3id.org/rml/constant":
-                df.at[index, "object_references"] = []
-                df.at[index, "object_reference_count"] = 0
-            case "http://w3id.org/rml/reference":
-                df.at[index, "object_references"] = [df.at[index, "object_map_value"]]
-                df.at[index, "object_reference_count"] = 1
-            case "http://w3id.org/rml/template":
-                references_list = re.findall(
-                    REF_TEMPLATE_REGEX, df.at[index, "object_map_value"]
-                )
-                df.at[index, "object_references"] = references_list
-                df.at[index, "object_reference_count"] = len(references_list)
-                df.at[index, "object_references_template"] = re.sub(
-                    REF_TEMPLATE_REGEX, r"([^/]*)", df.at[index, "object_map_value"]
-                )
-            case "http://w3id.org/rml/parentTriplesMap":
-                join_conditions = df.at[index, "object_join_conditions"]
-                if pd.notna(join_conditions):
-                    df.at[index, "object_references"] = [
-                        list(json.loads(join_conditions.replace("'", '"')).values())[0][
-                            "child_value"
-                        ]
-                    ]
-                    df.at[index, "object_reference_count"] = 1
-                else:
+        object_map_type = df.at[index, "object_map_type"]
+        if pd.notna(object_map_type):
+            match object_map_type:
+                case "http://w3id.org/rml/constant":
                     df.at[index, "object_references"] = []
                     df.at[index, "object_reference_count"] = 0
-            case object_map_type:
-                raise UnsupportedMappingError(
-                    f"Unsupported object map type: {object_map_type}"
-                )
+                case "http://w3id.org/rml/reference":
+                    df.at[index, "object_references"] = [
+                        df.at[index, "object_map_value"]
+                    ]
+                    df.at[index, "object_reference_count"] = 1
+                case "http://w3id.org/rml/template":
+                    references_list = re.findall(
+                        REF_TEMPLATE_REGEX, df.at[index, "object_map_value"]
+                    )
+                    df.at[index, "object_references"] = references_list
+                    df.at[index, "object_reference_count"] = len(references_list)
+                    df.at[index, "object_references_template"] = re.sub(
+                        REF_TEMPLATE_REGEX, r"([^/]*)", df.at[index, "object_map_value"]
+                    )
+                case "http://w3id.org/rml/parentTriplesMap":
+                    join_conditions = df.at[index, "object_join_conditions"]
+                    if pd.notna(join_conditions):
+                        df.at[index, "object_references"] = [
+                            list(
+                                json.loads(join_conditions.replace("'", '"')).values()
+                            )[0]["child_value"]
+                        ]
+                        df.at[index, "object_reference_count"] = 1
+                    else:
+                        df.at[index, "object_references"] = []
+                        df.at[index, "object_reference_count"] = 0
+                case unsupported_object_map_type:
+                    raise UnsupportedMappingError(
+                        f"Unsupported object map type: {unsupported_object_map_type}"
+                    )
 
         # Graph references
         graph_map_type = df.at[index, "graph_map_type"]

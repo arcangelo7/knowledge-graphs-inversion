@@ -5,12 +5,49 @@
 """Schema retrieval and management for knowledge graph inversion."""
 
 from dataclasses import dataclass
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Optional, cast
 
 import pandas as pd
 import sqlalchemy
 from sqlalchemy import inspect
 from sqlalchemy.dialects.mysql import TINYINT, VARBINARY
+from sqlalchemy.types import TypeEngine
+
+_RESULT_VALUE_TYPES: tuple[tuple[type[object], type[TypeEngine]], ...] = (
+    (bool, sqlalchemy.Boolean),
+    (int, sqlalchemy.Integer),
+    (float, sqlalchemy.Float),
+    (Decimal, sqlalchemy.Numeric),
+    (datetime, sqlalchemy.DateTime),
+    (date, sqlalchemy.Date),
+    (bytes, sqlalchemy.LargeBinary),
+    (str, sqlalchemy.Text),
+)
+
+
+def _result_column_type(values: pd.Series) -> TypeEngine:
+    """Read the SQL type of a query result column off the values it holds.
+
+    A query result carries no declared schema, so the values are the only evidence.
+    """
+    present = values.dropna()
+    if present.empty:
+        return sqlalchemy.Text()
+    if pd.api.types.is_bool_dtype(present):
+        return sqlalchemy.Boolean()
+    if pd.api.types.is_integer_dtype(present):
+        return sqlalchemy.Integer()
+    if pd.api.types.is_float_dtype(present):
+        return sqlalchemy.Float()
+    if pd.api.types.is_datetime64_any_dtype(present):
+        return sqlalchemy.DateTime()
+    sample = present.iloc[0]
+    for python_type, sql_type in _RESULT_VALUE_TYPES:
+        if isinstance(sample, python_type):
+            return sql_type()
+    raise TypeError(f"Unsupported query result value: {sample!r}")
 
 
 @dataclass
@@ -18,7 +55,7 @@ class ColumnInfo:
     """Column metadata from database schema."""
 
     name: str
-    data_type: str
+    sql_type: TypeEngine
     python_type: type[object]
     nullable: bool = True
     ordinal_position: int = 0
@@ -72,7 +109,7 @@ class DatabaseSchemaRetriever:
         for idx, col_info in enumerate(columns_info):
             column = ColumnInfo(
                 name=cast(str, col_info["name"]),
-                data_type=str(col_info["type"]),
+                sql_type=col_info["type"],
                 python_type=self._sql_to_python_type(col_info["type"]),
                 nullable=cast(bool, col_info["nullable"]),
                 ordinal_position=idx + 1,
@@ -84,6 +121,23 @@ class DatabaseSchemaRetriever:
             columns=columns,
             primary_keys=primary_keys,
         )
+
+    def get_query_schema(self, sql: str, name: str) -> TableSchema:
+        """Describe the result set of a logical query as the schema of a table."""
+        with self.engine.connect() as connection:
+            result = pd.read_sql_query(sqlalchemy.text(sql), connection)
+        columns = []
+        for index, (label, values) in enumerate(result.items()):
+            sql_type = _result_column_type(values)
+            columns.append(
+                ColumnInfo(
+                    name=str(label),
+                    sql_type=sql_type,
+                    python_type=self._sql_to_python_type(sql_type),
+                    ordinal_position=index + 1,
+                )
+            )
+        return TableSchema(table_name=name, columns=columns, primary_keys=[])
 
     def _sql_to_python_type(self, sql_type: object) -> type[object]:
         """Convert SQLAlchemy type to Python type."""
@@ -100,14 +154,14 @@ class DatabaseSchemaRetriever:
             return float
         elif isinstance(sql_type, sqlalchemy.Boolean):
             return bool
-        elif isinstance(sql_type, sqlalchemy.Date):
-            return pd.Timestamp
         elif isinstance(sql_type, (sqlalchemy.DateTime, sqlalchemy.TIMESTAMP)):
             return pd.Timestamp
+        elif isinstance(sql_type, sqlalchemy.Date):
+            return date
         elif isinstance(sql_type, sqlalchemy.String):
             return str
         elif isinstance(sql_type, (sqlalchemy.LargeBinary, VARBINARY)):
-            return str
+            return bytes
         raise TypeError(f"Unsupported SQL type: {sql_type}")
 
     def dispose(self):
@@ -125,7 +179,10 @@ def infer_type_from_value_with_schema(
         return None
 
     if column_info.python_type is int:
-        return int(float(str(value)))
+        try:
+            return int(Decimal(str(value)))
+        except InvalidOperation as error:
+            raise ValueError from error
     if column_info.python_type is float:
         return float(str(value))
     if column_info.python_type is bool:
@@ -145,6 +202,10 @@ def infer_type_from_value_with_schema(
         }[str(value).lower()]
     if column_info.python_type == pd.Timestamp:
         return pd.to_datetime(str(value))
+    if column_info.python_type is date:
+        return date.fromisoformat(str(value))
+    if column_info.python_type is bytes:
+        return bytes.fromhex(str(value))
     return str(value)
 
 

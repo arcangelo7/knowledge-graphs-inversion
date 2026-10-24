@@ -14,10 +14,9 @@ from sqlalchemy import MetaData, create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 
-import rmlmapper
-from conformance_config import get_database_config
-from database_connection import DatabaseConnection
-from test_suites import R2RMLTestSuite, RMLTestSuite
+from conformance import rmlmapper
+from conformance.config import get_database_config
+from conformance.suites import R2RMLTestSuite, RMLTestSuite
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -66,7 +65,9 @@ DATABASE_CONFIGS: dict[Database, DatabaseConfig] = {
             "MYSQL_PASSWORD=r2rml",
             "MYSQL_DATABASE=r2rml",
         ),
-        server_options=("--sql-mode=ANSI_QUOTES",),
+        server_options=(
+            "--sql-mode=ANSI_QUOTES,PAD_CHAR_TO_FULL_LENGTH,PIPES_AS_CONCAT",
+        ),
     ),
 }
 
@@ -88,14 +89,6 @@ def database(request: pytest.FixtureRequest) -> Database:
 @pytest.fixture(scope="session")
 def database_config(database: Database) -> DatabaseConfig:
     return DATABASE_CONFIGS[database]
-
-
-@pytest.fixture(scope="session")
-def database_urls(database_config: DatabaseConfig) -> tuple[str, str]:
-    return (
-        database_config.url(database_config.source_port),
-        database_config.url(database_config.dest_port),
-    )
 
 
 def _wait_for_database(
@@ -142,13 +135,16 @@ def _start_database(
     _wait_for_database(db_url, database_config.name, port)
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def _database_containers(
     database_config: DatabaseConfig,
-    database_urls: tuple[str, str],
-) -> Iterator[None]:
+) -> Iterator[tuple[str, str]]:
     source_container = f"kgi-test-r2rml-{database_config.name}-source"
     dest_container = f"kgi-test-r2rml-{database_config.name}-dest"
+    database_urls = (
+        database_config.url(database_config.source_port),
+        database_config.url(database_config.dest_port),
+    )
     source_url, dest_url = database_urls
     try:
         _start_database(
@@ -163,10 +159,15 @@ def _database_containers(
             dest_url,
             database_config,
         )
-        yield
+        yield database_urls
     finally:
         subprocess.run(["docker", "rm", "-f", source_container], capture_output=True)
         subprocess.run(["docker", "rm", "-f", dest_container], capture_output=True)
+
+
+@pytest.fixture(scope="session")
+def database_urls(_database_containers: tuple[str, str]) -> tuple[str, str]:
+    return _database_containers
 
 
 def drop_all_tables(db_url: str) -> None:
@@ -191,10 +192,6 @@ def load_sql_script(db_url: str, script_path: str) -> None:
                     conn.execute(text(statement))
     finally:
         engine.dispose()
-
-
-def get_db_content(db_url: str) -> dict[str, dict[str, list[str]]]:
-    return DatabaseConnection().get_database_content(db_url)
 
 
 def run_forward_mapping(
@@ -229,22 +226,22 @@ def run_forward_mapping(
 def _collect_test_ids(suite_class: type, base_dir: str) -> list[str]:
     if not os.path.isdir(base_dir):
         return []
-    suite = suite_class(base_dir, PROJECT_ROOT)
+    suite = suite_class(base_dir)
     return suite.list_test_ids()
 
 
 R2RML_BASE_DIR = os.path.join(PROJECT_ROOT, "r2rml_test_cases")
 RML_BASE_DIR = os.path.join(PROJECT_ROOT, "rml_io_registry")
 
-R2RML_TEST_IDS = _collect_test_ids(R2RMLTestSuite, R2RML_BASE_DIR)
+R2RML_TEST_IDS = R2RMLTestSuite(R2RML_BASE_DIR).list_test_ids()
 RML_TEST_IDS = _collect_test_ids(RMLTestSuite, RML_BASE_DIR)
 
 
 @pytest.fixture(scope="session")
 def r2rml_suite() -> R2RMLTestSuite:
-    return R2RMLTestSuite(R2RML_BASE_DIR, PROJECT_ROOT)
+    return R2RMLTestSuite(R2RML_BASE_DIR)
 
 
 @pytest.fixture(scope="session")
 def rml_suite() -> RMLTestSuite:
-    return RMLTestSuite(RML_BASE_DIR, PROJECT_ROOT)
+    return RMLTestSuite(RML_BASE_DIR)

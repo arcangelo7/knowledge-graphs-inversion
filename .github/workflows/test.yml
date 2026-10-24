@@ -28,14 +28,15 @@ jobs:
         database: ["postgresql", "mysql"]
 
     steps:
-      # actions/checkout v7.0.0
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-        with:
-          submodules: recursive
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+
+      - name: Check out the test suites
+        run: git submodule update --init r2rml_test_cases rml_io_registry
 
       - name: Install uv
-        # astral-sh/setup-uv v8.3.2
-        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990
+        # astral-sh/setup-uv v10.0.1
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
         with:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
@@ -47,8 +48,8 @@ jobs:
         run: uv sync --locked --all-extras --dev
 
       - name: Install Java
-        # actions/setup-java v5.6.0
-        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95
+        # actions/setup-java v6.0.0
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c
         with:
           distribution: temurin
           java-version: "21"
@@ -88,3 +89,4 @@ jobs:
         with:
           name: coverage-badge
           path: coverage-badge.svg
+

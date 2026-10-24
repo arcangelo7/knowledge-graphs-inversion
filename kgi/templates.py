@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import date, datetime
+from decimal import Decimal
 
 import pandas as pd
 import sqlalchemy
@@ -16,10 +18,26 @@ from sqlalchemy.sql.sqltypes import (
     Boolean,
     Date,
     DateTime,
+    Float,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
+)
+from sqlalchemy.types import TypeEngine
+
+from kgi.schema import TableSchema
+
+VALUE_TYPES = (
+    (str, Text),
+    (bytes, LargeBinary),
+    (bool, Boolean),
+    (int, Integer),
+    (float, Float),
+    (Decimal, Numeric),
+    (datetime, DateTime),
+    (date, Date),
 )
 
 
@@ -32,13 +50,18 @@ class RDBTemplate:
     def create_engine(self) -> Engine:
         return sqlalchemy.create_engine(self.db_url)
 
-    def fill_data(self, data_chunks: Iterable[pd.DataFrame], table_name: str) -> None:
+    def fill_data(
+        self,
+        data_chunks: Iterable[pd.DataFrame],
+        table_name: str,
+        schema: TableSchema | None,
+    ) -> None:
         chunks = iter(data_chunks)
         first_chunk = next(chunks)
         engine = self.create_engine()
         try:
             with engine.begin() as connection:
-                table = self._get_sqla_table(first_chunk, table_name)
+                table = self._get_sqla_table(first_chunk, table_name, schema)
                 self._prepare_table(connection, table, first_chunk.empty)
                 self._insert_chunk(connection, table, first_chunk)
                 for chunk in chunks:
@@ -108,34 +131,37 @@ class RDBTemplate:
         connection.execute(table.insert(), converted.to_dict(orient="records"))
 
     @staticmethod
-    def _get_sqla_table(df: pd.DataFrame, table_name: str) -> Table:
-        metadata = MetaData()
-        columns = []
+    def _inferred_type(values: pd.Series) -> TypeEngine:
+        """Read the destination type off the values the graph gave back.
 
-        for column_name, dtype in df.dtypes.items():
-            column_values = df[column_name].dropna()
-            has_strings = any(isinstance(value, str) for value in column_values)
+        Their Python types already carry the datatypes of the RDF literals, so
+        they are the best evidence left when the source schema is unavailable.
+        """
+        present = values.dropna()
+        column_type = next(
+            (
+                candidate
+                for python_type, candidate in VALUE_TYPES
+                if any(isinstance(value, python_type) for value in present)
+            ),
+            Text,
+        )
+        return column_type()
 
-            if has_strings:
-                column_type = Text()
-            elif "int" in str(dtype):
-                column_type = Integer()
-            elif "float" in str(dtype):
-                column_type = Numeric()
-            elif "bool" in str(dtype):
-                column_type = Boolean()
-            elif "datetime" in str(dtype):
-                column_type = DateTime()
-            elif "date" in str(dtype):
-                column_type = Date()
-            else:
-                column_type = Text()
+    @staticmethod
+    def _get_sqla_table(
+        df: pd.DataFrame, table_name: str, schema: TableSchema | None
+    ) -> Table:
+        """Decide the type of every destination column."""
+        if schema is None:
+            columns = [
+                Column(str(name), RDBTemplate._inferred_type(values))
+                for name, values in df.items()
+            ]
+        else:
+            infos = {column.name: column for column in schema.columns}
+            columns = [
+                Column(str(name), infos[str(name)].sql_type) for name in df.columns
+            ]
 
-            columns.append(
-                Column(
-                    str(column_name),
-                    column_type,  # type: ignore[reportArgumentType]
-                )
-            )
-
-        return Table(table_name, metadata, *columns)
+        return Table(table_name, MetaData(), *columns)
