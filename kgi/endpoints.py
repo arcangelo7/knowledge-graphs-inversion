@@ -6,7 +6,7 @@
 
 import os
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from typing import TypeAlias, cast
 
 from pyoxigraph import (
@@ -66,20 +66,22 @@ def _quads_with_default_graph_union(
     path: str,
     rdf_format: RdfFormat,
     normalize_blank_nodes: bool,
+    excluded: Callable[[Quad], bool] | None,
 ) -> Iterator[Quad]:
     for quad in parse(path=path, format=rdf_format):
-        normalized_quad = Quad(
-            _subject_blank_nodes_to_iris(quad.subject)
-            if normalize_blank_nodes
-            else quad.subject,
-            quad.predicate,
-            _object_blank_nodes_to_iris(quad.object)
-            if normalize_blank_nodes
-            else quad.object,
-            _graph_name_blank_nodes_to_iris(quad.graph_name)
-            if normalize_blank_nodes
-            else quad.graph_name,
-        )
+        if excluded is not None and excluded(quad):
+            continue
+        normalized_quad = quad
+        if normalize_blank_nodes and any(
+            isinstance(term, (BlankNode, Triple))
+            for term in (quad.subject, quad.object, quad.graph_name)
+        ):
+            normalized_quad = Quad(
+                _subject_blank_nodes_to_iris(quad.subject),
+                quad.predicate,
+                _object_blank_nodes_to_iris(quad.object),
+                _graph_name_blank_nodes_to_iris(quad.graph_name),
+            )
         yield normalized_quad
         if not isinstance(normalized_quad.graph_name, DefaultGraph):
             yield Quad(
@@ -110,7 +112,7 @@ def _rdf_format_from_path(path: str) -> RdfFormat | None:
 class LocalSparqlGraphStore(Endpoint):
     """Local pyoxigraph-based SPARQL endpoint."""
 
-    def __init__(self, url: str):
+    def __init__(self, url: str, excluded: Callable[[Quad], bool] | None = None):
         rdf_format = _rdf_format_from_path(url)
         if rdf_format is None:
             raise ValueError(f"Unsupported RDF file format: {url}")
@@ -123,7 +125,9 @@ class LocalSparqlGraphStore(Endpoint):
         try:
             normalize_blank_nodes = _has_explicit_blank_nodes(url)
             self._store.bulk_extend(
-                _quads_with_default_graph_union(url, rdf_format, normalize_blank_nodes),
+                _quads_with_default_graph_union(
+                    url, rdf_format, normalize_blank_nodes, excluded
+                ),
             )
             loaded = True
         finally:
@@ -143,6 +147,6 @@ class EndpointFactory:
     """Factory for creating SPARQL endpoints."""
 
     @classmethod
-    def create_from_url(cls, url: str):
+    def create_from_url(cls, url: str, excluded: Callable[[Quad], bool] | None = None):
         """Create a local endpoint from a file path."""
-        return LocalSparqlGraphStore(url)
+        return LocalSparqlGraphStore(url, excluded)

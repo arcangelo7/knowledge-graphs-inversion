@@ -10,11 +10,13 @@ from kgi.exceptions import (
     NonInvertibleError,
     UnsupportedMappingError,
 )
+from kgi.provenance import Provenance
 
 __all__ = [
     "MappingAnalysis",
     "TableAnalysis",
     "analyze_mapping",
+    "Provenance",
     "reconstruct",
     "KGIError",
     "MappingError",

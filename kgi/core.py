@@ -3,19 +3,22 @@
 # SPDX-License-Identifier: ISC
 
 import configparser
+import functools
+import itertools
 import json
 import logging
 import os
 import pathlib
 import re
 import tempfile
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import cast
 from urllib.parse import quote_plus
 
 import pandas as pd
 from morph_kgc.args_parser import load_config_from_argument
-from morph_kgc.mapping.mapping_parser import retrieve_mappings
+from morph_kgc.mapping.mapping_parser import MappingParser
 from pyoxigraph import BlankNode, Literal, NamedNode, Quad, RdfFormat, Store
 
 from kgi.constants import (
@@ -65,7 +68,13 @@ from kgi.exceptions import (
     NonInvertibleError,
     UnsupportedMappingError,
 )
-from kgi.logical_queries import LogicalQuery, query_text, resolve_reference
+from kgi.logical_queries import (
+    LogicalQuery,
+    query_text,
+    recorded_query_columns,
+    resolve_reference,
+)
+from kgi.provenance import Provenance, described_rows, is_reification
 from kgi.query import (
     _position_references,
     non_graph_exposed_references,
@@ -79,6 +88,7 @@ from kgi.query import (
 from kgi.triples import has_multiple_template_decompositions
 from kgi.schema import (
     DatabaseSchemaRetriever,
+    TableSchema,
     apply_schema_ordering,
     apply_schema_types,
 )
@@ -448,15 +458,6 @@ def _check_for_missing_references(
         retriever.dispose()
 
 
-def _generate_template(source_rules: pd.DataFrame, db_url: str) -> RDBTemplate:
-    source_type = source_rules.iloc[0]["source_type"]
-
-    if source_type == "RDB":
-        return RDBTemplate(db_url)
-    else:
-        raise ValueError(f"Unsupported source type: {source_type}")
-
-
 def _term_map_references(
     rule: pd.Series, join_targets: set[str]
 ) -> tuple[set[str], set[str]]:
@@ -489,21 +490,33 @@ def _term_map_references(
     return opaque, exposed
 
 
+def _join_conditions(rule: pd.Series) -> list[tuple[str, str]]:
+    raw_conditions = rule["object_join_conditions"]
+    # A join on the same logical table may have no condition
+    if not isinstance(raw_conditions, str):
+        return []
+    conditions = json.loads(raw_conditions.replace("'", '"'))
+    return [
+        (str(condition["child_value"]), str(condition["parent_value"]))
+        for condition in conditions.values()
+    ]
+
+
+def _parent_rules(rule: pd.Series, mappings: pd.DataFrame) -> pd.DataFrame:
+    return mappings.loc[mappings["triples_map_id"] == rule["object_map_value"]]
+
+
 def _opaque_join_references(rule: pd.Series, mappings: pd.DataFrame) -> set[str]:
-    parent_rules = mappings.loc[mappings["triples_map_id"] == rule["object_map_value"]]
     parent_subject_references = set().union(
         *(
             _reference_set(parent_rule["subject_references"])
-            for _, parent_rule in parent_rules.iterrows()
+            for _, parent_rule in _parent_rules(rule, mappings).iterrows()
         )
     )
-    join_conditions = json.loads(
-        cast(str, rule["object_join_conditions"]).replace("'", '"')
-    )
     return {
-        str(condition["child_value"])
-        for condition in join_conditions.values()
-        if condition["parent_value"] not in parent_subject_references
+        child
+        for child, parent in _join_conditions(rule)
+        if parent not in parent_subject_references
     }
 
 
@@ -896,10 +909,19 @@ def _build_morph_config(
     return tmp.name
 
 
+class _SelfJoinKeepingParser(MappingParser):
+    # morph-kgc turns a self-join on equal column names into a same-row reference,
+    # which hides the joined columns and drops the pairs of distinct rows that
+    # share the joined values
+    def _remove_self_joins_no_condition(self) -> None:
+        pass
+
+
 def _load_mapping_rules(
     mapping: str | pathlib.Path,
     rdf_graph: str,
     source_db_url: str | None,
+    keep_self_joins: bool = False,
 ) -> tuple[pd.DataFrame, str | None, dict[str, LogicalQuery]]:
     logger = get_logger()
     mapping_store = _parse_mapping_store(str(mapping))
@@ -928,7 +950,8 @@ def _load_mapping_rules(
     config_file = _build_morph_config(mapping, rdf_graph, source_db_url)
     try:
         config = load_config_from_argument(config_file)
-        mappings, _, _ = retrieve_mappings(config)
+        parser = _SelfJoinKeepingParser if keep_self_joins else MappingParser
+        mappings, _, _ = parser(config).parse_mappings()
     finally:
         os.unlink(config_file)
 
@@ -970,76 +993,193 @@ def analyze_mapping(
         endpoint.close()
 
 
+def _map_references(map_type: object, map_value: object) -> set[str]:
+    if map_type == RML_REFERENCE:
+        return {str(map_value)}
+    if map_type == RML_TEMPLATE:
+        return set(re.findall(REF_TEMPLATE_REGEX, str(map_value)))
+    return set()
+
+
+def _source_references(mappings: pd.DataFrame) -> dict[str, set[str]]:
+    references: dict[str, set[str]] = {}
+    for _, rule in mappings.iterrows():
+        source = str(rule["logical_source_value"])
+        references.setdefault(source, set()).update(
+            _all_references(rule)
+            | _map_references(
+                rule["lang_datatype_map_type"], rule["lang_datatype_map_value"]
+            )
+        )
+        if rule["object_map_type"] != RML_PARENT_TRIPLES_MAP:
+            continue
+        parent_rule = _parent_rules(rule, mappings).iloc[0]
+        conditions = _join_conditions(rule)
+        references[source].update(child for child, _ in conditions)
+        references.setdefault(str(parent_rule["logical_source_value"]), set()).update(
+            _reference_set(parent_rule["subject_references"])
+            | {parent for _, parent in conditions}
+        )
+    return references
+
+
+def recorded_columns(
+    mappings: pd.DataFrame,
+    queries: dict[str, LogicalQuery],
+    table_columns: Callable[[str], Sequence[str]] | None,
+) -> dict[str, set[str]]:
+    recorded: dict[str, set[str]] = {}
+    for source, references in _source_references(mappings).items():
+        if source not in queries:
+            recorded.setdefault(source, set()).update(
+                undelimited_sql_identifier(reference) for reference in references
+            )
+            continue
+        for table, columns in recorded_query_columns(
+            queries[source].sql, references, table_columns
+        ).items():
+            recorded.setdefault(table, set()).update(columns)
+    return recorded
+
+
+def _provenance_tables(
+    mappings: pd.DataFrame,
+    queries: dict[str, LogicalQuery],
+    schema_retriever: DatabaseSchemaRetriever | None,
+) -> dict[str, tuple[list[str], TableSchema | None]]:
+    if schema_retriever is None:
+        return {
+            table: (sorted(columns), None)
+            for table, columns in recorded_columns(mappings, queries, None).items()
+        }
+    schema = functools.cache(schema_retriever.get_table_schema)
+    recorded = recorded_columns(
+        mappings, queries, lambda table: schema(table).column_names_ordered
+    )
+    return {
+        table: (
+            sorted(columns, key=schema(table).column_names_ordered.index),
+            schema(table),
+        )
+        for table, columns in recorded.items()
+    }
+
+
+TableFiller = Callable[[str, Iterator[pd.DataFrame], TableSchema | None], None]
+
+
+def _fill_from_provenance(
+    mappings: pd.DataFrame,
+    queries: dict[str, LogicalQuery],
+    endpoint: Endpoint,
+    schema_retriever: DatabaseSchemaRetriever | None,
+    fill: TableFiller,
+) -> int:
+    filled = 0
+    for table_name, (columns, table_schema) in sorted(
+        _provenance_tables(mappings, queries, schema_retriever).items()
+    ):
+        chunks = described_rows(endpoint, table_name, columns)
+        first_chunk = next(chunks, None)
+        # No row of the table produced a triple
+        if first_chunk is None:
+            continue
+        fill(table_name, itertools.chain([first_chunk], chunks), table_schema)
+        filled += 1
+    return filled
+
+
+def _fill_from_graph(
+    mappings: pd.DataFrame,
+    queries: dict[str, LogicalQuery],
+    endpoint: Endpoint,
+    schema_retriever: DatabaseSchemaRetriever | None,
+    fill: TableFiller,
+) -> int:
+    logger = get_logger()
+    analysis = _analyze_rules(mappings, queries, endpoint)
+    _check_for_unrecoverable_tables(analysis)
+    filled = 0
+    for table_name_value, source_rules in mappings.groupby("logical_source_value"):
+        table_name = str(table_name_value)
+        excluded_references = analysis[table_name].unrecoverable
+        if excluded_references:
+            columns = ", ".join(sorted(excluded_references))
+            logger.warning(
+                f"Columns of table '{table_name}' left out of the reconstruction "
+                f"because the graph does not expose them unambiguously: {columns}"
+            )
+
+        source_data_chunks, _ = retrieve_data(
+            mappings,
+            source_rules,
+            endpoint,
+            excluded_references,
+            decode_columns=True,
+        )
+        if source_data_chunks is None:
+            raise NonInvertibleError(
+                f"No column of table '{table_name}' can be recovered from the graph"
+            )
+        if table_name in queries:
+            table_schema = queries[table_name].schema
+        elif schema_retriever is not None:
+            table_schema = schema_retriever.get_table_schema(table_name)
+        else:
+            table_schema = None
+        fill(table_name, source_data_chunks, table_schema)
+        filled += 1
+    return filled
+
+
 def reconstruct(
     mapping: str | pathlib.Path,
     rdf_graph: str | pathlib.Path,
     *,
     dest_db_url: str,
     source_db_url: str | None = None,
+    provenance: Provenance | None = None,
 ) -> None:
-    logger = get_logger()
     rdf_graph_str = str(rdf_graph)
 
     mappings, source_db_url, queries = _load_mapping_rules(
-        mapping, rdf_graph_str, source_db_url
+        mapping,
+        rdf_graph_str,
+        source_db_url,
+        keep_self_joins=provenance is Provenance.FULL,
     )
     endpoint: Endpoint | None = None
-    schema_retrievers: dict[str, DatabaseSchemaRetriever] = {}
+    schema_retriever: DatabaseSchemaRetriever | None = None
     try:
-        endpoint = EndpointFactory.create_from_url(rdf_graph_str)
-        analysis = _analyze_rules(mappings, queries, endpoint)
-        _check_for_unrecoverable_tables(analysis)
+        endpoint = EndpointFactory.create_from_url(
+            rdf_graph_str,
+            excluded=is_reification if provenance is Provenance.FULL else None,
+        )
         if source_db_url is not None:
-            schema_retrievers["DataSource1"] = DatabaseSchemaRetriever(source_db_url)
+            schema_retriever = DatabaseSchemaRetriever(source_db_url)
+        template = RDBTemplate(dest_db_url)
 
-        reconstructed_table_count = 0
-        for table_name_value, source_rules in mappings.groupby("logical_source_value"):
-            table_name = str(table_name_value)
-            source_section = str(source_rules.iloc[0]["source_name"])
-            template = _generate_template(source_rules, dest_db_url)
-
-            excluded_references = analysis[table_name].unrecoverable
-            if excluded_references:
-                columns = ", ".join(sorted(excluded_references))
-                logger.warning(
-                    f"Columns of table '{table_name}' left out of the reconstruction "
-                    f"because the graph does not expose them unambiguously: {columns}"
-                )
-
-            source_data_chunks, _ = retrieve_data(
-                mappings,
-                source_rules,
-                endpoint,
-                excluded_references,
-                decode_columns=True,
-            )
-            if source_data_chunks is None:
-                raise NonInvertibleError(
-                    f"No column of table '{table_name}' can be recovered from the graph"
-                )
-            if table_name in queries:
-                table_schema = queries[table_name].schema
-            elif source_db_url is not None:
-                table_schema = schema_retrievers[source_section].get_table_schema(
-                    table_name
-                )
-            else:
-                table_schema = None
+        def fill(
+            table_name: str,
+            chunks: Iterator[pd.DataFrame],
+            table_schema: TableSchema | None,
+        ) -> None:
             if table_schema is not None:
-                source_data_chunks = (
+                chunks = (
                     apply_schema_ordering(
                         apply_schema_types(chunk, table_schema), table_schema
                     )
-                    for chunk in source_data_chunks
+                    for chunk in chunks
                 )
+            template.fill_data(chunks, table_name, table_schema)
 
-            template.fill_data(source_data_chunks, table_name, table_schema)
-            reconstructed_table_count += 1
-
-        if reconstructed_table_count == 0:
+        fill_tables = (
+            _fill_from_provenance if provenance is Provenance.FULL else _fill_from_graph
+        )
+        if fill_tables(mappings, queries, endpoint, schema_retriever, fill) == 0:
             raise NoDataError("No data was generated during reconstruction")
     finally:
         if endpoint is not None:
             endpoint.close()
-        for retriever in schema_retrievers.values():
-            retriever.dispose()
+        if schema_retriever is not None:
+            schema_retriever.dispose()
