@@ -4,7 +4,7 @@
 
 import re
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
@@ -52,16 +52,24 @@ from kgi.constants import (
     RML_PARENT_TRIPLES_MAP,
     RML_REFERENCE,
     RML_TEMPLATE,
+    TRIPLES_MAP_IRI,
 )
-from kgi.core import _join_conditions, _load_mapping_rules, recorded_columns
+from kgi.core import (
+    _join_conditions,
+    _load_mapping_rules,
+    mapped_columns,
+    omitted_columns,
+)
 from kgi.logical_queries import LogicalQuery, query_text, resolve_reference
 from kgi.provenance import (
     PROV_HAD_PRIMARY_SOURCE,
+    PROV_WAS_DERIVED_FROM,
     RDF_OBJECT,
     RDF_PREDICATE,
     RDF_STATEMENT,
     RDF_SUBJECT,
     SOURCE_NAMESPACE,
+    Provenance,
     column_property,
     table_class,
 )
@@ -342,6 +350,7 @@ class Candidate:
     object: Term
     graph: Term | DefaultGraph
     rows: tuple[SourceRow, ...]
+    triples_map: str
 
 
 QuadTerm = NamedNode | BlankNode | Literal | DefaultGraph
@@ -349,7 +358,7 @@ QuadTerm = NamedNode | BlankNode | Literal | DefaultGraph
 
 def _match(
     candidates: list[Candidate], produced: set[Quad]
-) -> list[tuple[Quad, tuple[SourceRow, ...]]]:
+) -> list[tuple[Quad, Candidate]]:
     # A store relabels blank nodes, so a blank node the mapping labels is found by
     # its position among the produced quads; once found, its label names it in
     # every other quad
@@ -404,7 +413,7 @@ def _match(
             and (obj is not None or isinstance(quad.object, BlankNode))
         ]
 
-    matched: list[tuple[Quad, tuple[SourceRow, ...]]] = []
+    matched: list[tuple[Quad, Candidate]] = []
     pending = candidates
     progress = True
     while pending and progress:
@@ -431,7 +440,7 @@ def _match(
                 ):
                     if isinstance(term, BlankLabel) and isinstance(found, BlankNode):
                         bound[term.label] = found
-                matched.append((quad, candidate.rows))
+                matched.append((quad, candidate))
             progress = True
         pending = unresolved
     return matched
@@ -515,27 +524,42 @@ def _candidates(
             if subject is None or obj is None or graph_name is None:
                 continue
             candidates.append(
-                Candidate(subject, predicate, obj, graph_name, _unique(sources))
+                Candidate(
+                    subject,
+                    predicate,
+                    obj,
+                    graph_name,
+                    _unique(sources),
+                    str(rule[TRIPLES_MAP_IRI]),
+                )
             )
     return candidates
 
 
+ReifiedTriples = dict[tuple[Quad, tuple[str, ...], str], tuple[SourceRow, ...]]
+
+
 def _provenance_quads(
-    statements: dict[tuple[Quad, tuple[str, ...]], tuple[SourceRow, ...]],
-    described: tuple[SourceRow, ...],
-    recorded: dict[str, set[str]],
+    reified_triples: ReifiedTriples,
+    source_rows: tuple[SourceRow, ...],
+    described_columns: dict[str, set[str]],
 ) -> list[Quad]:
     quads: list[Quad] = []
-    for index, ((quad, _), rows) in enumerate(statements.items(), start=1):
-        statement = NamedNode(f"{SOURCE_NAMESPACE}statement/{index}")
+    for index, ((quad, _, triples_map), rows) in enumerate(
+        reified_triples.items(), start=1
+    ):
+        reified_triple = NamedNode(f"{SOURCE_NAMESPACE}statement/{index}")
         quads += [
-            Quad(statement, RDF_TYPE, RDF_STATEMENT),
-            Quad(statement, RDF_SUBJECT, quad.subject),
-            Quad(statement, RDF_PREDICATE, quad.predicate),
-            Quad(statement, RDF_OBJECT, quad.object),
+            Quad(reified_triple, RDF_TYPE, RDF_STATEMENT),
+            Quad(reified_triple, RDF_SUBJECT, quad.subject),
+            Quad(reified_triple, RDF_PREDICATE, quad.predicate),
+            Quad(reified_triple, RDF_OBJECT, quad.object),
+            Quad(reified_triple, PROV_WAS_DERIVED_FROM, NamedNode(triples_map)),
         ]
-        quads += [Quad(statement, PROV_HAD_PRIMARY_SOURCE, row.iri) for row in rows]
-    for row in described:
+        quads += [
+            Quad(reified_triple, PROV_HAD_PRIMARY_SOURCE, row.iri) for row in rows
+        ]
+    for row in source_rows:
         quads.append(Quad(row.iri, RDF_TYPE, NamedNode(table_class(row.table))))
         quads += [
             Quad(
@@ -544,23 +568,23 @@ def _provenance_quads(
                 Literal(_provenance_lexical(value)),
             )
             for column, value in row.values.items()
-            if column in recorded[row.table] and value is not None
+            if column in described_columns[row.table] and value is not None
         ]
     return quads
 
 
 def _described_content(
-    described: tuple[SourceRow, ...],
-    recorded: dict[str, set[str]],
+    source_rows: tuple[SourceRow, ...],
+    mapped: dict[str, set[str]],
     tables: dict[str, LogicalTable],
 ) -> DatabaseContent:
     content: DatabaseContent = {}
-    for table_name in dict.fromkeys(row.table for row in described):
-        rows = [row for row in described if row.table == table_name]
+    for table_name in dict.fromkeys(row.table for row in source_rows):
+        rows = [row for row in source_rows if row.table == table_name]
         columns = [
             column
             for column in tables[table_name].columns
-            if column.name in recorded[table_name]
+            if column.name in mapped[table_name]
         ]
         content[table_name] = table_content(
             columns, [[row.values[column.name] for column in columns] for row in rows]
@@ -576,21 +600,25 @@ class GeneratedProvenance:
     logical_tables: frozenset[str]
 
 
-def _recorded_labels(
-    mappings: pd.DataFrame, tables: dict[str, LogicalTable]
+def _column_labels(
+    columns_by_source: Mapping[str, Collection[str]], tables: dict[str, LogicalTable]
 ) -> dict[str, set[str]]:
-    recorded: dict[str, set[str]] = defaultdict(set)
-    for source, columns in recorded_columns(mappings).items():
+    by_table: dict[str, set[str]] = defaultdict(set)
+    for source, columns in columns_by_source.items():
         table = tables[source]
         labels = [column.name for column in table.columns]
-        recorded[table.name] |= {
+        by_table[table.name] |= {
             cast(str, resolve_reference(labels, column)) for column in columns
         }
-    return recorded
+    return by_table
 
 
 def generate_provenance(
-    mapping: str | Path, graph: Path, source_db_url: str, output: Path
+    mapping: str | Path,
+    graph: Path,
+    source_db_url: str,
+    output: Path,
+    provenance: Provenance,
 ) -> GeneratedProvenance:
     mappings, _, queries = _load_mapping_rules(
         mapping, str(graph), source_db_url, keep_self_joins=True
@@ -605,22 +633,35 @@ def generate_provenance(
         engine.dispose()
 
     candidates = _candidates(mappings, _logical_rows(tables), _base_iri(Path(mapping)))
-    statements = {
-        (quad, tuple(row.iri.value for row in rows)): rows
-        for quad, rows in _match(candidates, produced)
+    reified_triples: ReifiedTriples = {
+        (
+            quad,
+            tuple(row.iri.value for row in candidate.rows),
+            candidate.triples_map,
+        ): candidate.rows
+        for quad, candidate in _match(candidates, produced)
     }
-    uncovered = produced - {quad for quad, _ in statements}
+    uncovered = produced - {quad for quad, _, _ in reified_triples}
     if uncovered:
         listing = "\n".join(sorted(str(quad) for quad in uncovered))
         raise ProvenanceCoverageError(f"Triples without provenance:\n{listing}")
 
-    recorded = _recorded_labels(mappings, tables)
-    described = _unique(row for rows in statements.values() for row in rows)
-    quads = [*produced, *_provenance_quads(statements, described, recorded)]
+    mapped = _column_labels(mapped_columns(mappings), tables)
+    described_columns = mapped
+    if provenance is Provenance.SELECTIVE:
+        omitted = _column_labels(omitted_columns(mappings), tables)
+        described_columns = {
+            table: columns - omitted[table] for table, columns in mapped.items()
+        }
+    source_rows = _unique(row for rows in reified_triples.values() for row in rows)
+    quads = [
+        *produced,
+        *_provenance_quads(reified_triples, source_rows, described_columns),
+    ]
     output.write_bytes(serialize(quads, format=RdfFormat.N_QUADS) or b"")
     return GeneratedProvenance(
         _described_content(
-            described, recorded, {table.name: table for table in tables.values()}
+            source_rows, mapped, {table.name: table for table in tables.values()}
         ),
         {name: query.sql for name, query in queries.items()},
         frozenset(tables),

@@ -101,7 +101,9 @@ def test_kgi_rejects_a_template_naming_a_delimited_column_as_regular(
 
 
 @pytest.mark.parametrize(
-    "provenance", [None, Provenance.FULL], ids=["graph", "full-provenance"]
+    "provenance",
+    [None, Provenance.FULL, Provenance.SELECTIVE],
+    ids=["graph", "full-provenance", "selective-provenance"],
 )
 @pytest.mark.parametrize("test_id", R2RML_TEST_IDS)
 def test_r2rml_conformance(
@@ -122,7 +124,9 @@ def test_r2rml_conformance(
 
 
 @pytest.mark.parametrize(
-    "provenance", [None, Provenance.FULL], ids=["graph", "full-provenance"]
+    "provenance",
+    [None, Provenance.FULL, Provenance.SELECTIVE],
+    ids=["graph", "full-provenance", "selective-provenance"],
 )
 @pytest.mark.parametrize("test_id", RML_TEST_IDS)
 def test_rml_conformance(

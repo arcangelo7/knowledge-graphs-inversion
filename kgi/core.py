@@ -10,6 +10,7 @@ import os
 import pathlib
 import re
 import tempfile
+from collections import defaultdict
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import cast
@@ -29,6 +30,8 @@ from kgi.constants import (
     RDF_TYPE,
     REF_TEMPLATE_REGEX,
     RML_CHILD,
+    RML_CONSTANT,
+    RML_IRI,
     RML_ITERATOR,
     RML_LOGICAL_SOURCE,
     RML_OLD_LOGICAL_SOURCE,
@@ -58,6 +61,7 @@ from kgi.constants import (
     RR_TEMPLATE,
     RR_TERM_TYPE,
     RR_TRIPLES_MAP,
+    TRIPLES_MAP_IRI,
 )
 from kgi.base import Endpoint
 from kgi.endpoints import EndpointFactory
@@ -68,7 +72,13 @@ from kgi.exceptions import (
     UnsupportedMappingError,
 )
 from kgi.logical_queries import LogicalQuery, query_text, resolve_reference
-from kgi.provenance import Provenance, described_rows, is_reification
+from kgi.provenance import (
+    ColumnOccurrence,
+    Provenance,
+    TermLocation,
+    described_rows,
+    is_reification,
+)
 from kgi.query import (
     _position_references,
     non_graph_exposed_references,
@@ -77,7 +87,7 @@ from kgi.query import (
     non_subject_term_references,
     retrieve_data,
     subject_term_signature,
-    term_map_is_opaque,
+    term_map_shape,
 )
 from kgi.triples import has_multiple_template_decompositions
 from kgi.schema import (
@@ -469,15 +479,7 @@ def _term_map_references(
     ):
         return _reference_set(rule["subject_references"]), set()
 
-    subject_references = _reference_set(rule["subject_references"])
-    subject_is_opaque = term_map_is_opaque(
-        rule["subject_map_type"],
-        rule["subject_map_value"],
-        rule["subject_termtype"],
-        rule["subject_references_template"],
-    )
-    opaque = subject_references if subject_is_opaque else set()
-    exposed = set() if subject_is_opaque else subject_references
+    opaque, exposed = _position_references(rule, "subject")
     non_subject_opaque, non_subject_exposed = non_subject_term_references(rule)
     opaque.update(non_subject_opaque)
     exposed.update(non_subject_exposed)
@@ -903,7 +905,15 @@ def _build_morph_config(
     return tmp.name
 
 
-class _SelfJoinKeepingParser(MappingParser):
+class _TriplesMapKeepingParser(MappingParser):
+    # morph-kgc renames every rule after a number, and provenance names the triples
+    # map by the IRI the mapping gives it
+    def _normalize_rml_star(self) -> None:
+        self.rml_df[TRIPLES_MAP_IRI] = self.rml_df["triples_map_id"]
+        super()._normalize_rml_star()
+
+
+class _SelfJoinKeepingParser(_TriplesMapKeepingParser):
     # morph-kgc turns a self-join on equal column names into a same-row reference,
     # which hides the joined columns and drops the pairs of distinct rows that
     # share the joined values
@@ -944,7 +954,7 @@ def _load_mapping_rules(
     config_file = _build_morph_config(mapping, rdf_graph, source_db_url)
     try:
         config = load_config_from_argument(config_file)
-        parser = _SelfJoinKeepingParser if keep_self_joins else MappingParser
+        parser = _SelfJoinKeepingParser if keep_self_joins else _TriplesMapKeepingParser
         mappings, _, _ = parser(config).parse_mappings()
     finally:
         os.unlink(config_file)
@@ -1017,10 +1027,107 @@ def _source_references(mappings: pd.DataFrame) -> dict[str, set[str]]:
     return references
 
 
-def recorded_columns(mappings: pd.DataFrame) -> dict[str, set[str]]:
+def mapped_columns(mappings: pd.DataFrame) -> dict[str, set[str]]:
     return {
         source: {undelimited_sql_identifier(reference) for reference in references}
         for source, references in _source_references(mappings).items()
+    }
+
+
+def _columns_of_objects_sharing_a_predicate(
+    mappings: pd.DataFrame,
+) -> list[tuple[str, set[str]]]:
+    # The provenance names the triples map of a reified triple, not its object map
+    references: list[tuple[str, set[str]]] = []
+    for _, rules in mappings.groupby(
+        [TRIPLES_MAP_IRI, "predicate_map_value", "graph_map_value"], dropna=False
+    ):
+        if rules["object_map_value"].nunique() > 1:
+            references += [
+                (
+                    str(rule["logical_source_value"]),
+                    _reference_set(rule["object_references"]),
+                )
+                for _, rule in rules.iterrows()
+            ]
+    return references
+
+
+def omitted_columns(
+    mappings: pd.DataFrame,
+) -> dict[str, dict[str, list[ColumnOccurrence]]]:
+    described: dict[str, set[str]] = defaultdict(set)
+    occurrences: dict[str, dict[str, list[ColumnOccurrence]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+
+    def describe(source: str, references: set[str]) -> None:
+        described[source].update(map(undelimited_sql_identifier, references))
+
+    def add_occurrence(
+        source: str, rule: pd.Series, position: str, location: TermLocation
+    ) -> None:
+        references = _reference_set(rule[f"{position}_references"])
+        text_around_column = term_map_shape(rule, position).text_around_column
+        if text_around_column is None:
+            describe(source, references)
+            return
+        column_occurrences = occurrences[source][
+            undelimited_sql_identifier(references.pop())
+        ]
+        occurrence = ColumnOccurrence(
+            location, *text_around_column, iri=rule[f"{position}_termtype"] == RML_IRI
+        )
+        if occurrence not in column_occurrences:
+            column_occurrences.append(occurrence)
+
+    for _, rule in mappings.iterrows():
+        source = str(rule["logical_source_value"])
+        triples_map = str(rule[TRIPLES_MAP_IRI])
+        add_occurrence(source, rule, "subject", TermLocation(triples_map, None))
+        describe(
+            source,
+            _reference_set(rule["graph_references"])
+            | _reference_set(rule["predicate_references"])
+            | _map_references(
+                rule["lang_datatype_map_type"], rule["lang_datatype_map_value"]
+            ),
+        )
+        if rule["object_map_type"] == RML_PARENT_TRIPLES_MAP:
+            parent_rule = _parent_rules(rule, mappings).iloc[0]
+            parent_source = str(parent_rule["logical_source_value"])
+            conditions = _join_conditions(rule)
+            # The join columns occur in no term (L4), and a parent subject that
+            # occurs as an object is not reversed
+            describe(source, {child for child, _ in conditions})
+            describe(
+                parent_source,
+                {parent for _, parent in conditions}
+                | _reference_set(parent_rule["subject_references"]),
+            )
+            # A reified join triple names two rows of the table, and its subject
+            # belongs to the child alone
+            if parent_source == source:
+                describe(source, _reference_set(rule["subject_references"]))
+        elif _reference_set(rule["object_references"]):
+            if rule["predicate_map_type"] == RML_CONSTANT:
+                add_occurrence(
+                    source,
+                    rule,
+                    "object",
+                    TermLocation(triples_map, str(rule["predicate_map_value"])),
+                )
+            else:
+                describe(source, _reference_set(rule["object_references"]))
+    for source, references in _columns_of_objects_sharing_a_predicate(mappings):
+        describe(source, references)
+    return {
+        source: {
+            column: column_occurrences
+            for column, column_occurrences in occurrences[source].items()
+            if column not in described[source]
+        }
+        for source in mapped_columns(mappings)
     }
 
 
@@ -1038,20 +1145,27 @@ def _table_schema(
 
 def _provenance_tables(
     mappings: pd.DataFrame,
+    omitted: dict[str, dict[str, list[ColumnOccurrence]]],
     queries: dict[str, LogicalQuery],
     schema_retriever: DatabaseSchemaRetriever | None,
-) -> dict[str, tuple[list[str], TableSchema | None]]:
-    tables: dict[str, tuple[list[str], TableSchema | None]] = {}
-    for table_name, columns in recorded_columns(mappings).items():
+) -> dict[str, tuple[list[str], dict[str, list[ColumnOccurrence]], TableSchema | None]]:
+    tables: dict[
+        str, tuple[list[str], dict[str, list[ColumnOccurrence]], TableSchema | None]
+    ] = {}
+    for table_name, columns in mapped_columns(mappings).items():
         table_schema = _table_schema(table_name, queries, schema_retriever)
         if table_schema is None:
-            tables[table_name] = (sorted(columns), None)
+            tables[table_name] = (sorted(columns), omitted[table_name], None)
             continue
         order = table_schema.column_names_ordered
         # A query result names an undelimited alias in the case the database folds it to
         named = {resolve_reference(order, column) for column in columns}
         tables[table_name] = (
             [column for column in order if column in named],
+            {
+                cast(str, resolve_reference(order, column)): column_occurrences
+                for column, column_occurrences in omitted[table_name].items()
+            },
             table_schema,
         )
     return tables
@@ -1062,16 +1176,22 @@ TableFiller = Callable[[str, Iterator[pd.DataFrame], TableSchema | None], None]
 
 def _fill_from_provenance(
     mappings: pd.DataFrame,
+    provenance: Provenance,
     queries: dict[str, LogicalQuery],
     endpoint: Endpoint,
     schema_retriever: DatabaseSchemaRetriever | None,
     fill: TableFiller,
 ) -> int:
+    omitted = (
+        omitted_columns(mappings)
+        if provenance is Provenance.SELECTIVE
+        else {table_name: {} for table_name in mapped_columns(mappings)}
+    )
     filled = 0
-    for table_name, (columns, table_schema) in sorted(
-        _provenance_tables(mappings, queries, schema_retriever).items()
+    for table_name, (columns, table_omitted, table_schema) in sorted(
+        _provenance_tables(mappings, omitted, queries, schema_retriever).items()
     ):
-        chunks = described_rows(endpoint, table_name, columns)
+        chunks = described_rows(endpoint, table_name, columns, table_omitted)
         first_chunk = next(chunks, None)
         # No row of the table produced a triple
         if first_chunk is None:
@@ -1136,13 +1256,14 @@ def reconstruct(
         mapping,
         rdf_graph_str,
         source_db_url,
-        keep_self_joins=provenance is Provenance.FULL,
+        keep_self_joins=provenance is not None,
     )
     endpoint: Endpoint | None = None
     schema_retriever: DatabaseSchemaRetriever | None = None
     try:
         endpoint = EndpointFactory.create_from_url(
             rdf_graph_str,
+            # Only the selective variant reads the statements
             excluded=is_reification if provenance is Provenance.FULL else None,
         )
         if source_db_url is not None:
@@ -1163,10 +1284,14 @@ def reconstruct(
                 )
             template.fill_data(chunks, table_name, table_schema)
 
-        fill_tables = (
-            _fill_from_provenance if provenance is Provenance.FULL else _fill_from_graph
+        filled = (
+            _fill_from_graph(mappings, queries, endpoint, schema_retriever, fill)
+            if provenance is None
+            else _fill_from_provenance(
+                mappings, provenance, queries, endpoint, schema_retriever, fill
+            )
         )
-        if fill_tables(mappings, queries, endpoint, schema_retriever, fill) == 0:
+        if filled == 0:
             raise NoDataError("No data was generated during reconstruction")
     finally:
         if endpoint is not None:

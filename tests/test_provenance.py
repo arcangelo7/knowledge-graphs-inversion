@@ -92,7 +92,7 @@ def test_without_the_source_database_the_columns_come_from_the_mapping(
     graph = tmp_path / "graph.nq"
     graph.write_text(GRAPH)
     with_provenance = tmp_path / "provenance.nq"
-    generate_provenance(mapping, graph, source_url, with_provenance)
+    generate_provenance(mapping, graph, source_url, with_provenance, Provenance.FULL)
     dest_url = f"sqlite:///{tmp_path / 'destination.sqlite'}"
 
     reconstruct(

@@ -62,3 +62,6 @@ JDBC_DRIVERS: dict[str, str] = {
 }
 
 REF_TEMPLATE_REGEX = r"{([^{}]*)}"
+
+# The column of a parsed mapping rule that keeps the IRI of its triples map
+TRIPLES_MAP_IRI = "triples_map_iri"

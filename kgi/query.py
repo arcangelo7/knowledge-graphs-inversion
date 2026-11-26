@@ -4,6 +4,7 @@
 
 """SPARQL query generation and execution."""
 
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import cast
@@ -19,6 +20,7 @@ from kgi.constants import (
     RML_PARENT_TRIPLES_MAP,
     RML_REFERENCE,
     RML_TEMPLATE,
+    REF_TEMPLATE_REGEX,
 )
 from kgi.exceptions import UnsupportedMappingError
 from kgi.triples import (
@@ -26,7 +28,6 @@ from kgi.triples import (
     ReferencedSubjectTriple,
     SubjectTriple,
     extract_from_iri_template,
-    has_adjacent_template_captures,
 )
 from kgi.utils import (
     Codex,
@@ -365,24 +366,40 @@ def subject_term_signature(rule: pd.Series) -> tuple[str, ...]:
     )
 
 
-def term_map_is_opaque(
-    map_type: object,
-    map_value: object,
-    term_type: object,
-    references_template: object,
-) -> bool:
-    if map_type == RML_REFERENCE and term_type == RML_IRI:
-        return True
-    if map_type != RML_TEMPLATE:
-        return False
-    if has_adjacent_template_captures(str(references_template)):
-        return True
-    if term_type != RML_IRI:
-        return False
-    stripped = str(map_value).strip()
-    return (
-        stripped.startswith("{") and stripped.endswith("}") and stripped.count("{") == 1
+def _always_percent_encoded(character: str) -> bool:
+    # R2RML percent-encodes, in an IRI template, every character outside these
+    return not (
+        (character.isascii() and character.isalnum())
+        or character in "-._~"
+        or ord(character) >= 0xA0
     )
+
+
+@dataclass(frozen=True)
+class TermMapShape:
+    fixed_texts: tuple[str, ...] | None
+    term_type: object
+
+    @property
+    def opaque(self) -> bool:
+        if self.fixed_texts is None:
+            return self.term_type == RML_IRI
+        return any(text == "" for text in self.fixed_texts[1:-1]) or (
+            self.term_type == RML_IRI and self.fixed_texts == ("", "")
+        )
+
+    @property
+    def text_around_column(self) -> tuple[str, str] | None:
+        if self.term_type == RML_BLANK_NODE:
+            return None
+        if self.fixed_texts is None:
+            return None if self.term_type == RML_IRI else ("", "")
+        if len(self.fixed_texts) != 2:
+            return None
+        prefix, suffix = self.fixed_texts
+        if self.term_type == RML_IRI and not any(map(_always_percent_encoded, prefix)):
+            return None
+        return prefix, suffix
 
 
 def _position_term_type(rule: pd.Series, position: str) -> object:
@@ -393,15 +410,24 @@ def _position_term_type(rule: pd.Series, position: str) -> object:
     return rule[f"{position}_termtype"]
 
 
+def term_map_shape(rule: pd.Series, position: str) -> TermMapShape:
+    map_type = rule[f"{position}_map_type"]
+    term_type = _position_term_type(rule, position)
+    if map_type == RML_REFERENCE:
+        return TermMapShape(None, term_type)
+    if map_type != RML_TEMPLATE:
+        return TermMapShape((), term_type)
+    parts = re.split(REF_TEMPLATE_REGEX, str(rule[f"{position}_map_value"]))
+    return TermMapShape(
+        tuple(part.replace("\\{", "{").replace("\\}", "}") for part in parts[::2]),
+        term_type,
+    )
+
+
 def _position_references(rule: pd.Series, position: str) -> tuple[set[str], set[str]]:
     """Split the references of one term map into the opaque ones and the exposed ones."""
     references = {str(value) for value in rule[f"{position}_references"]}
-    if term_map_is_opaque(
-        rule[f"{position}_map_type"],
-        rule[f"{position}_map_value"],
-        _position_term_type(rule, position),
-        rule[f"{position}_references_template"],
-    ):
+    if term_map_shape(rule, position).opaque:
         return references, set()
     return set(), references
 

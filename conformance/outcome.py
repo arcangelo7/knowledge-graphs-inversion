@@ -293,7 +293,7 @@ def evaluate_kgi_case(
     graph = (
         rdf_path
         if provenance is None
-        else rdf_path.with_name(f"{rdf_path.stem}-provenance.nq")
+        else rdf_path.with_name(f"{rdf_path.stem}-{provenance.value}-provenance.nq")
     )
     generated: GeneratedProvenance | None = None
 
@@ -312,7 +312,7 @@ def evaluate_kgi_case(
     try:
         if provenance is not None:
             generated = generate_provenance(
-                mapping_path, rdf_path, source_db_url, graph
+                mapping_path, rdf_path, source_db_url, graph, provenance
             )
         reconstruct(
             mapping=mapping_path,

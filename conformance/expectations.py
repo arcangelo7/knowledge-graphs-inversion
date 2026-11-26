@@ -591,5 +591,9 @@ FULL_PROVENANCE_EXPECTATIONS: dict[TestKey, CaseOutcome] = {
 def expected_outcome(
     suite_id: str, test_id: str, provenance: Provenance | None = None
 ) -> CaseOutcome | None:
-    expectations = {None: EXPECTATIONS, Provenance.FULL: FULL_PROVENANCE_EXPECTATIONS}
+    expectations = {
+        None: EXPECTATIONS,
+        Provenance.FULL: FULL_PROVENANCE_EXPECTATIONS,
+        Provenance.SELECTIVE: FULL_PROVENANCE_EXPECTATIONS,
+    }
     return expectations[provenance].get((suite_id, test_id))
