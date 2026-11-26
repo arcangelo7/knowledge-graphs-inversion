@@ -191,3 +191,58 @@ def compare_databases(
         "All tables in source and destination databases are identical",
         frozenset(),
     )
+
+
+def compare_with_provenance(
+    source_content: DatabaseContent,
+    dest_content: DatabaseContent,
+    described: DatabaseContent,
+) -> tuple[bool, str, frozenset[PartialLoss]]:
+    losses: set[PartialLoss] = set()
+    notes: list[str] = []
+    problems: list[str] = []
+
+    for table_name in sorted(set(source_content) | set(dest_content)):
+        if table_name not in source_content:
+            problems.append(f"{table_name} (absent from the source database)")
+            continue
+        if table_name not in described:
+            if table_name in dest_content:
+                problems.append(
+                    f"{table_name} (table without provenance present in the destination)"
+                )
+            else:
+                losses.add(PartialLoss.TABLES_LOST)
+                notes.append(f"{table_name}: no row produced a triple")
+            continue
+        if table_name not in dest_content:
+            problems.append(f"{table_name} (missing from the destination database)")
+            continue
+        if not _table_reproduced(described[table_name], dest_content[table_name]):
+            problems.append(f"{table_name} (data differs from the provenance)")
+            continue
+
+        source_table = source_content[table_name]
+        recorded = described[table_name]["columns"]
+        lost_columns = [
+            column for column in source_table["columns"] if column not in recorded
+        ]
+        if lost_columns:
+            losses.add(PartialLoss.COLUMNS_LOST)
+            notes.append(
+                f"{table_name}: columns not recorded: {', '.join(lost_columns)}"
+            )
+        dropped = len(source_table["data"]) - len(described[table_name]["data"])
+        if dropped:
+            losses.add(PartialLoss.ROWS_LOST)
+            notes.append(f"{table_name}: {dropped} row(s) produced no triple")
+
+    if problems:
+        return False, f"Unexplained differences: {'; '.join(problems)}", frozenset()
+    if losses:
+        return False, f"Characterised loss - {'; '.join(notes)}", frozenset(losses)
+    return (
+        True,
+        "All tables in source and destination databases are identical",
+        frozenset(),
+    )

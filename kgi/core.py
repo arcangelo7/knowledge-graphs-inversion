@@ -3,7 +3,6 @@
 # SPDX-License-Identifier: ISC
 
 import configparser
-import functools
 import itertools
 import json
 import logging
@@ -11,7 +10,7 @@ import os
 import pathlib
 import re
 import tempfile
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import cast
 from urllib.parse import quote_plus
@@ -68,12 +67,7 @@ from kgi.exceptions import (
     NonInvertibleError,
     UnsupportedMappingError,
 )
-from kgi.logical_queries import (
-    LogicalQuery,
-    query_text,
-    recorded_query_columns,
-    resolve_reference,
-)
+from kgi.logical_queries import LogicalQuery, query_text, resolve_reference
 from kgi.provenance import Provenance, described_rows, is_reification
 from kgi.query import (
     _position_references,
@@ -1023,23 +1017,23 @@ def _source_references(mappings: pd.DataFrame) -> dict[str, set[str]]:
     return references
 
 
-def recorded_columns(
-    mappings: pd.DataFrame,
+def recorded_columns(mappings: pd.DataFrame) -> dict[str, set[str]]:
+    return {
+        source: {undelimited_sql_identifier(reference) for reference in references}
+        for source, references in _source_references(mappings).items()
+    }
+
+
+def _table_schema(
+    table_name: str,
     queries: dict[str, LogicalQuery],
-    table_columns: Callable[[str], Sequence[str]] | None,
-) -> dict[str, set[str]]:
-    recorded: dict[str, set[str]] = {}
-    for source, references in _source_references(mappings).items():
-        if source not in queries:
-            recorded.setdefault(source, set()).update(
-                undelimited_sql_identifier(reference) for reference in references
-            )
-            continue
-        for table, columns in recorded_query_columns(
-            queries[source].sql, references, table_columns
-        ).items():
-            recorded.setdefault(table, set()).update(columns)
-    return recorded
+    schema_retriever: DatabaseSchemaRetriever | None,
+) -> TableSchema | None:
+    if table_name in queries:
+        return queries[table_name].schema
+    if schema_retriever is not None:
+        return schema_retriever.get_table_schema(table_name)
+    return None
 
 
 def _provenance_tables(
@@ -1047,22 +1041,20 @@ def _provenance_tables(
     queries: dict[str, LogicalQuery],
     schema_retriever: DatabaseSchemaRetriever | None,
 ) -> dict[str, tuple[list[str], TableSchema | None]]:
-    if schema_retriever is None:
-        return {
-            table: (sorted(columns), None)
-            for table, columns in recorded_columns(mappings, queries, None).items()
-        }
-    schema = functools.cache(schema_retriever.get_table_schema)
-    recorded = recorded_columns(
-        mappings, queries, lambda table: schema(table).column_names_ordered
-    )
-    return {
-        table: (
-            sorted(columns, key=schema(table).column_names_ordered.index),
-            schema(table),
+    tables: dict[str, tuple[list[str], TableSchema | None]] = {}
+    for table_name, columns in recorded_columns(mappings).items():
+        table_schema = _table_schema(table_name, queries, schema_retriever)
+        if table_schema is None:
+            tables[table_name] = (sorted(columns), None)
+            continue
+        order = table_schema.column_names_ordered
+        # A query result names an undelimited alias in the case the database folds it to
+        named = {resolve_reference(order, column) for column in columns}
+        tables[table_name] = (
+            [column for column in order if column in named],
+            table_schema,
         )
-        for table, columns in recorded.items()
-    }
+    return tables
 
 
 TableFiller = Callable[[str, Iterator[pd.DataFrame], TableSchema | None], None]
@@ -1121,13 +1113,11 @@ def _fill_from_graph(
             raise NonInvertibleError(
                 f"No column of table '{table_name}' can be recovered from the graph"
             )
-        if table_name in queries:
-            table_schema = queries[table_name].schema
-        elif schema_retriever is not None:
-            table_schema = schema_retriever.get_table_schema(table_name)
-        else:
-            table_schema = None
-        fill(table_name, source_data_chunks, table_schema)
+        fill(
+            table_name,
+            source_data_chunks,
+            _table_schema(table_name, queries, schema_retriever),
+        )
         filled += 1
     return filled
 

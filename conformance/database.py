@@ -2,8 +2,19 @@
 #
 # SPDX-License-Identifier: ISC
 
+from collections.abc import Sequence
+
 import pandas as pd
-from sqlalchemy import CHAR, MetaData, Table, create_engine, inspect, select, text
+from sqlalchemy import (
+    CHAR,
+    Column,
+    MetaData,
+    Table,
+    create_engine,
+    inspect,
+    select,
+    text,
+)
 
 from kgi.comparison import DatabaseContent, TableContent
 
@@ -25,6 +36,24 @@ def _table_content(content: pd.DataFrame) -> TableContent:
         "columns": content.columns.tolist(),
         "data": content.values.tolist(),
     }
+
+
+def table_content(
+    columns: Sequence[Column], rows: Sequence[Sequence[object]]
+) -> TableContent:
+    content = pd.DataFrame.from_records(
+        rows, columns=[column.name for column in columns], coerce_float=True
+    )
+    for column in columns:
+        if isinstance(column.type, CHAR):
+            content[column.name] = content[column.name].apply(
+                lambda value, length=column.type.length: (
+                    value.ljust(length)
+                    if isinstance(value, str) and length is not None
+                    else value
+                )
+            )
+    return _table_content(content)
 
 
 class DatabaseConnection:
@@ -59,17 +88,8 @@ class DatabaseConnection:
                 db_content: DatabaseContent = {}
                 for table_name in table_names:
                     table = Table(table_name, metadata, autoload_with=connection)
-                    content = pd.read_sql(select(table), connection)
-                    for column in table.columns:
-                        if isinstance(column.type, CHAR):
-                            content[column.name] = content[column.name].apply(
-                                lambda value, length=column.type.length: (
-                                    value.ljust(length)
-                                    if isinstance(value, str) and length is not None
-                                    else value
-                                )
-                            )
-                    db_content[table_name] = _table_content(content)
+                    rows = connection.execute(select(table)).all()
+                    db_content[table_name] = table_content(list(table.columns), rows)
                 return db_content
         finally:
             engine.dispose()

@@ -15,7 +15,7 @@ from conformance.outcome import (
     forward_conformance_failed,
 )
 from conformance.suites import R2RMLTestSuite, RMLTestSuite, TestSuite
-from kgi import MappingError, analyze_mapping
+from kgi import MappingError, Provenance, analyze_mapping
 
 from .conftest import (
     Database,
@@ -34,6 +34,7 @@ def _run_conformance_test(
     source_db: str,
     dest_db: str,
     tmp_dir: str,
+    provenance: Provenance | None,
 ) -> None:
     drop_all_tables(source_db)
     drop_all_tables(dest_db)
@@ -62,10 +63,12 @@ def _run_conformance_test(
         ),
         source_db,
         dest_db,
+        provenance,
     )
-    expected = expected_outcome(suite.suite_id, test_id)
+    expected = expected_outcome(suite.suite_id, test_id, provenance)
     assert observed == expected, (
-        f"{suite.suite_id}/{database}/{test_id}: "
+        f"{suite.suite_id}/{database}/{test_id}"
+        f"{'' if provenance is None else f' with {provenance.value} provenance'}: "
         f"{describe_difference(expected, observed)}"
     )
 
@@ -97,9 +100,13 @@ def test_kgi_rejects_a_template_naming_a_delimited_column_as_regular(
     )
 
 
+@pytest.mark.parametrize(
+    "provenance", [None, Provenance.FULL], ids=["graph", "full-provenance"]
+)
 @pytest.mark.parametrize("test_id", R2RML_TEST_IDS)
 def test_r2rml_conformance(
     test_id: str,
+    provenance: Provenance | None,
     r2rml_suite: R2RMLTestSuite,
     database: Database,
     database_urls: tuple[str, str],
@@ -110,13 +117,17 @@ def test_r2rml_conformance(
     source_db, dest_db = database_urls
     with tempfile.TemporaryDirectory() as tmp_dir:
         _run_conformance_test(
-            test_id, r2rml_suite, database, source_db, dest_db, tmp_dir
+            test_id, r2rml_suite, database, source_db, dest_db, tmp_dir, provenance
         )
 
 
+@pytest.mark.parametrize(
+    "provenance", [None, Provenance.FULL], ids=["graph", "full-provenance"]
+)
 @pytest.mark.parametrize("test_id", RML_TEST_IDS)
 def test_rml_conformance(
     test_id: str,
+    provenance: Provenance | None,
     rml_suite: RMLTestSuite,
     database: Database,
     database_urls: tuple[str, str],
@@ -125,4 +136,6 @@ def test_rml_conformance(
         pytest.skip("RML Core RDB test cases do not yet provide MySQL variants")
     source_db, dest_db = database_urls
     with tempfile.TemporaryDirectory() as tmp_dir:
-        _run_conformance_test(test_id, rml_suite, database, source_db, dest_db, tmp_dir)
+        _run_conformance_test(
+            test_id, rml_suite, database, source_db, dest_db, tmp_dir, provenance
+        )

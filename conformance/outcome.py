@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: ISC
 
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -13,13 +14,16 @@ from kgi import (
     MappingAnalysis,
     NoDataError,
     NonInvertibleError,
+    Provenance,
     UnsupportedMappingError,
     analyze_mapping,
 )
+from conformance.provenance import GeneratedProvenance, generate_provenance
 from kgi.comparison import (
     DatabaseContent,
     PartialLoss,
     compare_databases,
+    compare_with_provenance,
 )
 from kgi.core import reconstruct
 from kgi.logical_queries import source_tables
@@ -156,7 +160,7 @@ def logical_queries(analysis: MappingAnalysis) -> dict[str, str]:
 
 
 def logical_table_content(
-    analysis: MappingAnalysis, database_url: str
+    queries: dict[str, str], logical_tables: Collection[str], database_url: str
 ) -> DatabaseContent:
     """The logical tables the mapping reads.
 
@@ -165,7 +169,6 @@ def logical_table_content(
     table, and the remaining base tables stay as they are, mapped or not.
     """
     content = _db_connection.get_database_content(database_url)
-    queries = logical_queries(analysis)
     for sql in queries.values():
         for table_name in source_tables(sql):
             # The database folds an undelimited name, so the written one may not match
@@ -175,24 +178,20 @@ def logical_table_content(
                 if name == table_name or name.casefold() == table_name.casefold()
             ]
             for name in stored:
-                if name not in analysis:
+                if name not in logical_tables:
                     del content[name]
     for name, sql in queries.items():
         content[name] = _db_connection.get_query_content(database_url, sql)
     return content
 
 
-def _compare_reconstruction(
-    analysis: MappingAnalysis,
-    source_db_url: str,
-    dest_db_url: str,
+def _case_outcome(
+    comparison: tuple[bool, str, frozenset[PartialLoss]],
+    source_content: DatabaseContent,
+    dest_content: DatabaseContent,
     allow_empty_destination: bool,
 ) -> CaseOutcome:
-    source_content = logical_table_content(analysis, source_db_url)
-    dest_content = _db_connection.get_database_content(dest_db_url)
-    databases_equal, message, losses = compare_databases(
-        source_content, dest_content, analysis
-    )
+    databases_equal, message, losses = comparison
     if databases_equal:
         return CaseOutcome(
             InversionOutcome.FULLY_INVERTED,
@@ -222,6 +221,42 @@ def _compare_reconstruction(
     )
 
 
+def _compare_reconstruction(
+    analysis: MappingAnalysis,
+    source_db_url: str,
+    dest_db_url: str,
+    allow_empty_destination: bool,
+) -> CaseOutcome:
+    source_content = logical_table_content(
+        logical_queries(analysis), analysis.keys(), source_db_url
+    )
+    dest_content = _db_connection.get_database_content(dest_db_url)
+    return _case_outcome(
+        compare_databases(source_content, dest_content, analysis),
+        source_content,
+        dest_content,
+        allow_empty_destination,
+    )
+
+
+def _compare_with_provenance(
+    generated: GeneratedProvenance,
+    source_db_url: str,
+    dest_db_url: str,
+    allow_empty_destination: bool,
+) -> CaseOutcome:
+    source_content = logical_table_content(
+        generated.logical_queries, generated.logical_tables, source_db_url
+    )
+    dest_content = _db_connection.get_database_content(dest_db_url)
+    return _case_outcome(
+        compare_with_provenance(source_content, dest_content, generated.described),
+        source_content,
+        dest_content,
+        allow_empty_destination,
+    )
+
+
 def evaluate_kgi_case(
     mapping_path: str,
     rdf_path: Path,
@@ -229,6 +264,7 @@ def evaluate_kgi_case(
     forward_failed: bool,
     source_db_url: str,
     dest_db_url: str,
+    provenance: Provenance | None = None,
 ) -> CaseOutcome:
     produced_rdf = rdf_path.is_file() and rdf_path.stat().st_size > 0
 
@@ -254,12 +290,36 @@ def evaluate_kgi_case(
         if not rdf_path.is_file():
             rdf_path.touch()
 
+    graph = (
+        rdf_path
+        if provenance is None
+        else rdf_path.with_name(f"{rdf_path.stem}-provenance.nq")
+    )
+    generated: GeneratedProvenance | None = None
+
+    def compare(allow_empty_destination: bool) -> CaseOutcome:
+        if generated is not None:
+            return _compare_with_provenance(
+                generated, source_db_url, dest_db_url, allow_empty_destination
+            )
+        return _compare_reconstruction(
+            analyze_mapping(mapping_path, rdf_path, source_db_url=source_db_url),
+            source_db_url,
+            dest_db_url,
+            allow_empty_destination,
+        )
+
     try:
+        if provenance is not None:
+            generated = generate_provenance(
+                mapping_path, rdf_path, source_db_url, graph
+            )
         reconstruct(
             mapping=mapping_path,
-            rdf_graph=rdf_path,
+            rdf_graph=graph,
             source_db_url=source_db_url,
             dest_db_url=dest_db_url,
+            provenance=provenance,
         )
     except UnsupportedMappingError as error:
         return CaseOutcome(
@@ -280,16 +340,6 @@ def evaluate_kgi_case(
                     "inversion could not be attempted"
                 ),
             )
-        return _compare_reconstruction(
-            analyze_mapping(mapping_path, rdf_path, source_db_url=source_db_url),
-            source_db_url,
-            dest_db_url,
-            allow_empty_destination=True,
-        )
+        return compare(allow_empty_destination=True)
 
-    return _compare_reconstruction(
-        analyze_mapping(mapping_path, rdf_path, source_db_url=source_db_url),
-        source_db_url,
-        dest_db_url,
-        allow_empty_destination=False,
-    )
+    return compare(allow_empty_destination=False)

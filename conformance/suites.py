@@ -48,7 +48,7 @@ class TestSuite:
 
 
 class R2RMLTestSuite(TestSuite):
-    def __init__(self, base_dir: str):
+    def __init__(self, base_dir: str, inversion_base_dir: str):
         self.suite_id = "r2rml"
         self.name = SUITE_LABELS[self.suite_id]
         self.base_dir = base_dir
@@ -56,6 +56,7 @@ class R2RMLTestSuite(TestSuite):
         self._test_ids: list[str] = []
         self._catalogs: dict[str, tuple[str, Store]] = {}
         self._load_catalog(base_dir, self.test_id_prefix)
+        self._load_catalog(inversion_base_dir, "INVTC")
 
     def _load_catalog(self, base_dir: str, test_id_prefix: str) -> None:
         manifest_store = Store()
@@ -235,7 +236,10 @@ SUITES: dict[str, TestSuite] = {}
 
 
 def register_suites(project_root: str) -> None:
-    SUITES["r2rml"] = R2RMLTestSuite(os.path.join(project_root, "r2rml_test_cases"))
+    SUITES["r2rml"] = R2RMLTestSuite(
+        os.path.join(project_root, "r2rml_test_cases"),
+        os.path.join(project_root, "inversion_test_cases"),
+    )
     SUITES["rml"] = RMLTestSuite(os.path.join(project_root, "rml_io_registry"))
 
 

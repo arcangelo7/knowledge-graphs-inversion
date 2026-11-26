@@ -1,0 +1,5 @@
+<http://example.com/student/10/Venus%20Williams> <http://example.com/sameSportAs> <http://example.com/student/10/Venus%20Williams> .
+<http://example.com/student/10/Venus%20Williams> <http://example.com/sameSportAs> <http://example.com/student/20/Serena%20Williams> .
+<http://example.com/student/20/Serena%20Williams> <http://example.com/sameSportAs> <http://example.com/student/10/Venus%20Williams> .
+<http://example.com/student/20/Serena%20Williams> <http://example.com/sameSportAs> <http://example.com/student/20/Serena%20Williams> .
+<http://example.com/student/30/Loena%20Hendrickx> <http://example.com/sameSportAs> <http://example.com/student/30/Loena%20Hendrickx> .

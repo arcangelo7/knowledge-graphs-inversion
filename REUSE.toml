@@ -22,3 +22,8 @@ SPDX-License-Identifier = "ISC"
 path = ["conformance/rmlmapper_assets/binary_null.patch"]
 SPDX-FileCopyrightText = "2026 Arcangelo Massari <arcangelo.massari@unibo.it>"
 SPDX-License-Identifier = "ISC"
+
+[[annotations]]
+path = ["inversion_test_cases/**"]
+SPDX-FileCopyrightText = "2026 Arcangelo Massari <arcangelo.massari@unibo.it>"
+SPDX-License-Identifier = "ISC"

@@ -1,0 +1,21 @@
+@prefix rr: <http://www.w3.org/ns/r2rml#> .
+@prefix ex: <http://example.com/> .
+@base <http://example.com/> .
+
+<#FirstTriplesMap> a rr:TriplesMap;
+    rr:logicalTable [ rr:tableName "\"SubjectTemplates\"" ];
+    rr:subjectMap [ rr:template "person/{\"FirstCode\"}" ];
+    rr:predicateObjectMap [
+        rr:predicate ex:name;
+        rr:objectMap [ rr:column "\"Name\"" ]
+    ];
+.
+
+<#SecondTriplesMap> a rr:TriplesMap;
+    rr:logicalTable [ rr:tableName "\"SubjectTemplates\"" ];
+    rr:subjectMap [ rr:template "person/{\"SecondCode\"}" ];
+    rr:predicateObjectMap [
+        rr:predicate ex:name;
+        rr:objectMap [ rr:column "\"Name\"" ]
+    ];
+.

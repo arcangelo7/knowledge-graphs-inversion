@@ -15,12 +15,16 @@ from kgi.constants import RDF_TYPE
 
 SOURCE_NAMESPACE = "http://src/"
 RDF_STATEMENT = NamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#Statement")
+RDF_SUBJECT = NamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#subject")
+RDF_PREDICATE = NamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#predicate")
+RDF_OBJECT = NamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#object")
+PROV_HAD_PRIMARY_SOURCE = NamedNode("http://www.w3.org/ns/prov#hadPrimarySource")
 REIFICATION_PREDICATES = frozenset(
     {
-        NamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#subject"),
-        NamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#predicate"),
-        NamedNode("http://www.w3.org/1999/02/22-rdf-syntax-ns#object"),
-        NamedNode("http://www.w3.org/ns/prov#hadPrimarySource"),
+        RDF_SUBJECT,
+        RDF_PREDICATE,
+        RDF_OBJECT,
+        PROV_HAD_PRIMARY_SOURCE,
         NamedNode("http://www.w3.org/ns/prov#wasDerivedFrom"),
     }
 )
