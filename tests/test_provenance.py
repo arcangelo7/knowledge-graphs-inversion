@@ -7,7 +7,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, text
 
 from conformance.database import DatabaseConnection
-from conformance.provenance import generate_provenance
+from conformance.provenance import reify_graph, write_provenance
 from kgi import Provenance, reconstruct
 
 MAPPING = """
@@ -92,7 +92,9 @@ def test_without_the_source_database_the_columns_come_from_the_mapping(
     graph = tmp_path / "graph.nq"
     graph.write_text(GRAPH)
     with_provenance = tmp_path / "provenance.nq"
-    generate_provenance(mapping, graph, source_url, with_provenance, Provenance.FULL)
+    write_provenance(
+        reify_graph(mapping, graph, source_url), with_provenance, Provenance.FULL
+    )
     dest_url = f"sqlite:///{tmp_path / 'destination.sqlite'}"
 
     reconstruct(

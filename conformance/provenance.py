@@ -593,11 +593,22 @@ def _described_content(
 
 
 @dataclass(frozen=True)
-class GeneratedProvenance:
+class ExpectedRecovery:
     # What an inversion that reads the provenance must give back
     described: DatabaseContent
     logical_queries: dict[str, str]
     logical_tables: frozenset[str]
+
+
+@dataclass(eq=False)
+class ReifiedGraph:
+    mappings: pd.DataFrame
+    queries: dict[str, LogicalQuery]
+    tables: dict[str, LogicalTable]
+    produced: set[Quad]
+    reified_triples: ReifiedTriples
+    source_rows: tuple[SourceRow, ...]
+    mapped: dict[str, set[str]]
 
 
 def _column_labels(
@@ -613,13 +624,7 @@ def _column_labels(
     return by_table
 
 
-def generate_provenance(
-    mapping: str | Path,
-    graph: Path,
-    source_db_url: str,
-    output: Path,
-    provenance: Provenance,
-) -> GeneratedProvenance:
+def reify_graph(mapping: str | Path, graph: Path, source_db_url: str) -> ReifiedGraph:
     mappings, _, queries = _load_mapping_rules(
         mapping, str(graph), source_db_url, keep_self_joins=True
     )
@@ -646,23 +651,42 @@ def generate_provenance(
         listing = "\n".join(sorted(str(quad) for quad in uncovered))
         raise ProvenanceCoverageError(f"Triples without provenance:\n{listing}")
 
-    mapped = _column_labels(mapped_columns(mappings), tables)
-    described_columns = mapped
+    return ReifiedGraph(
+        mappings,
+        queries,
+        tables,
+        produced,
+        reified_triples,
+        _unique(row for rows in reified_triples.values() for row in rows),
+        _column_labels(mapped_columns(mappings), tables),
+    )
+
+
+def expected_recovery(reified: ReifiedGraph) -> ExpectedRecovery:
+    return ExpectedRecovery(
+        _described_content(
+            reified.source_rows,
+            reified.mapped,
+            {table.name: table for table in reified.tables.values()},
+        ),
+        {name: query.sql for name, query in reified.queries.items()},
+        frozenset(reified.tables),
+    )
+
+
+def write_provenance(
+    reified: ReifiedGraph, output: Path, provenance: Provenance
+) -> None:
+    described_columns = reified.mapped
     if provenance is Provenance.SELECTIVE:
-        omitted = _column_labels(omitted_columns(mappings), tables)
+        omitted = _column_labels(omitted_columns(reified.mappings), reified.tables)
         described_columns = {
-            table: columns - omitted[table] for table, columns in mapped.items()
+            table: columns - omitted[table] for table, columns in reified.mapped.items()
         }
-    source_rows = _unique(row for rows in reified_triples.values() for row in rows)
     quads = [
-        *produced,
-        *_provenance_quads(reified_triples, source_rows, described_columns),
+        *reified.produced,
+        *_provenance_quads(
+            reified.reified_triples, reified.source_rows, described_columns
+        ),
     ]
     output.write_bytes(serialize(quads, format=RdfFormat.N_QUADS) or b"")
-    return GeneratedProvenance(
-        _described_content(
-            source_rows, mapped, {table.name: table for table in tables.values()}
-        ),
-        {name: query.sql for name, query in queries.items()},
-        frozenset(tables),
-    )

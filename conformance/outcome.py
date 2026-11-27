@@ -18,7 +18,12 @@ from kgi import (
     UnsupportedMappingError,
     analyze_mapping,
 )
-from conformance.provenance import GeneratedProvenance, generate_provenance
+from conformance.provenance import (
+    ExpectedRecovery,
+    expected_recovery,
+    reify_graph,
+    write_provenance,
+)
 from kgi.comparison import (
     DatabaseContent,
     PartialLoss,
@@ -240,17 +245,17 @@ def _compare_reconstruction(
 
 
 def _compare_with_provenance(
-    generated: GeneratedProvenance,
+    expected: ExpectedRecovery,
     source_db_url: str,
     dest_db_url: str,
     allow_empty_destination: bool,
 ) -> CaseOutcome:
     source_content = logical_table_content(
-        generated.logical_queries, generated.logical_tables, source_db_url
+        expected.logical_queries, expected.logical_tables, source_db_url
     )
     dest_content = _db_connection.get_database_content(dest_db_url)
     return _case_outcome(
-        compare_with_provenance(source_content, dest_content, generated.described),
+        compare_with_provenance(source_content, dest_content, expected.described),
         source_content,
         dest_content,
         allow_empty_destination,
@@ -295,12 +300,12 @@ def evaluate_kgi_case(
         if provenance is None
         else rdf_path.with_name(f"{rdf_path.stem}-{provenance.value}-provenance.nq")
     )
-    generated: GeneratedProvenance | None = None
+    expected: ExpectedRecovery | None = None
 
     def compare(allow_empty_destination: bool) -> CaseOutcome:
-        if generated is not None:
+        if expected is not None:
             return _compare_with_provenance(
-                generated, source_db_url, dest_db_url, allow_empty_destination
+                expected, source_db_url, dest_db_url, allow_empty_destination
             )
         return _compare_reconstruction(
             analyze_mapping(mapping_path, rdf_path, source_db_url=source_db_url),
@@ -311,9 +316,9 @@ def evaluate_kgi_case(
 
     try:
         if provenance is not None:
-            generated = generate_provenance(
-                mapping_path, rdf_path, source_db_url, graph, provenance
-            )
+            reified = reify_graph(mapping_path, rdf_path, source_db_url)
+            write_provenance(reified, graph, provenance)
+            expected = expected_recovery(reified)
         reconstruct(
             mapping=mapping_path,
             rdf_graph=graph,
